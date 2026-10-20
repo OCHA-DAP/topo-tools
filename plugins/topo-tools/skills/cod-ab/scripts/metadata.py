@@ -50,7 +50,7 @@ _COLUMNS = [
     "caveats",
 ]
 _INTEGERS = {"admin_level_full", "admin_level_max", "update_frequency"}
-_REQUIRED = ["source", "source_url", "contributor", "methodology_dataset"]
+_REQUIRED = ["source", "contributor", "methodology_dataset"]
 
 
 def _type(column: str) -> str:
@@ -114,7 +114,9 @@ def build_record(iso3: str, version: str, record: dict, settings: dict) -> dict:
         "update_frequency": settings.get("update_frequency", 1),
         "update_type": record.get("update_type", "major"),
         "source": record.get("source", ""),
-        "source_url": "; ".join(layer["url"] for layer in layers),
+        "source_url": "; ".join(
+            layer["url"] for layer in layers if layer["url"] is not None
+        ),
         "contributor": settings.get("contributor", ""),
         "methodology_dataset": record.get("methodology_dataset", ""),
         "methodology_pcodes": record.get("methodology_pcodes", ""),

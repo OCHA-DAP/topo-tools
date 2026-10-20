@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- cod-ab metadata export accepts null source-layer URLs for data handed
+  over without a download endpoint, retaining any available URLs and
+  allowing an empty `source_url`.
+
 ## [0.17.0] - 2026-10-06
 
 ### Fixed

@@ -76,7 +76,9 @@ https://astral.sh/uv/install.ps1 | iex"` on Windows).
      `editingInfo.lastEditDate`, else the latest value of a per-feature
      update-date column), null when it publishes none. Take these
      from what the user already said about where the data came from, and ask
-     only when they haven't. Check the source's licence (an ArcGIS
+     only when they haven't. Use `url: null` for data handed over directly
+     without a download endpoint, and describe the handover in
+     `methodology_dataset`. Check the source's licence (an ArcGIS
      service's `copyrightText`, its portal item's `licenseInfo`, the
      publisher's terms page) without asking, and record it as
      `source_licence` (`name`, `url`). Data is published under CC BY-IGO:
@@ -320,9 +322,10 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    [COD-AB metadata](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/6-packaging/metadata.md)
    columns, from `metadata.json`, the
    `[tool.topo-tools-cod-ab]` table and the packaged layers, and exits
-   non-zero when `source`, `source_url`, `contributor` or
-   `methodology_dataset` is empty: ask for each, then rerun. Show the user
-   the printed record and any open licence condition.
+   non-zero when `source`, `contributor` or `methodology_dataset` is empty:
+   ask for each, then rerun. Null source-layer URLs are omitted;
+   `source_url` may be empty for data handed over without a download
+   endpoint. Show the user the printed record and any open licence condition.
 
 ## Candidates
 
