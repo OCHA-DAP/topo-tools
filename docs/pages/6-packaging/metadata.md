@@ -29,7 +29,7 @@ means unknown. All COD-AB data is published under CC BY-IGO.
 | `update_frequency` | integer | yes | Years between source updates, 1 or 2 |
 | `update_type` | text | yes | `major`, or `minor` when no boundary changed |
 | `source` | text | yes | Organisation(s) that produced the data |
-| `source_url` | text | yes | URL of each source layer, `; `-separated, coarsest level first |
+| `source_url` | text | no | Available source-layer URLs, `; `-separated, coarsest level first; empty when the data has no download URL |
 | `contributor` | text | yes | OCHA office or team that processed the data |
 | `methodology_dataset` | text | yes | How the data was obtained and processed, including licence attribution conditions |
 | `methodology_pcodes` | text | no | How codes were assigned |
@@ -37,3 +37,8 @@ means unknown. All COD-AB data is published under CC BY-IGO.
 
 Dates are `YYYY-MM-DD`. `admin_level_full` MUST NOT exceed
 `admin_level_max`.
+
+Use `null` for a source layer's `url` in `metadata.json` when the data
+was handed over directly without a download endpoint. Those null URLs
+are omitted from `source_url`. The source organisation and methodology
+remain required so the record still explains where the data came from.
