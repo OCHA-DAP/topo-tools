@@ -12,7 +12,7 @@ Install the [`topo-tools`](https://github.com/OCHA-DAP/topo-tools-py/blob/main/p
 <TabItem label="VS Code (Claude Code panel)">
 
 
-1. [Click here](vscode://anthropic.claude-code/install-plugin?plugin=topo-tools&marketplace=https%3A%2F%2Ftopo-tools.org%2Fmarketplace.json), allow the browser to open VS Code, confirm adding the marketplace, then select **Install for you**.
+1. [Click here](vscode://anthropic.claude-code/install-plugin?plugin=topo-tools&marketplace=https%3A%2F%2Focha-dap.github.io%2Ftopo-tools-js%2Fmarketplace.json), allow the browser to open VS Code, confirm adding the marketplace, then select **Install for you**.
 2. Turn on automatic updates. In VS Code, select **File > Open File** and open the user settings file:
 
     - **Windows:** `%USERPROFILE%\.claude\settings.json`
@@ -25,7 +25,7 @@ Install the [`topo-tools`](https://github.com/OCHA-DAP/topo-tools-py/blob/main/p
       "topo-tools": {
         "source": {
           "source": "url",
-          "url": "https://topo-tools.org/marketplace.json"
+          "url": "https://ocha-dap.github.io/topo-tools-js/marketplace.json"
         },
         "autoUpdate": true
       }
@@ -39,7 +39,7 @@ Install the [`topo-tools`](https://github.com/OCHA-DAP/topo-tools-py/blob/main/p
 1. In a Claude Code session, run:
 
     ```text
-    /plugin install topo-tools --marketplace https://topo-tools.org/marketplace.json
+    /plugin install topo-tools --marketplace https://ocha-dap.github.io/topo-tools-js/marketplace.json
     ```
 
     Confirm adding the marketplace, then select **Install for you**. If Claude Code shows `Run /reload-plugins to activate`, run it.
@@ -53,7 +53,7 @@ Install the [`topo-tools`](https://github.com/OCHA-DAP/topo-tools-py/blob/main/p
 
 ## Without the plugin
 
-If the plugin install fails (for example, a network filter blocks topo-tools.org), open an empty folder and paste this prompt into Claude Code:
+If the plugin install fails (for example, a network filter blocks ocha-dap.github.io), open an empty folder and paste this prompt into Claude Code:
 
 ```text
 Download https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/plugins/topo-tools/skills/cod-ab/SKILL.md verbatim with curl (Invoke-WebRequest on Windows), not a summarizing web fetch, then follow it.
