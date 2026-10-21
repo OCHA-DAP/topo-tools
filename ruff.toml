@@ -2,9 +2,11 @@ fix = true
 
 [lint]
 select = ["ALL"]
-ignore = ["COM812", "CPY001", "D203", "D213", "S603", "S607", "S608"]
+ignore = ["COM812", "CPY001", "D203", "D213", "S608"]
 
 [lint.per-file-ignores]
 "topo_tools/cli/main.py" = ["D301"]
+"topo_tools/core/schema_map/_02_map.py" = ["RUF071"]
+"topo_tools/core/schema_map/_level_columns.py" = ["RUF071"]
 "tests/*" = ["ANN", "D103", "INP001", "S101"]
 ".github/scripts/*" = ["ANN", "D100", "D103", "D205", "E501", "INP001", "PLR2004", "PTH123", "T201"]

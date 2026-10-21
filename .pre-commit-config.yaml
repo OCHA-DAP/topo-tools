@@ -13,12 +13,12 @@ repos:
       - id: no-commit-to-branch
         args: ["--branch", "main"]
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.12.1
+    rev: 0.13.4
     hooks:
       - id: uv-lock
       - id: uv-sync
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.1
+    rev: v0.17.1
     hooks:
       - id: ruff-format
       - id: ruff-check
