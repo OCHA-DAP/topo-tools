@@ -18,3 +18,7 @@ scripts/
 !plugins/**/scripts/
 tmp/
 .playwright-cli/
+data/portolan/
+data/catalog/build_sources.py
+data/catalog/sources.yaml
+data/catalog/agents/sources.md
