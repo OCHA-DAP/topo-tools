@@ -23,7 +23,7 @@ Using `ST_Union_Agg(_01)` (a single dissolved reference geometry) as the second 
 
 ### Tightening the bbox prefilter with `ST_Intersects`
 
-`_05_merge.py`'s `neighbor_union` join (and `_02_lines.py`'s equivalent neighbor-union self-join) both add an exact `ST_Intersects` predicate on top of the existing bbox prefilter. It plans as a `FILTER` after a `PIECEWISE_MERGE_JOIN`, not as a `SPATIAL_JOIN`, so it doesn't trigger the reservation bug below, confirmed via `EXPLAIN` before adopting it.
+`_05_merge.py`'s `neighbor_union` join (and `_02_lines.py`'s equivalent neighbor-union self-join) both add an exact `ST_Intersects` predicate on top of the existing bbox prefilter. It plans as a `FILTER` after a `PIECEWISE_MERGE_JOIN`, not as a `SPATIAL_JOIN`.
 
 This matters far more in `_05_merge.py` than in `_02_lines.py`, because Voronoi cells (unlike original polygons) can have a bounding box spanning nearly the whole file: a coastal cell's cell boundary can legitimately run the length of a country's coastline while the cell itself only truly overlaps a small fraction of the original polygons whose bbox falls inside that huge rectangle. Measured on `chl_admin3` (345 fids): specific cells' bbox-only candidate counts were up to 23x their true `ST_Intersects` count (one cell pulled in 9765 candidate parts, only 924 of which actually touched it). Adding the filter reduced `_05_merge.py`'s merge-stage peak RSS by 34% (2846MB -> 1882MB) and `_02_lines.py`'s lines-stage peak by 11% (2149MB -> 1920MB), both confirmed output-identical to the unfiltered version (exact geometry equality). Smaller countries (Burundi, Sri Lanka, Malawi, Senegal, Haiti, Guatemala) saw smaller but still nonzero reductions (1-13%) with zero downside.
 
@@ -104,30 +104,3 @@ but returns a polygon that is entirely micro as an EMPTY geometry, and
 touches its neighbours. `coverage_clean` therefore merges micro-polygons
 first, and `has_valid_topology` checks for them directly, so an
 auto-cleaned input is cleaned whenever it has one.
-
-## DuckDB 1.5.2 `SPATIAL_JOIN` Memory Reservation Bug
-
-DuckDB 1.5.2's `SPATIAL_JOIN` operator pre-allocates approximately **1× physical RAM** as a virtual memory spill reservation before executing, regardless of actual data size. The default `memory_limit` of 80% RAM falls below this threshold on most machines, causing an immediate OOM error even when the join touches only ~100 MB of real data.
-
-**Symptom**: The OOM message reads `"failed to allocate data of size X MiB (Y GiB/Y GiB used)"` where Y equals the `memory_limit` exactly. `duckdb_memory().memory_usage_bytes` shows only 60–100 MB; the two tracking systems are independent. The budget is exhausted by the reservation, not real data.
-
-**What triggers `SPATIAL_JOIN`**: Any `ST_Within` / `ST_Contains` predicate in a JOIN. DuckDB's optimizer always rewrites to `SPATIAL_JOIN`; correlated subqueries, `LATERAL` joins, and batching all produce the same plan.
-
-**Current mitigation**: the pipeline avoids this class of bug entirely rather than working around it: no stage uses `ST_Within`/`ST_Contains` in a JOIN condition. Bbox-prefiltered self-/cross-joins with scalar predicates (`_02_lines.py`'s neighbor-union, `_05_merge.py`'s `_05_tmp2`) plan as `PIECEWISE_MERGE_JOIN` instead, which never triggers the reservation.
-
-If a future stage genuinely needs a true `ST_Within`/`ST_Contains` join, the reservation is a virtual address claim (no physical pages mapped), so any `memory_limit` above the reservation threshold passes the check:
-
-```python
-@contextmanager
-def spatial_join_memory(conn):
-    orig = conn.execute("SELECT current_setting('memory_limit')").fetchone()[0]
-    conn.execute("SET memory_limit = '999GB'")
-    try:
-        yield
-    finally:
-        conn.execute(f"SET memory_limit = '{orig}'")
-```
-
-Don't reach for an explicit RTREE index instead: it was profiled as providing no measurable benefit once DuckDB's own `SPATIAL_JOIN` rewrite already builds its own temporary index (see `docs/dev/performance.md`, "RTREE index experiment").
-
-**Note**: May be fixed in DuckDB versions after 1.5.2, re-test if upgrading.

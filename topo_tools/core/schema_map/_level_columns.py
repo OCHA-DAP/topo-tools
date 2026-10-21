@@ -2,13 +2,13 @@
 
 import re
 from dataclasses import dataclass
-from os.path import commonprefix
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.duckdb_utils import quote_identifier
 from topo_tools.core.schema_map._02_map import (
     _WINNER_MAX_COLLAPSE_RATIO,
+    _common_prefix,
     _has_geometry_column,
     _spatially_coherent,
     resolve_columns,
@@ -33,9 +33,9 @@ class LevelColumns:
 
 def _common_prefix_suffix(names: list[str]) -> tuple[str, str]:
     """Return the run every name shares at the start, then at the end."""
-    prefix = commonprefix(names)
+    prefix = _common_prefix(names)
     remainders = [n[len(prefix) :] for n in names]
-    suffix = commonprefix([r[::-1] for r in remainders])[::-1]
+    suffix = _common_prefix([r[::-1] for r in remainders])[::-1]
     return prefix, suffix
 
 

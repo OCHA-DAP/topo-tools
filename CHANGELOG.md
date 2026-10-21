@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-21
+
+### Added
+
+- Python 3.15 support.
+
+### Changed
+
+- Requires Python 3.11 or newer.
+- Supports DuckDB 2.0, and still runs on DuckDB 1.5.6 or newer.
+
+### Fixed
+
+- Tools run on DuckDB 2.0, which a fresh install picks up by default.
+
 ## [0.17.1] - 2026-10-21
 
 ### Fixed
@@ -882,7 +897,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/OCHA-DAP/topo-tools-py/compare/v0.15.1...v0.16.0

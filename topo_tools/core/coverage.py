@@ -901,7 +901,7 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         pts AS (
             SELECT rnid,
                    list_transform(
-                       ST_Dump(ST_Points(g)), x -> [ST_X(x.geom), ST_Y(x.geom)]
+                       ST_Dump(ST_Points(g)), lambda x: [ST_X(x.geom), ST_Y(x.geom)]
                    ) AS xy
             FROM rings
         ),
@@ -910,7 +910,7 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
             FROM (
                 SELECT rnid,
                        UNNEST(list_transform(
-                           range(1, len(xy)), i -> [xy[i], xy[i + 1]]
+                           range(1, len(xy)), lambda i: [xy[i], xy[i + 1]]
                        )) AS e
                 FROM pts
             )
@@ -1057,7 +1057,7 @@ def _project_notch_side_sql(  # noqa: PLR0913 (each param is a distinct required
             WHERE d.path[1] < np""",
         f"""CREATE OR REPLACE TABLE {p}_seg AS
             SELECT ST_MakeLine(xs[i], xs[i + 1]) AS s
-            FROM (SELECT list_transform(ST_Dump(ST_Points(l)), x -> x.geom) AS xs
+            FROM (SELECT list_transform(ST_Dump(ST_Points(l)), lambda x: x.geom) AS xs
                   FROM (SELECT UNNEST(ST_Dump({line})).geom AS l FROM _notch_w)),
                  generate_series(1, len(xs) - 1) t(i)""",
         f"""CREATE OR REPLACE TABLE {p}_near AS

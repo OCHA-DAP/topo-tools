@@ -4,7 +4,6 @@ See docs/dev/explanation/1-schema/schema_map.md and docs/adr/0054, 0064-0066 for
 algorithm and why.
 """
 
-import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -686,10 +685,21 @@ def _build_chain(
     return [groups[i] for i in chain_indices], vetoed
 
 
+def _common_prefix(strings: list[str]) -> str:
+    """Return the characters every string shares at the start."""
+    if not strings:
+        return ""
+    lo, hi = min(strings), max(strings)
+    for i, ch in enumerate(lo):
+        if ch != hi[i]:
+            return lo[:i]
+    return lo
+
+
 def _pair_shared(a: str, b: str) -> int:
-    prefix = os.path.commonprefix([a, b])
+    prefix = _common_prefix([a, b])
     rest = [a[len(prefix) :][::-1], b[len(prefix) :][::-1]]
-    return len(prefix) + len(os.path.commonprefix(rest))
+    return len(prefix) + len(_common_prefix(rest))
 
 
 def _shared_naming_length(column_sets: list[list[str]]) -> int:
@@ -700,9 +710,9 @@ def _shared_naming_length(column_sets: list[list[str]]) -> int:
             max(cols, key=lambda c, r=reference: _pair_shared(r, c))
             for cols in column_sets
         ]
-        prefix = os.path.commonprefix(picked)
+        prefix = _common_prefix(picked)
         rest = [p[len(prefix) :][::-1] for p in picked]
-        suffix_length = len(os.path.commonprefix(rest))
+        suffix_length = len(_common_prefix(rest))
         middles = [r[suffix_length:] for r in rest]
         if all(middles) and len(set(middles)) == len(middles):
             best = max(best, len(prefix) + suffix_length)

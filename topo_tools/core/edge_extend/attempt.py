@@ -41,7 +41,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
                 ][0]
                 _check_point_count(count)
                 voronoi.main(conn, name, debug=debug)
-            except (RuntimeError, DuckDBError) as e:  # noqa: PERF203 (retry loop, not a hot path)
+            except (RuntimeError, DuckDBError) as e:
                 logger.warning("fail: %s distance=%s: %s", name, d, e)
             else:
                 return

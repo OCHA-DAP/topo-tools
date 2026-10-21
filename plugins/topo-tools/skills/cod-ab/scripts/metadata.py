@@ -14,11 +14,11 @@ import csv
 import json
 import logging
 import sys
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
-import tomllib
 
 logging.basicConfig(format="%(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
