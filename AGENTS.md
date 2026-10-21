@@ -4,7 +4,7 @@
 
 `topo-tools` is a Python package of DuckDB-powered geospatial topology utilities,
 `pip install`-able and importable, mirroring the organization of the sister JS app
-at `../topo-tools-js` (a DuckDB-WASM web app with the same tools). It ships twenty-two
+at `../cod-site` (a DuckDB-WASM web app with the same tools). It ships twenty-two
 tools, all used for improving administrative boundary datasets and matching
 sub-national boundaries to national boundaries (import-linter contracts
 governing which tool may depend on which are in `docs/dev/shared.md`).
@@ -273,6 +273,7 @@ file (or an old/new comparison pair, for `change`) from the catalog.
 
 - `docs/pages/{phase}/`: one folder per COD-AB release phase (`1-schema`, `2-topology`, `3-edge`, `4-codes`, `5-names`, `6-packaging`), each with `index.mdx` (the phase's overview), `how-to.md` (the phase's step) and `reference/{tool}.md` (options and examples per tool, generated from the CLI's `--help` by `.github/scripts/gen_reference.py`, never hand-edited; `--check` runs in pre-commit and CI); `change` sits in `4-codes`
 - `docs/dev/` (unpublished, like `docs/adr/`): `reference/{phase}/{tool}.md` (behavior contract per tool, MUST/SHOULD/MAY), `explanation/{phase}/{tool}.md` (stage-by-stage detail, plus an `overview.md`; `3-edge` also has `assign.md` and `voronoi-memory.md` (per-file resampling distance and memory ceilings for `phl_admin3`/`idn_admin3`), and `3-edge/edge_match.md` has the `check_gaps` caveat), `tutorials/{phase}/` (walkthroughs not yet ready to publish), `shared.md` (rules and settings common to every tool, the MUST/SHOULD/MAY convention), `topology.md` (coverage-clean merge, micro-polygons), `performance.md` (thread-scaling benchmarks + the RTREE experiment)
-- `docs/pages/` is published at <https://ocha-dap.github.io/topo-tools-js/tools/docs/> by topo-tools-js (Starlight); `.github/workflows/docs.yml` triggers that deploy on push to `main`, and `npm run dev` in a sibling topo-tools-js checkout previews it
+- `docs/pages/` is published at <https://ocha-dap.github.io/cod-site/tools/docs/> by cod-site (Starlight); `.github/workflows/docs.yml` triggers that deploy on push to `main`, and `npm run dev` in a sibling cod-site checkout previews it
 - `.claude/skills/`: `publishing` (PyPI release via OIDC), `verify-duckdb-function` (DuckDB/spatial function lookup), `at-scale-testing` (portolan catalog layout, picking a test file/pair), `manual-dev-testing` (running any tool against your own data)
+- `data/catalog/`: build and push scripts for the `hdx/topo-tools` demo catalog on source.coop, run from `data/` (path defaults are relative to it); the built catalog (`data/portolan/`) and cache (`data/tmp/`) are gitignored
 - `docs/adr/README.md`: how to decide ADR vs. `docs/dev/explanation/` vs. CLAUDE.md's Key Patterns; `docs/adr/` itself holds the decision records

@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 _M49_LOCAL = Path(__file__).resolve().parent.parent / "data" / "m49.csv"
 _M49_URL = (
-    "https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/"
+    "https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/"
     "plugins/topo-tools/skills/cod-ab/data/m49.csv"
 )
 _UN_LANGUAGES = ("ar", "zh", "en", "fr", "ru", "es")

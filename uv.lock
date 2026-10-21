@@ -476,6 +476,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -492,6 +493,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 

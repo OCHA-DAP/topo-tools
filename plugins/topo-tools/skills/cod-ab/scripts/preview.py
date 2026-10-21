@@ -27,13 +27,13 @@ truststore.inject_into_ssl()
 logging.basicConfig(format="%(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 
-_UA = "topo-tools-cod-ab-preview/1.0 (+https://github.com/OCHA-DAP/topo-tools-py)"
+_UA = "topo-tools-cod-ab-preview/1.0 (+https://github.com/OCHA-DAP/topo-tools)"
 _CACHE = Path(tempfile.gettempdir()) / "topo-tools-tiles"
 _CACHE_SECONDS = 7 * 24 * 3600
 _FONT_NAME = "NotoSans-CondensedSemiBold.ttf"
 _FONT = Path(__file__).parent / "fonts" / _FONT_NAME
 _FONT_URL = (
-    "https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/"
+    "https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/"
     f"plugins/topo-tools/skills/cod-ab/scripts/fonts/{_FONT_NAME}"
 )
 _TILE = 256

@@ -15,11 +15,11 @@ whenever a command crashes or raises unexpectedly, output looks wrong (bad
 geometry, a miscount, a column that shouldn't be null), or behavior differs
 across platforms (macOS/Linux/Windows path handling, available memory): use
 the
-[bug report template](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/.github/ISSUE_TEMPLATE/bug_report.yml).
+[bug report template](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/.github/ISSUE_TEMPLATE/bug_report.yml).
 When a stage needs something `topo-tools` can't currently do, use the
-[feature request template](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/.github/ISSUE_TEMPLATE/feature_request.yml)
+[feature request template](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/.github/ISSUE_TEMPLATE/feature_request.yml)
 instead. See
-[CONTRIBUTING.md](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/CONTRIBUTING.md)
+[CONTRIBUTING.md](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/CONTRIBUTING.md)
 for either.
 
 Whenever a step writes Parquet with DuckDB directly, not through a
@@ -33,9 +33,9 @@ source files to GeoParquet and GeoParquet to GDB only with
 `<skill-dir>` is this skill's own directory. If `<skill-dir>/scripts/`
 doesn't exist (this file was pasted or fetched, not installed as a
 plugin), use
-`https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/plugins/topo-tools/skills/cod-ab`
+`https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/plugins/topo-tools/skills/cod-ab`
 as `<skill-dir>` in every command below, e.g.
-`uv run https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/plugins/topo-tools/skills/cod-ab/scripts/convert.py`.
+`uv run https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/plugins/topo-tools/skills/cod-ab/scripts/convert.py`.
 
 ## Setup
 
@@ -187,8 +187,8 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
 `minor` only when `change` against `00a_old/` reports no boundary change
 (it defaults to `major`).
 
-1. [Schema](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/1-schema/how-to.md)
-2. [Topology](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/2-topology/how-to.md)
+1. [Schema](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/1-schema/how-to.md)
+2. [Topology](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/2-topology/how-to.md)
 
    Run `topo-clean` with its defaults. For each `gap` row it leaves
    unfilled, measure its overlap with every coarser layer the source
@@ -221,7 +221,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    stage 2 output and its issues file, and show the filled gap rows for
    review. Never trace a fill from OpenStreetMap, whose licence is
    incompatible with CC BY-IGO.
-3. [Edge matching](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/3-edge/how-to.md)
+3. [Edge matching](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/3-edge/how-to.md)
 
    Take the reference admin0 from the admin0 file in `00_shared/` (ask
    which when there are several), which may cover many countries, else
@@ -258,7 +258,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    output's largest `gap` and `detached-part` rows with
    `preview.py issues {issues} 03_edge_matching/previews/ --units {output} --reference {admin0} --kind {kind}`
    and check them against both base layers before accepting the output.
-4. [Codes](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/4-codes/how-to.md)
+4. [Codes](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/4-codes/how-to.md)
 
    Show a few code values from each level of the file to code, and ask
    whether they are source codes to keep as given (issued by the government
@@ -278,7 +278,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
 
    Code the stage 2 file in place of the stage 3 output when the user
    chose to code the full geometry first.
-5. [Names](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/5-names/how-to.md)
+5. [Names](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/5-names/how-to.md)
 
    Run `name-clean`, then read every name in the cleaned file, not only the
    flagged ones, in batches by parent unit. Judge each `warn` row and look
@@ -293,7 +293,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    languages, and takes any other language, or an area not in M49, from
    `metadata.json`'s `adm0_names` (`{"sq": "..."}`). On a missing name,
    ask the user for it, add it to `adm0_names`, then rerun.
-6. [Packaging](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/6-packaging/how-to.md)
+6. [Packaging](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/6-packaging/how-to.md)
 
    Admin0 is always an output. Before packaging, ask which layout to
    publish: edge-matched only, or the original geometry plus an
@@ -317,7 +317,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    After packaging, run `uv run <skill-dir>/scripts/metadata.py {iso3} {version}`
    from the workspace root. It writes `06_packaging/{iso3}_metadata.csv`
    and `{iso3}_metadata.parquet` with the
-   [COD-AB metadata](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/docs/pages/6-packaging/metadata.md)
+   [COD-AB metadata](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/6-packaging/metadata.md)
    columns, from `metadata.json`, the
    `[tool.topo-tools-cod-ab]` table and the packaged layers, and exits
    non-zero when `source`, `source_url`, `contributor` or
