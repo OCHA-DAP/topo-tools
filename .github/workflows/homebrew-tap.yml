@@ -12,7 +12,7 @@ jobs:
       bumped: ${{ steps.tap.outputs.newer }}
       branch: bump-topo-tools-${{ steps.pypi.outputs.version }}
     steps:
-      - name: Checkout topo-tools-py
+      - name: Checkout topo-tools
         uses: actions/checkout@v7
 
       # brew bump-formula-pr resolves deps with --uploaded-prior-to=P1D, so a

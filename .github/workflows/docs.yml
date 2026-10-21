@@ -13,12 +13,12 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger topo-tools-js deploy
+      - name: Trigger cod-site deploy
         env:
           TOKEN: ${{ secrets.JS_DISPATCH_TOKEN }}
         run: |
           curl -sS -f -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/OCHA-DAP/topo-tools-js/dispatches \
+            https://api.github.com/repos/OCHA-DAP/cod-site/dispatches \
             -d '{"event_type":"py-docs-updated"}'

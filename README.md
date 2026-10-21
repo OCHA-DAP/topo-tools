@@ -1,17 +1,17 @@
 # topo-tools
 
-[![CI](https://github.com/OCHA-DAP/topo-tools-py/actions/workflows/ci.yml/badge.svg)](https://github.com/OCHA-DAP/topo-tools-py/actions/workflows/ci.yml)
+[![CI](https://github.com/OCHA-DAP/topo-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/OCHA-DAP/topo-tools/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/topo-tools)](https://pypi.org/project/topo-tools/)
 [![Python versions](https://img.shields.io/pypi/pyversions/topo-tools)](https://pypi.org/project/topo-tools/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![World ADM0 boundaries extended with Voronoi-filled coastline](https://raw.githubusercontent.com/OCHA-DAP/topo-tools-py/main/img/wld_01.png)
+![World ADM0 boundaries extended with Voronoi-filled coastline](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/img/wld_01.png)
 
 `topo-tools` is a collection of DuckDB-powered geospatial topology utilities
 for cleaning and reconciling administrative boundary polygons, usable from
 the CLI or as a Python package.
 
-Full documentation: <https://ocha-dap.github.io/topo-tools-js/tools/docs/>
+Full documentation: <https://ocha-dap.github.io/cod-site/tools/docs/>
 
 | Tool | Description |
 | --- | --- |

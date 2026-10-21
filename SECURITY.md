@@ -9,7 +9,7 @@ only.
 
 Please do not open a public GitHub issue for security vulnerabilities.
 
-Instead, use [GitHub Security Advisories](https://github.com/OCHA-DAP/topo-tools-py/security/advisories)
+Instead, use [GitHub Security Advisories](https://github.com/OCHA-DAP/topo-tools/security/advisories)
 ("Report a vulnerability" on the Security tab) to report privately.
 
 Include, where possible:

@@ -11,8 +11,8 @@ and what a finished pull request looks like.
 ## Setup
 
 ```bash
-git clone https://github.com/OCHA-DAP/topo-tools-py.git
-cd topo-tools-py
+git clone https://github.com/OCHA-DAP/topo-tools.git
+cd topo-tools
 uv sync
 uv run pre-commit install
 ```
@@ -70,7 +70,7 @@ protected and only accepts merges via PR.
       its command's `Examples:` docstring block, then
       `uv run python .github/scripts/gen_reference.py` regenerates
       `docs/pages/{phase}/reference/{tool}.md`. Preview
-      with `npm run dev` in a sibling `topo-tools-js` checkout, which
+      with `npm run dev` in a sibling `cod-site` checkout, which
       serves `docs/pages` at `/docs/`
 - [ ] `CHANGELOG.md` updated under `## [Unreleased]` for user-visible
       changes

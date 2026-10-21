@@ -20,10 +20,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OCHA-DAP/topo-tools-py"
-Documentation = "https://ocha-dap.github.io/topo-tools-js/tools/docs/"
-Repository = "https://github.com/OCHA-DAP/topo-tools-py"
-Issues = "https://github.com/OCHA-DAP/topo-tools-py/issues"
+Homepage = "https://github.com/OCHA-DAP/topo-tools"
+Documentation = "https://ocha-dap.github.io/cod-site/tools/docs/"
+Repository = "https://github.com/OCHA-DAP/topo-tools"
+Issues = "https://github.com/OCHA-DAP/topo-tools/issues"
 
 [project.scripts]
 topo-tools = "topo_tools.cli.main:cli"
