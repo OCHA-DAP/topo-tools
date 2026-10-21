@@ -53,7 +53,7 @@ def main(conn: DuckDBPyConnection, name: str) -> None:
         )
         SELECT a_fid, b_fid,
                SUM(
-                   ST_Area(ST_Transform(geom, 'EPSG:4326', '{EQUAL_AREA_CRS}'))
+                   ST_Area(ST_Transform(geom, 'EPSG:4326', '{EQUAL_AREA_CRS}', true))
                ) AS shared_area
         FROM filtered
         GROUP BY a_fid, b_fid
@@ -62,12 +62,16 @@ def main(conn: DuckDBPyConnection, name: str) -> None:
     # Whole-geometry area per fid, computed once (not once per pair).
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp4" AS
-        SELECT fid, ST_Area(ST_Transform(geom, 'EPSG:4326', '{EQUAL_AREA_CRS}')) AS area
+        SELECT fid, ST_Area(ST_Transform(
+                   geom, 'EPSG:4326', '{EQUAL_AREA_CRS}', true
+               )) AS area
         FROM "{name}_a_01"
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp5" AS
-        SELECT fid, ST_Area(ST_Transform(geom, 'EPSG:4326', '{EQUAL_AREA_CRS}')) AS area
+        SELECT fid, ST_Area(ST_Transform(
+                   geom, 'EPSG:4326', '{EQUAL_AREA_CRS}', true
+               )) AS area
         FROM "{name}_b_01"
     """)
 

@@ -163,13 +163,13 @@ def reproject_select_sql(
     # Parquet geometries are untagged (assumed EPSG:4326), so skip transform.
     geom_expr = (
         "ST_Force2D(ST_MakeValid(ST_Transform("
-        f"ST_MakeValid(\"{geom_col}\"), 'EPSG:4326')))"
+        f"ST_MakeValid(\"{geom_col}\"), 'EPSG:4326', true)))"
         if geom_type != "GEOMETRY"
         else f'ST_Force2D(ST_MakeValid("{geom_col}"))'
     )
     if not make_valid:
         geom_expr = (
-            f"ST_Force2D(ST_Transform(\"{geom_col}\", 'EPSG:4326'))"
+            f"ST_Force2D(ST_Transform(\"{geom_col}\", 'EPSG:4326', true))"
             if geom_type != "GEOMETRY"
             else f'ST_Force2D("{geom_col}")'
         )
