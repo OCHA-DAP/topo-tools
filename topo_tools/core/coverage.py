@@ -861,7 +861,15 @@ def coverage_clean_escalating(  # noqa: PLR0913 (mirrors coverage_clean's own in
 
 # Two edges this close count as touching, not as a notch.
 _NOTCH_TOUCH = 1e-9
-_NOTCH_TMP = ("_notch_all", "_notch_ext", "_notch_near", "_notch_runs", "_notch_fseg")
+_NOTCH_TMP = (
+    "_notch_all",
+    "_notch_ext",
+    "_notch_near",
+    "_notch_ends",
+    "_notch_moves",
+    "_notch_runs",
+    "_notch_fseg",
+)
 _NOTCH_FIX_TMP = (
     "_notch_flags",
     "_notch_pairs",
@@ -923,7 +931,8 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         CREATE OR REPLACE TABLE _notch_near AS
         WITH pairs AS (
             SELECT a.sid, a.rnid AS own, b.rnid AS other,
-                   any_value(a.geom) AS ag, ST_Union_Agg(b.geom) AS og
+                   any_value(a.geom) AS ag, ST_Union_Agg(b.geom) AS og,
+                   list(b.sid) AS osids
             FROM _notch_ext a JOIN _notch_ext b
               ON a.rnid <> b.rnid
              AND b.xmin <= a.xmax + {r} AND b.xmax >= a.xmin - {r}
@@ -934,15 +943,66 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         pieces AS (
             SELECT *, ST_Intersection(ag, ST_Buffer(og, {r}, 2)) AS piece FROM pairs
         )
-        SELECT sid, own, least(own, other) AS ua, greatest(own, other) AS ub, piece,
+        SELECT sid, own, other, osids,
+               least(own, other) AS ua, greatest(own, other) AS ub, piece,
                ST_Length(piece)
                  - ST_Length(ST_Intersection(ag, ST_Buffer(og, {_NOTCH_TOUCH}, 2)))
                    AS len
         FROM pieces
     """)
+    # close_notches moves an endpoint touching no third unit onto the other unit
+    # when it lies within NOTCH_MAX_GAP_RATIO of its longest flagged segment.
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _notch_ends AS
+        SELECT n.sid, n.own, n.other, ST_Length(e.geom) AS seglen,
+               UNNEST([ST_StartPoint(e.geom), ST_EndPoint(e.geom)]) AS p
+        FROM _notch_near n JOIN _notch_ext e USING (sid)
+        WHERE n.len > 1e-12
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _notch_moves AS
+        WITH v AS (
+            SELECT own, other, x, y, any_value(p) AS p,
+                   max(seglen) * {NOTCH_MAX_GAP_RATIO} AS lim
+            FROM (SELECT *, ST_X(p) AS x, ST_Y(p) AS y FROM _notch_ends)
+            GROUP BY own, other, x, y
+        ),
+        vd AS (
+            SELECT v.own, v.other, v.x, v.y,
+                   coalesce(min(ST_Distance(v.p, s.geom))
+                                FILTER (WHERE s.rnid = v.other), 'inf'::DOUBLE)
+                       BETWEEN {_NOTCH_TOUCH} AND v.lim
+                   AND NOT coalesce(bool_or(s.rnid <> v.other
+                                       AND ST_DWithin(v.p, s.geom, {_NOTCH_TOUCH})),
+                               FALSE) AS moves
+            FROM v JOIN _notch_ext s
+              ON s.rnid <> v.own
+             AND s.xmin <= v.x + v.lim AND s.xmax >= v.x - v.lim
+             AND s.ymin <= v.y + v.lim AND s.ymax >= v.y - v.lim
+            GROUP BY v.own, v.other, v.x, v.y, v.lim
+        )
+        SELECT e.sid, e.other, bool_or(coalesce(vd.moves, FALSE)) AS moves
+        FROM _notch_ends e LEFT JOIN vd
+          ON vd.own = e.own AND vd.other = e.other
+         AND vd.x = ST_X(e.p) AND vd.y = ST_Y(e.p)
+        GROUP BY e.sid, e.other
+    """)
+    # A run is a notch only if close_notches moves an end of one of its segments.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _notch_runs AS
-        WITH h AS (SELECT * FROM _notch_near WHERE len > 1e-12),
+        WITH k AS (SELECT sid, other FROM _notch_moves WHERE moves),
+        moved AS (
+            SELECT n.sid, n.other FROM _notch_near n SEMI JOIN k USING (sid, other)
+            UNION
+            SELECT n.sid, n.other
+            FROM (SELECT sid, own, other, UNNEST(osids) AS osid FROM _notch_near) n
+            JOIN k ON k.sid = n.osid AND k.other = n.own
+        ),
+        h AS (
+            SELECT n.*, m.sid IS NOT NULL AS moved FROM _notch_near n
+            LEFT JOIN moved m USING (sid, other)
+            WHERE len > 1e-12
+        ),
         b AS (
             SELECT row_number() OVER () AS bid, ua, ub, blob FROM (
                 SELECT ua, ub,
@@ -955,7 +1015,7 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         SELECT b.ua, b.ub, any_value(b.blob) AS blob, sum(h.len) / {s} AS score
         FROM h JOIN b ON h.ua = b.ua AND h.ub = b.ub AND ST_Intersects(h.piece, b.blob)
         GROUP BY b.bid, b.ua, b.ub
-        HAVING sum(h.len) / {s} >= {NOTCH_MIN_SCORE}
+        HAVING sum(h.len) / {s} >= {NOTCH_MIN_SCORE} AND bool_or(h.moved)
     """)
 
 
