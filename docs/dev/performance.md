@@ -165,8 +165,7 @@ a 2 GB container) so DuckDB can spill to disk rather than crash.
 The lines stage previously expressed the per-polygon "neighbor boundary union" as a
 `LATERAL` subquery containing `ST_Intersects(a.geom, b.geom)`, which DuckDB rewrites to
 the `SPATIAL_JOIN` operator. `SPATIAL_JOIN` pre-allocates ~1× RAM as a virtual spill
-reservation, the same reservation behavior documented in `topology.md`, so even on
-small data the lines stage held a multi-GB working set.
+reservation, so even on small data the lines stage held a multi-GB working set.
 
 The current form materializes neighbor unions via a self-join with **scalar bbox
 predicates only**, then keys `_02` off the resulting `_02_tmp2` table:

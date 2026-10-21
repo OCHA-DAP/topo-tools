@@ -100,8 +100,7 @@ a multi-part fid (a country with offshore islands) doesn't get one bbox
 spanning everything and defeat the prefilter. The join uses scalar
 `ST_XMin`/`ST_XMax`/`ST_YMin`/`ST_YMax` predicates, not `ST_Within`/
 `ST_Intersects` alone in the `JOIN` condition: that triggers DuckDB's
-`SPATIAL_JOIN` operator and its ~1x-RAM virtual reservation (see
-`docs/dev/topology.md`). Unlike `_02_assign.py` (which keeps only the top-1
+`SPATIAL_JOIN` operator and its ~1x-RAM virtual reservation. Unlike `_02_assign.py` (which keeps only the top-1
 parent per child), every pair with `shared_area > 0` is kept: classification
 needs the full pair graph, not just the best match per fid.
 

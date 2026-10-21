@@ -13,7 +13,7 @@ under the hood, then the same `assign`/`edge-clip`/`edge-stitch` primitives `edg
 uses. This doc covers the parts that are specific to `edge-match`: the
 overlap/assignment algorithm, the per-group subprocess design, and the
 constraints it inherits from `edge-extend`. See `docs/dev/topology.md` for the
-coverage-clean/`SPATIAL_JOIN` background both tools share.
+coverage-clean background both tools share.
 
 ## Usage
 

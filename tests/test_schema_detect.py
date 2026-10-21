@@ -137,7 +137,7 @@ def test_nameless_layer_reports_levels_undetected(tmp_path, fields):
 def test_parquet_report(tmp_path):
     out = tmp_path / "issues.parquet"
     detect(_write(tmp_path / "in.parquet"), out, **_FIELDS)
-    assert duckdb.sql(f"SELECT count(*) FROM '{out}'").fetchone() == (0,)
+    assert duckdb.sql(f"SELECT count(*) FROM '{out}'").fetchall() == [(0,)]
 
 
 def test_default_issues_path(tmp_path):

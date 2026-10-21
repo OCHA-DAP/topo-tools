@@ -158,7 +158,7 @@ def test_failing_check_reported_others_run(tmp_path, monkeypatch):
 def test_parquet_report(tmp_path):
     out = tmp_path / "issues.parquet"
     detect(_write(tmp_path / "in.parquet"), out, **_FIELDS)
-    assert duckdb.sql(f"SELECT count(*) FROM '{out}'").fetchone() == (0,)
+    assert duckdb.sql(f"SELECT count(*) FROM '{out}'").fetchall() == [(0,)]
 
 
 def test_parquet_report_has_unit_geometry(tmp_path):

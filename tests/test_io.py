@@ -129,7 +129,7 @@ def test_read_and_reproject_repairs_geometry_broken_by_reprojection(tmp_path):
         "454785.90625000006 7408884.499999642, 454786.21 7408884.019999642))"
     )
     with duckdb.connect() as conn:
-        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute("INSTALL spatial; LOAD spatial; SET geometry_always_xy = true;")
         conn.execute(
             f"COPY (SELECT ST_GeomFromText('{sliver}') AS geom, 1 AS x) TO '{path}' "
             "(FORMAT GDAL, DRIVER 'GPKG', SRS 'EPSG:32721')"
