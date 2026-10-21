@@ -1,6 +1,6 @@
 """Regex-based code/name column auto-detection.
 
-Ported from topo-tools-js's src/lib/db/columns.ts, same patterns, same
+Ported from cod-site's src/lib/db/columns.ts, same patterns, same
 first-match-wins priority order.
 """
 

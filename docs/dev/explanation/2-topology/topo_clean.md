@@ -10,7 +10,7 @@ sidebar:
 `topo-clean` detects and fixes coverage defects (gaps, overlaps) in a single
 polygon layer using `ST_CoverageClean`. Ported from the sister JS app's
 interactive Topology Cleaner tool
-(`topo-tools-js/src/lib/tools/topology-cleaner/`); this doc covers what
+(`cod-site/src/lib/tools/topo-clean/`); this doc covers what
 changed in the port and why, and the `ST_CoverageClean` parameter semantics
 the design depends on.
 
