@@ -118,7 +118,7 @@ def coverage(
 
 
 def simplify(con: duckdb.DuckDBPyConnection, table: str) -> None:
-    coverage(con, table, f"ST_CoverageSimplify({{geoms}}, {SIMPLIFY_M}::DOUBLE)")
+    coverage(con, table, f"ST_CoverageSimplify({{geoms}}, {SIMPLIFY_M}::DOUBLE, true)")
     # Snap only (gap width 0): removes the simplify's zero-area overlaps, keeps every water gap.
     coverage(con, table, f"ST_CoverageClean({{geoms}}, {SNAP_M}::DOUBLE, 0::DOUBLE)")
 
