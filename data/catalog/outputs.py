@@ -29,7 +29,7 @@ def same_rows(new: Path, old: Path, *, ordered: bool = False) -> bool:
     a, b = (f"SELECT {select} FROM read_parquet('{p}'{options})" for p in (new, old))
     differ = con.execute(
         f"SELECT count(*) FROM (({a} EXCEPT ALL {b}) UNION ALL ({b} EXCEPT ALL {a}))"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     return differ == 0
 
 
@@ -54,7 +54,7 @@ def add_bbox_covering(con: duckdb.DuckDBPyConnection, query: str, path: Path) ->
     geo = json.loads(
         con.execute(
             f"SELECT decode(value) FROM parquet_kv_metadata('{path}') WHERE key = 'geo'"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
     )
     geo["version"] = "1.1.0"
     geo["columns"]["geometry"]["covering"] = {

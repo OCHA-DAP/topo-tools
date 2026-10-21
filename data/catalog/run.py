@@ -74,7 +74,7 @@ def main() -> None:
     parser.add_argument(
         "--explorer",
         type=Path,
-        default=Path("../hdx-boundaries-explorer/static/parquet"),
+        default=Path("../../hdx-boundaries-explorer/static/parquet"),
         help="HDX Boundaries Explorer data for the sources extracts; skipped if missing",
     )
     parser.add_argument("--push", action="store_true", help=f"Push to {REMOTE}")

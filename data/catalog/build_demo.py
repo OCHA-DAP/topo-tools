@@ -36,8 +36,6 @@ DISPLACED = [
     ("GM0772", "GM0861", -15.0),
     ("GM0014", "GM1966", -25.0),
 ]
-# topo-detect also reports these wedges' thin tips as notches.
-DISPLACED_NOTCHES = 9
 # (unit, neighbour): their shared border stops NOTCH_DEPTH_M short of the national border,
 # leaving a NOTCH_MOUTH_M wide wedge that topo-clean closes into a T junction.
 NOTCHED = [("GM0109", "GM0114"), ("GM0153", "GM0168"), ("GM0858", "GM1724")]
@@ -118,7 +116,7 @@ def coverage(
 
 
 def simplify(con: duckdb.DuckDBPyConnection, table: str) -> None:
-    coverage(con, table, f"ST_CoverageSimplify({{geoms}}, {SIMPLIFY_M}::DOUBLE)")
+    coverage(con, table, f"ST_CoverageSimplify({{geoms}}, {SIMPLIFY_M}::DOUBLE, true)")
     # Snap only (gap width 0): removes the simplify's zero-area overlaps, keeps every water gap.
     coverage(con, table, f"ST_CoverageClean({{geoms}}, {SNAP_M}::DOUBLE, 0::DOUBLE)")
 
@@ -144,7 +142,7 @@ def gemeenten(src: Path, provinces: Path) -> duckdb.DuckDBPyConnection:
     simplify(con, "t")
     missing = con.execute(
         "SELECT count(*) FROM t ANTI JOIN p USING (gemeentecode)"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     if missing:
         msg = f"{missing} gemeenten missing from the provincie lookup"
         raise SystemExit(msg)
@@ -205,7 +203,7 @@ def edge_input(con: duckdb.DuckDBPyConnection, out: Path) -> None:
     """)
     if missing := con.execute(
         "SELECT count(*) FROM g ANTI JOIN e USING (gemeentecode)"
-    ).fetchone()[0]:
+    ).fetchall()[0][0]:
         msg = f"{missing} gemeenten have no part of {CRUMB_M2:g} m² or more"
         raise SystemExit(msg)
     copy(
@@ -270,7 +268,7 @@ def displace(
         inside = con.execute(
             "SELECT ST_Contains(geometry, ST_Point(?, ?)) FROM w WHERE gemeentecode = ?",
             [*point, target],
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         if inside:
             ring[k] = point
             if k == 0:
@@ -389,7 +387,7 @@ def check_topo(path: Path, cache: Path) -> None:
     expected = {
         "overlap": sum(m > 0 for *_, m in DISPLACED),
         "gap": sum(m < 0 for *_, m in DISPLACED),
-        "notch": DISPLACED_NOTCHES + len(NOTCHED),
+        "notch": len(NOTCHED),
     }
     if (counts := issue_counts(path, cache)) != expected:
         msg = f"{path}: {counts}, expected {expected}"
@@ -438,7 +436,7 @@ def join_issues(input_path: Path, join_path: Path, cache: Path) -> int:
     issues = out.with_stem(out.stem + "_issues")
     if not issues.exists():
         return 0
-    return duckdb.sql(f"SELECT count(*) FROM read_parquet('{issues}')").fetchone()[0]
+    return duckdb.sql(f"SELECT count(*) FROM read_parquet('{issues}')").fetchall()[0][0]
 
 
 def hierarchy(src: Path, join_path: Path, out: Path, cache: Path) -> None:
@@ -505,8 +503,8 @@ def names_input(src: Path, out: Path) -> None:
     for code, name, defect, _ in NAMES:
         found = con.execute(
             "SELECT adm2_name FROM t WHERE adm2_code = ?", [code]
-        ).fetchone()
-        if found != (name,):
+        ).fetchall()
+        if found != [(name,)]:
             msg = f"{code}: expected {name!r}, found {found}"
             raise SystemExit(msg)
         con.execute("UPDATE t SET adm2_name = ? WHERE adm2_code = ?", [defect, code])
@@ -565,7 +563,7 @@ def check_package(path: Path, cache: Path) -> None:
     counts = {
         x: duckdb.sql(
             f"SELECT count(*) FROM read_parquet('{str(out).replace('{x}', x)}')"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         for x in expected
     }
     if counts != expected:
