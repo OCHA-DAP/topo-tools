@@ -21,7 +21,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/OCHA-DAP/topo-tools-py"
-Documentation = "https://ocha-dap.github.io/topo-tools-js/docs/"
+Documentation = "https://ocha-dap.github.io/topo-tools-js/tools/docs/"
 Repository = "https://github.com/OCHA-DAP/topo-tools-py"
 Issues = "https://github.com/OCHA-DAP/topo-tools-py/issues"
 
