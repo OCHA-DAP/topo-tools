@@ -7,7 +7,7 @@ from topo_tools.core.constants import SNAP_TOLERANCE
 TAU_MATCH_DEFAULT = 0.8
 
 # Minimum IoU for a 1:1 spatially-linked pair to be unchanged/renamed rather
-# than modified. Ported from topo-tools-js's current App.svelte default.
+# than modified. Ported from cod-site's change/App.svelte default.
 TAU_SAME_DEFAULT = 0.98
 
 # Intersection crumbs below this area are dropped as noise before shared-area

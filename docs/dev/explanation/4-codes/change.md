@@ -11,9 +11,8 @@ sidebar:
 classifies every unit as `unchanged` / `renamed` / `modified` / `relocated` /
 `split` / `merge` / `complex` / `created` / `removed`, using spatial overlap
 and, optionally, code/name identity linking. Ported from the sister JS app's
-interactive tool (`topo-tools-js/src/lib/tools/polygon-changelog/`, still
-internally named `polygon-changelog`/`cw_*` from its original name "Boundary
-Cross-walk"); this doc covers what changed in the port and the
+interactive tool (`cod-site/src/lib/tools/change/`, its internal `cw_*`
+tables named for "Boundary Cross-walk"); this doc covers what changed in the port and the
 classification algorithm's non-obvious pieces.
 
 ## Usage
