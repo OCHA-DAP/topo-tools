@@ -614,6 +614,16 @@ def test_close_notches_keeps_only_polygons():
         assert {t for (t,) in types} <= {"POLYGON", "MULTIPOLYGON"}
 
 
+@pytest.mark.parametrize(("rise_m", "notches"), [(15, 1), (22, 0)])
+def test_open_wedge_is_a_notch_only_within_the_move_limit(rise_m, notches):
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _wedge(conn, [(200, rise_m)], b_len_m=150)
+        assert detect_notches(conn, "units", "notches") == notches
+        close_notches(conn, "units")
+        assert detect_notches(conn, "units", "after") == 0
+
+
 def test_wide_wedge_and_t_junction_are_not_notches():
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
