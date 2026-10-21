@@ -253,7 +253,7 @@ def write_yaml(path: Path, data: dict) -> None:
 def collection_metadata(parquet: Path, admin: str, year: int) -> dict:
     land, water = duckdb.execute(
         f"SELECT count(*) FILTER (WHERE water = 'NEE'), count(*) FILTER (WHERE water = 'JA') FROM read_parquet('{parquet}')"
-    ).fetchone()
+    ).fetchall()[0]
     level = LEVEL[admin]
     description = DESCRIPTION[level].format(land=land, water=water, year=year)
     return {
@@ -399,7 +399,7 @@ def collection_agents(parquet: Path, admin: str, year: int) -> str:
         top = con.execute(
             f"SELECT gemeentecode, gemeentenaam, round(ST_Area(geometry) / 1e6, 1) FROM read_parquet('{parquet}') "
             "WHERE water = 'NEE' ORDER BY 3 DESC LIMIT 1"
-        ).fetchone()
+        ).fetchall()[0]
         area = LARGEST_GEMEENTEN.format(url=url, top=f"{top[0]} {top[1]}, {top[2]}")
     else:
         rows = f"{counts['NEE']:,} land {level}, {counts['JA']} water {level} and one `B` row"
@@ -495,7 +495,7 @@ def annotate_schema_map(collection_dir: Path, cache: Path) -> None:
     ).fetchall()
     gaps = duckdb.execute(
         f"SELECT count(*) FROM read_parquet('{cache / 'schema-map_nld_admin2_issues.parquet'}') WHERE kind = 'gap'"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     (collection_dir / "AGENTS.md").write_text(
         template(
             "demo_schema_map",
@@ -564,7 +564,7 @@ def annotate_schema_join(collection_dir: Path) -> None:
     con.execute("LOAD spatial")
     rows = con.execute(
         f"SELECT count(*) FROM read_parquet('{collection_dir / 'nld_admin2.parquet'}')"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     areas = con.execute(
         "SELECT adm1_code, adm1_name, round(ST_Area(geometry) / 1e6)::INT "
         f"FROM read_parquet('{collection_dir / 'nld_admin1.parquet'}') ORDER BY 1"
@@ -587,10 +587,10 @@ def annotate_edge(collection_dir: Path, cache: Path) -> None:
     url = f"{DATA}/nld/demo/edge"
     rows = duckdb.execute(
         f"SELECT count(*) FROM read_parquet('{collection_dir / 'nld_admin2.parquet'}')"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     gaps = duckdb.execute(
         f"SELECT count(*) FROM read_parquet('{cache / 'edge' / 'nld_admin2_matched_issues.parquet'}') WHERE kind = 'gap'"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     (collection_dir / "AGENTS.md").write_text(
         template(
             "demo_edge",
@@ -619,7 +619,7 @@ def annotate_topo(collection_dir: Path, cache: Path) -> None:
         "SELECT count(*) FILTER (kind = 'overlap'), count(*) FILTER (kind = 'gap'), "
         "min(max_width_m), max(max_width_m) "
         f"FROM read_parquet('{cache / 'topo_nld_admin2_issues.parquet'}')"
-    ).fetchone()
+    ).fetchall()[0]
     (collection_dir / "AGENTS.md").write_text(
         template(
             "demo_topo",
@@ -645,7 +645,7 @@ def annotate_code(collection_dir: Path, cache: Path) -> None:
     old_rows, new_rows = (
         duckdb.execute(
             f"SELECT count(*) FROM read_parquet('{collection_dir / f'nld_admin2_{year}.parquet'}')"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         for year in (2022, 2023)
     )
     outcomes = dict(
@@ -680,7 +680,7 @@ def annotate_names(collection_dir: Path) -> None:
             rows=str(
                 duckdb.execute(
                     f"SELECT count(*) FROM read_parquet('{collection_dir / 'nld_admin2.parquet'}')"
-                ).fetchone()[0]
+                ).fetchall()[0][0]
             ),
             edits="\n".join(
                 f"| {code} | {name} | `{ascii(stored)[1:-1]}` | `{kind}` | {'yes' if kind in NAME_FIXES else 'no'} |"
@@ -700,7 +700,7 @@ def annotate_package(collection_dir: Path, cache: Path) -> None:
     def count(name: str) -> int:
         return duckdb.execute(
             f"SELECT count(*) FROM read_parquet('{out / name}')"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
 
     (collection_dir / "AGENTS.md").write_text(
         template(

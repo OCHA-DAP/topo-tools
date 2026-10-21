@@ -89,7 +89,7 @@ def validate(con: duckdb.DuckDBPyConnection, year: int) -> list[str]:
         bad = con.execute(
             f"SELECT count(*) FILTER (WHERE {code} IS NULL), count(*) - count(DISTINCT ({code}, water)), "
             f"count(*) FILTER (WHERE jaar <> {year}) FROM {table}"
-        ).fetchone()
+        ).fetchall()[0]
         if any(bad):
             errors.append(
                 f"{table}: {bad[0]} null codes, {bad[1]} duplicate (code, water) pairs, {bad[2]} rows with another jaar"
@@ -100,7 +100,7 @@ def validate(con: duckdb.DuckDBPyConnection, year: int) -> list[str]:
     ):
         orphans = con.execute(
             f"SELECT count(*) FROM {child}_{year} WHERE {key} NOT IN (SELECT {key} FROM {parent}_{year})"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         if orphans:
             errors.append(
                 f"{child}_{year}: {orphans} rows with a {key} missing from {parent}_{year}"
@@ -108,7 +108,7 @@ def validate(con: duckdb.DuckDBPyConnection, year: int) -> list[str]:
     for name, years in KNOWN_GEMEENTEN.items():
         present = con.execute(
             f"SELECT count(*) > 0 FROM gemeenten_{year} WHERE gemeentenaam = ?", [name]
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         if present != (year in years):
             errors.append(
                 f"gemeenten_{year}: {name} {'present' if present else 'absent'}, expected otherwise"
@@ -128,7 +128,7 @@ def churn(con: duckdb.DuckDBPyConnection) -> dict:
                 SELECT (SELECT count(*) FROM o WHERE c NOT IN (SELECT c FROM n)),
                        (SELECT count(*) FROM n WHERE c NOT IN (SELECT c FROM o))
                 """
-            ).fetchone()
+            ).fetchall()[0]
             report[f"{old}-{new}/{level}"] = {
                 "only_old": only_old,
                 "only_new": only_new,
