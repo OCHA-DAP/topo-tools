@@ -1025,7 +1025,20 @@ def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, n
         FROM _clean_all t
         LEFT JOIN mapping m USING (rnid)
     """)
-    for tmp in ("_clean_all", "_clean_in", "_clean_micro"):
+    # Snapping can narrow a part just over the micro width to under it.
+    if has_micro_polygons(conn, table_out):
+        merge_micro_polygons(conn, table_out, table_out, issues_table="_clean_micro2")
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{issues}" AS
+            SELECT * REPLACE (
+                'micro-polygon-' || row_number() OVER (ORDER BY unit_a, hash(geom))
+                    AS key
+            )
+            FROM (
+                SELECT * FROM "{issues}" UNION ALL BY NAME SELECT * FROM _clean_micro2
+            )
+        """)
+    for tmp in ("_clean_all", "_clean_in", "_clean_micro", "_clean_micro2"):
         if tmp != micro_issues_table:
             conn.execute(f"DROP TABLE IF EXISTS {tmp}")
 
