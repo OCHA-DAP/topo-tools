@@ -44,12 +44,74 @@ def check_no_erosion(
         raise RuntimeError(msg)
 
 
+def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
+    conn: DuckDBPyConnection,
+    left: str,
+    right: str,
+    out: str,
+    *,
+    on: str = "TRUE",
+    tol: float = SNAP_TOLERANCE,
+) -> None:
+    """Create `out` (pid, near_pid): left/right parts within tol, `on` over l and r.
+
+    Both tables need pid, geom and bbox columns; heavy parts are compared split.
+    """
+    box = (
+        "{b}.xmin <= {a}.xmax + {t} AND {b}.xmax >= {a}.xmin - {t} "
+        "AND {b}.ymin <= {a}.ymax + {t} AND {b}.ymax >= {a}.ymin - {t}"
+    )
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{out}_cand" AS
+        SELECT l.pid, r.pid AS near_pid
+        FROM "{left}" l JOIN "{right}" r ON {box.format(a="l", b="r", t=tol)} AND ({on})
+    """)
+    cand_l = f'SELECT pid FROM "{out}_cand"'
+    cand_r = f'SELECT near_pid FROM "{out}_cand"'
+    sides = {"l": (left, cand_l), "r": (right, cand_r)}
+    if left == right:
+        sides = {"l": (left, f"{cand_l} UNION {cand_r}")}
+    for side, (table, pids) in sides.items():
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{out}_{side}" AS
+            WITH s AS (
+                SELECT pid, UNNEST({subdivide_sql("geom")}) AS geom FROM "{table}"
+                WHERE pid IN ({pids})
+            )
+            SELECT pid, geom, {bbox_columns_sql("geom")} FROM s
+        """)
+    rp = f"{out}_{'l' if left == right else 'r'}"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{out}" AS
+        WITH pp AS (
+            SELECT a.pid, b.pid AS near_pid, a.geom AS ag, b.geom AS bg
+            FROM "{out}_l" a JOIN "{rp}" b ON {box.format(a="a", b="b", t=tol)}
+        )
+        SELECT DISTINCT pid, near_pid FROM pp
+        SEMI JOIN "{out}_cand" USING (pid, near_pid) WHERE ST_DWithin(ag, bg, {tol})
+    """)
+    for side in ("cand", "l", "r"):
+        conn.execute(f'DROP TABLE IF EXISTS "{out}_{side}"')
+
+
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     """Return True if `table.geom` has any overlaps or unmatched shared edges."""
-    return conn.execute(f"""--sql
+    # A part with no other part within the gap width can't hold an invalid edge, and
+    # GEOS rebuilds a large neighbour's index per such part.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _inv_parts AS
+        WITH d AS (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
+        SELECT row_number() OVER () AS pid, geom, {bbox_columns_sql("geom")} FROM d
+    """)
+    _near_part_pairs(conn, "_inv_parts", "_inv_parts", "_inv_near", on="l.pid < r.pid")
+    invalid = conn.execute(f"""--sql
         SELECT ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) IS NOT NULL
-        FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
+        FROM _inv_parts
+        WHERE pid IN (SELECT pid FROM _inv_near UNION SELECT near_pid FROM _inv_near)
     """).fetchall()[0][0]
+    for tmp in ("_inv_parts", "_inv_near"):
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+    return invalid
 
 
 def check_invalid_edges(conn: DuckDBPyConnection, table: str) -> None:
@@ -303,6 +365,13 @@ def merge_micro_polygons(
         FROM parts
     """)
     count = conn.execute("SELECT count(*) FROM _micro_parts WHERE micro").fetchone()[0]
+    _near_part_pairs(
+        conn,
+        "_micro_parts",
+        "_micro_parts",
+        "_micro_near",
+        on="l.micro AND NOT r.micro",
+    )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _micro_dest AS
         WITH m AS (SELECT * FROM _micro_parts WHERE micro),
@@ -310,9 +379,7 @@ def merge_micro_polygons(
         pairs AS (
             SELECT m.pid, n.rnid AS dest_rnid, n.fid AS dest_fid,
                    ST_Area(ST_Intersection(ST_Buffer(m.geom, {tol}), n.geom)) AS w
-            FROM m JOIN n
-              ON n.xmin <= m.xmax + {tol} AND n.xmax >= m.xmin - {tol}
-             AND n.ymin <= m.ymax + {tol} AND n.ymax >= m.ymin - {tol}
+            FROM _micro_near p JOIN m USING (pid) JOIN n ON n.pid = p.near_pid
         )
         SELECT m.pid, m.rnid, m.fid, m.source_file, m.geom, p.dest_rnid, p.dest_fid
         FROM m LEFT JOIN (
@@ -359,7 +426,7 @@ def merge_micro_polygons(
         WHERE r.rnid IS NOT NULL OR t.rnid NOT IN (SELECT rnid FROM touched)
         ORDER BY t.rnid
     """)
-    for tmp in ("_micro_all", "_micro_parts", "_micro_dest"):
+    for tmp in ("_micro_all", "_micro_parts", "_micro_near", "_micro_dest"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
     if count:
         logger.info("merged or dropped %d micro-polygon part(s) in %s", count, table_in)
@@ -502,18 +569,20 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     """)
     # Only parts near a detached piece can be its destination; scanning every
     # part of a whole-country overlay_fid here exhausts memory at scale.
-    conn.execute(f"""--sql
+    _near_part_pairs(
+        conn,
+        "_det_d",
+        "_det_parts",
+        "_det_npair",
+        on="l.overlay_fid IS NOT DISTINCT FROM r.overlay_fid",
+    )
+    conn.execute("""--sql
         CREATE OR REPLACE TABLE _det_near AS
         SELECT n.pid, n.rnid, n.fid, n.overlay_fid, n.geom,
                n.xmin, n.xmax, n.ymin, n.ymax
         FROM _det_parts n
         WHERE n.pid NOT IN (SELECT pid FROM _det_d WHERE small IS NOT FALSE)
-          AND EXISTS (
-            SELECT 1 FROM _det_d s
-            WHERE n.overlay_fid IS NOT DISTINCT FROM s.overlay_fid
-              AND n.xmin <= s.xmax + {tol} AND n.xmax >= s.xmin - {tol}
-              AND n.ymin <= s.ymax + {tol} AND n.ymax >= s.ymin - {tol}
-          )
+          AND n.pid IN (SELECT near_pid FROM _det_npair)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_sbuf AS
@@ -644,6 +713,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
         "_det_group",
         "_det_rank",
         "_det_d",
+        "_det_npair",
         "_det_near",
         "_det_sbuf",
         "_det_nseg",
