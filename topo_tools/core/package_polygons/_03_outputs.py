@@ -43,7 +43,7 @@ def _export_one(
     )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{issues_table}" AS
-        {gap_issues_sql(conn, item.table)}
+        {gap_issues_sql(conn, item.table, coverage=True)}
         {micro}
     """)
     remaining = conn.execute(f"""--sql

@@ -156,11 +156,16 @@ def _fix(
     collapsed, drifted = _defect_unrelated_fid_outcomes(conn, name, source, out_table)
     conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp0"')
     bad_types = _bad_geometry_type_count(conn, out_table)
-    narrow_gap_remains = gap_maximum_width_deg is not None and has_gaps(
-        conn, out_table, gap_maximum_width=gap_maximum_width_deg
+    invalid_edges = has_invalid_edges(conn, out_table)
+    narrow_gap_remains = (
+        not invalid_edges
+        and gap_maximum_width_deg is not None
+        and has_gaps(
+            conn, out_table, gap_maximum_width=gap_maximum_width_deg, coverage=True
+        )
     )
     if (
-        has_invalid_edges(conn, out_table)
+        invalid_edges
         or narrow_gap_remains
         or output_area < min_area
         or collapsed
@@ -170,9 +175,9 @@ def _fix(
             f"invalid, collapsed, or under-filled coverage-clean output (area "
             f"{output_area} vs input {input_area}, {collapsed} fid(s) with no "
             f"detected defect collapsed to empty, {bad_types} fid(s) with a "
-            f"non-polygon geometry type, narrow gap remaining: "
-            f"{narrow_gap_remains}) at gap_maximum_width={gap_maximum_width_deg} "
-            f"on {source}"
+            f"non-polygon geometry type, invalid edges: {invalid_edges}, narrow "
+            f"gap remaining: {narrow_gap_remains}) at "
+            f"gap_maximum_width={gap_maximum_width_deg} on {source}"
         )
         raise RuntimeError(msg)
 

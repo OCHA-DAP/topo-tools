@@ -73,7 +73,7 @@ def _build_issues(
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_04_dropped"
         """,
-        gap_issues_sql(conn, table, within=_clip_targets_sql(name)),
+        gap_issues_sql(conn, table, within=_clip_targets_sql(name), coverage=True),
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_04_detached"
         """,

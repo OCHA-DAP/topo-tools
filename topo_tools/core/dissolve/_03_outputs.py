@@ -16,7 +16,7 @@ def _build_issues(conn: DuckDBPyConnection, name: str) -> None:
     table = f"{name}_02"
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03" AS
-        {gap_issues_sql(conn, table)}
+        {gap_issues_sql(conn, table, coverage=True)}
     """)
 
 

@@ -167,17 +167,27 @@ def check_invalid_edges(conn: DuckDBPyConnection, table: str) -> None:
         raise RuntimeError(error)
 
 
-def gap_geometries_sql(table: str) -> str:
+def _union_sql(table: str, *, coverage: bool) -> str:
+    """Build SQL for a one-row `g` union of `table.geom`'s polygon parts.
+
+    coverage=True needs a table that has passed has_invalid_edges.
+    """
+    agg = "ST_CoverageUnion_Agg" if coverage else "ST_Union_Agg"
+    return f"""
+        SELECT {agg}(geom) AS g
+        FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
+        WHERE ST_Dimension(geom) = 2
+    """
+
+
+def gap_geometries_sql(table: str, *, coverage: bool = False) -> str:
     """Build SQL for a subquery of individual fully-enclosed interior-hole geometries.
 
     Dumps the union into parts first: ST_NumInteriorRings returns NULL on a
     MultiPolygon, and ST_Difference needs one polygon's own exterior ring.
     """
     return f"""(
-        WITH u AS (
-            SELECT ST_Union_Agg(geom) AS g
-            FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
-        ),
+        WITH u AS ({_union_sql(table, coverage=coverage)}),
         parts AS (
             SELECT (UNNEST(ST_Dump(g))).geom AS poly FROM u WHERE g IS NOT NULL
         ),
@@ -197,6 +207,7 @@ def gap_issues_sql(
     *,
     min_width: float = SNAP_TOLERANCE,
     within: str | None = None,
+    coverage: bool = False,
 ) -> str:
     """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema.
 
@@ -216,7 +227,7 @@ def gap_issues_sql(
                NULL::DOUBLE AS unit_b_area_change_m2,
                NULL::DOUBLE AS filled_area_m2, FALSE AS fixed,
                NULL::VARCHAR AS source_file, geom
-        FROM {gap_geometries_sql(table)} g
+        FROM {gap_geometries_sql(table, coverage=coverage)} g
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
         {"" if within is None else _point_within_sql("g.geom", within)}
     """
@@ -282,7 +293,11 @@ def assign_issue_rows_sql(name: str, *, source_file_expr: str = "NULL::VARCHAR")
 
 
 def has_gaps(
-    conn: DuckDBPyConnection, table: str, *, gap_maximum_width: float = SNAP_TOLERANCE
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    gap_maximum_width: float = SNAP_TOLERANCE,
+    coverage: bool = False,
 ) -> bool:
     """Return True if `table.geom` has an interior hole at or below gap_maximum_width.
 
@@ -291,10 +306,7 @@ def has_gaps(
     """
     if gap_maximum_width == 0:
         max_interior_rings = conn.execute(f"""--sql
-            WITH u AS (
-                SELECT ST_Union_Agg(geom) AS g
-                FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
-            )
+            WITH u AS ({_union_sql(table, coverage=coverage)})
             SELECT MAX(ST_NumInteriorRings(part))
             FROM (SELECT UNNEST(ST_Dump(g)).geom AS part FROM u)
         """).fetchall()[0][0]
@@ -302,17 +314,21 @@ def has_gaps(
 
     return conn.execute(f"""--sql
         SELECT EXISTS (
-            SELECT 1 FROM {gap_geometries_sql(table)} h
+            SELECT 1 FROM {gap_geometries_sql(table, coverage=coverage)} h
             WHERE (ST_MaximumInscribedCircle(h.geom)).radius * 2 <= {gap_maximum_width}
         )
     """).fetchall()[0][0]
 
 
 def check_gaps(
-    conn: DuckDBPyConnection, table: str, *, gap_maximum_width: float = SNAP_TOLERANCE
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    gap_maximum_width: float = SNAP_TOLERANCE,
+    coverage: bool = False,
 ) -> None:
     """Raise RuntimeError if `table.geom`'s union has a qualifying interior hole."""
-    if has_gaps(conn, table, gap_maximum_width=gap_maximum_width):
+    if has_gaps(conn, table, gap_maximum_width=gap_maximum_width, coverage=coverage):
         error = f"GAPS: {table}"
         logger.error(error)
         raise RuntimeError(error)
@@ -949,7 +965,9 @@ def has_valid_topology(
     """Return True if `table.geom` has no overlap, edge mismatch, gap or micro part."""
     return (
         not has_invalid_edges(conn, table)
-        and not has_gaps(conn, table, gap_maximum_width=gap_maximum_width)
+        and not has_gaps(
+            conn, table, gap_maximum_width=gap_maximum_width, coverage=True
+        )
         and not has_micro_polygons(conn, table)
     )
 
@@ -959,7 +977,7 @@ def check_valid_topology(
 ) -> None:
     """Raise RuntimeError on any overlap, edge mismatch, gap or micro-polygon."""
     check_invalid_edges(conn, table)
-    check_gaps(conn, table, gap_maximum_width=gap_maximum_width)
+    check_gaps(conn, table, gap_maximum_width=gap_maximum_width, coverage=True)
     check_micro_polygons(conn, table)
 
 

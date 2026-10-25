@@ -18,7 +18,7 @@ logger = getLogger(__name__)
 def _build_issues(conn: DuckDBPyConnection, name: str) -> None:
     """Build `{name}_03`: non-noise gaps left after coverage-clean, plus micro rows."""
     table = f"{name}_02"
-    parts = [gap_issues_sql(conn, table)]
+    parts = [gap_issues_sql(conn, table, coverage=True)]
     if micro := micro_issues_sql(conn, table):
         parts.append(micro)
     conn.execute(f"""--sql
