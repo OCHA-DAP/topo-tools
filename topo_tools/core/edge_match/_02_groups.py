@@ -12,6 +12,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.constants import PARQUET_OPTS
 from topo_tools.core.coverage import check_no_erosion, check_valid_topology
 from topo_tools.core.duckdb_utils import (
     get_connection,
@@ -133,7 +134,7 @@ def _run_group(  # noqa: PLR0913, PLR0917
     group_dir.mkdir(parents=True, exist_ok=True)
 
     conn.execute(f"""--sql
-        COPY ({input_select_sql}) TO '{group_dir / "input.parquet"}' (FORMAT PARQUET)
+        COPY ({input_select_sql}) TO '{group_dir / "input.parquet"}' {PARQUET_OPTS}
     """)
 
     # spawn re-imports from scratch (no logging config); the worker puts an
@@ -165,20 +166,16 @@ def _append_to_reassembly(
     exists = conn.execute(
         "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [f"{name}_03a"]
     ).fetchone()
-    # Parquet round-trips an untagged geom column as 'OGC:CRS84'; re-tag to
-    # match this table's own schema before INSERT INTO can accept it.
     if exists is None:
         conn.execute(f"""--sql
             CREATE TABLE "{name}_03a" AS
-            SELECT * EXCLUDE (geom), ST_SetCRS(geom, 'EPSG:4326') AS geom,
-                   {overlay_fid} AS overlay_fid
+            SELECT *, {overlay_fid} AS overlay_fid
             FROM read_parquet('{output_path}')
         """)
     else:
         conn.execute(f"""--sql
             INSERT INTO "{name}_03a" BY NAME
-            SELECT * EXCLUDE (geom), ST_SetCRS(geom, 'EPSG:4326') AS geom,
-                   {overlay_fid} AS overlay_fid
+            SELECT *, {overlay_fid} AS overlay_fid
             FROM read_parquet('{output_path}')
         """)
 
@@ -233,6 +230,6 @@ def _group_worker(
 
         conn.execute(f"""--sql
             COPY (SELECT * FROM "group_05")
-            TO '{group_dir / "output.parquet"}' (FORMAT PARQUET)
+            TO '{group_dir / "output.parquet"}' {PARQUET_OPTS}
         """)
         conn.close()

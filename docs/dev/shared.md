@@ -107,6 +107,12 @@ in sync.
   tool MUST log a warning. `schema-map` then keeps crosswalk-row column
   order.
 
+## Geometry CRS
+
+- Every tool MUST tag geometry `EPSG:4326` at read time (a CRS-less source is
+  assumed to already be EPSG:4326), keep it tagged in every internal table,
+  and write every Parquet file, intermediate or final, as GeoParquet V2.
+
 ## CSV outputs
 
 - Every CSV a tool writes (`schema-map`'s crosswalk, `change`'s changelog,

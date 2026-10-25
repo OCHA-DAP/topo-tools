@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.constants import PARQUET_OPTS
 from topo_tools.core.coverage import merge_detached_parts
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
@@ -65,11 +66,11 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
             COPY (
                 SELECT * EXCLUDE (overlay_fid) FROM "{table_in}"
                 WHERE overlay_fid = {overlay_fid}
-            ) TO '{group_dir / "input.parquet"}' (FORMAT PARQUET)
+            ) TO '{group_dir / "input.parquet"}' {PARQUET_OPTS}
         """)
         conn.execute(f"""--sql
             COPY (SELECT geom FROM {overlay_source} WHERE fid = {overlay_fid})
-            TO '{group_dir / "overlay.parquet"}' (FORMAT PARQUET)
+            TO '{group_dir / "overlay.parquet"}' {PARQUET_OPTS}
         """)
 
         exitcode, err = spawn_worker(_clip_one_worker, (group_dir, threads, debug))
@@ -118,17 +119,13 @@ def _clip_one_worker(
         log_file("clip", group_dir) if debug else contextlib.nullcontext(),
     ):
         worker_conn = get_connection("clip", group_dir, threads=threads, debug=debug)
-        # Parquet round-trips an untagged column as 'OGC:CRS84', which
-        # ST_Intersection then rejects against a sibling tagged 'EPSG:4326'.
         worker_conn.execute(f"""--sql
                 CREATE TABLE clip_one AS
-                SELECT ST_SetCRS(geom, 'EPSG:4326') AS geom
-                FROM read_parquet('{group_dir / "overlay.parquet"}')
+                SELECT geom FROM read_parquet('{group_dir / "overlay.parquet"}')
             """)
         worker_conn.execute(f"""--sql
                 CREATE TABLE clip_inputs AS
-                SELECT * EXCLUDE (geom), ST_SetCRS(geom, 'EPSG:4326') AS geom,
-                       {bbox_columns_sql("geom")}
+                SELECT *, {bbox_columns_sql("geom")}
                 FROM read_parquet('{group_dir / "input.parquet"}')
             """)
         subdivide_boundary(worker_conn, "clip_one", "geom", "clip_btile_raw")
@@ -143,9 +140,9 @@ def _clip_one_worker(
                 CREATE TABLE clip_result AS
                 SELECT c.* EXCLUDE (geom, xmin, xmax, ymin, ymax),
                        c.geom AS orig_geom,
-                       ST_SetCRS(ST_Multi(ST_CollectionExtract(
+                       ST_Multi(ST_CollectionExtract(
                            ST_Union_Agg(ST_Intersection(c.geom, b.geom)), 3
-                       ))::GEOMETRY, 'EPSG:4326') AS geom
+                       )) AS geom
                 FROM clip_inputs c
                 LEFT JOIN clip_btile b
                   ON b.xmax >= c.xmin AND b.xmin <= c.xmax
@@ -156,13 +153,13 @@ def _clip_one_worker(
                 COPY (
                     SELECT * EXCLUDE (orig_geom) FROM clip_result
                     WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom) ORDER BY fid
-                ) TO '{group_dir / "output.parquet"}' (FORMAT PARQUET)
+                ) TO '{group_dir / "output.parquet"}' {PARQUET_OPTS}
             """)
         worker_conn.execute(f"""--sql
                 COPY (
                     SELECT * EXCLUDE (geom) RENAME (orig_geom AS geom)
                     FROM clip_result WHERE geom IS NULL OR ST_IsEmpty(geom)
                     ORDER BY fid
-                ) TO '{group_dir / "dropped.parquet"}' (FORMAT PARQUET)
+                ) TO '{group_dir / "dropped.parquet"}' {PARQUET_OPTS}
             """)
         worker_conn.close()

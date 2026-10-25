@@ -233,11 +233,9 @@ Data crosses the process boundary as small Parquet files (`input.parquet`,
 `overlay.parquet` in, `output.parquet` out), never a shared connection: a
 DuckDB file is single-writer, and the group's own DuckDB file
 (`group.duckdb`) lives entirely inside that group's private temp directory,
-discarded when the group finishes (unless `--debug`). Verified empirically
-that a `GEOMETRY` column round-trips correctly through
-`COPY ... TO (FORMAT PARQUET)` + `read_parquet(...)` in the installed DuckDB
-version; no `GEOPARQUET_VERSION` option is needed for this internal,
-DuckDB-to-DuckDB round trip.
+discarded when the group finishes (unless `--debug`). These files are
+written with `PARQUET_OPTS` (`core/constants.py`, GeoParquet V2), which keeps
+each geometry's `EPSG:4326` CRS exact through the round trip.
 
 `edge_match()` raises only if **no** group produced any output at all (see
 "Two subprocess generations" above for the separate, stricter clip-stage

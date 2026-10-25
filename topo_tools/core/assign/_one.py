@@ -4,7 +4,11 @@ from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.constants import CLIP_TILE_MIN_VERTICES, EQUAL_AREA_CRS
+from topo_tools.core.constants import (
+    CLIP_TILE_MIN_VERTICES,
+    EQUAL_AREA_CRS,
+    GEOMETRY_TYPE,
+)
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.edge_clip import subdivide_boundary
 
@@ -53,7 +57,7 @@ def prepare_overlay_tiles(
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_overlay_tiles" (
-            overlay_fid BIGINT, geom GEOMETRY,
+            overlay_fid BIGINT, geom {GEOMETRY_TYPE},
             xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE
         )
     """)

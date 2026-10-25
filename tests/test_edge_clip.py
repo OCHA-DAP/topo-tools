@@ -81,6 +81,26 @@ def test_clip_bounds_output_to_overlay(synthetic_inputs, synthetic_overlays, tmp
     assert area == pytest.approx(_OVERLAY_A_AREA, abs=1e-6)
 
 
+def test_clip_crs_less_input_against_tagged_overlay(synthetic_overlays, tmp_path):
+    input_path = tmp_path / "children.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(f"""
+            COPY (SELECT 1 AS id, ST_GeomFromText('{_INPUT_ROWS[0][1]}') AS geom)
+            TO '{input_path}' (FORMAT PARQUET, GEOPARQUET_VERSION 'NONE')
+        """)
+    output_path = tmp_path / "out.parquet"
+    clip(input_path, synthetic_overlays, output_path, overwrite=True)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        geom_type, area = conn.execute(
+            f"SELECT typeof(geometry), ST_Area(geometry) FROM '{output_path}'"
+        ).fetchone()
+    assert geom_type == "GEOMETRY('EPSG:4326')"
+    assert area == pytest.approx(_OVERLAY_A_AREA, abs=1e-6)
+
+
 def test_clip_majority_vote_drops_outlier(synthetic_overlays, tmp_path):
     """Two input features overshoot overlay A, one overshoots overlay B.
 

@@ -29,6 +29,11 @@ NOTCH_WINDOW_MARGIN = 0.002
 # Equal Earth, used by match/change to rank/compute areas for cross-polygon
 # area comparison (never stored).
 EQUAL_AREA_CRS = "EPSG:8857"
+# Every geometry is read, stored, and written tagged with this CRS.
+CRS = "EPSG:4326"
+GEOMETRY_TYPE = f"GEOMETRY('{CRS}')"
+# Intermediate (subprocess hand-off) Parquet; V1 GeoParquet tags CRS-less as CRS84.
+PARQUET_OPTS = "(FORMAT PARQUET, GEOPARQUET_VERSION 'V2')"
 # Column names DuckDB's GDAL COPY writer treats specially as the feature's
 # implicit FID; COPY (FORMAT GDAL) fails outright if either is present.
 RESERVED_COLUMN_NAMES = ("fid", "OGC_FID")

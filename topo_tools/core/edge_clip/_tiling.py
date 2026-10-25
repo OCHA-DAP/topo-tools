@@ -9,6 +9,7 @@ from topo_tools.core.constants import (
     CLIP_TILE_MIN_CELL,
     CLIP_TILE_MIN_VERTICES,
     CLIP_TILE_TARGET_VERTICES,
+    GEOMETRY_TYPE,
 )
 
 
@@ -70,7 +71,7 @@ def subdivide_boundary(
         ).fetchall()
     ]
 
-    conn.execute(f'CREATE OR REPLACE TABLE "{out_table}" (geom GEOMETRY)')
+    conn.execute(f'CREATE OR REPLACE TABLE "{out_table}" (geom {GEOMETRY_TYPE})')
     for i in occupied:
         sx0, sx1 = x0 + i * cell, x0 + (i + 1) * cell
         sy0, sy1 = y0, y1
