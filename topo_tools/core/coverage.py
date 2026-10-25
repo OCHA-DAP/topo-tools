@@ -8,7 +8,6 @@ from topo_tools.core.constants import (
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
-    DETACHED_SEGMENT_MAX_VERTICES,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
     NOTCH_SPACING,
@@ -17,7 +16,7 @@ from topo_tools.core.constants import (
     SNAP_ESCALATION_STEP,
     SNAP_TOLERANCE,
 )
-from topo_tools.core.duckdb_utils import bbox_columns_sql
+from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 from topo_tools.core.units import METERS_PER_DEGREE, m2_per_deg2_factor
 
 logger = getLogger(__name__)
@@ -523,15 +522,16 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
         FROM _det_d
     """)
     # Joined pairs copy the neighbour side's geometry per row, so a whole
-    # high-vertex neighbour part per pair exhausts memory; short segments don't.
+    # high-vertex neighbour part per pair exhausts memory; split boundaries don't.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_nseg AS
-        WITH segs AS (
-            SELECT pid, rnid, fid, overlay_fid,
-                   UNNEST(ST_Dump(ST_Subdivide(
-                       ST_Boundary(geom), {DETACHED_SEGMENT_MAX_VERTICES}
-                   ))).geom AS seg
+        WITH b AS (
+            SELECT pid, rnid, fid, overlay_fid, ST_Boundary(geom) AS bnd
             FROM _det_near
+        ),
+        segs AS (
+            SELECT pid, rnid, fid, overlay_fid, UNNEST({subdivide_sql("bnd")}) AS seg
+            FROM b
         )
         SELECT *, {bbox_columns_sql("seg")} FROM segs
     """)
@@ -735,6 +735,41 @@ def _classify_detached_candidates(
               WHERE outcome = 'candidate')
     """)
     _owned_original_parts(conn, "_det_probe", "_det_src")
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _det_su AS
+        SELECT s.pid, d.overlay_fid, ST_Union_Agg(s.geom) AS geom
+        FROM _det_src s JOIN _det_dest d USING (pid)
+        GROUP BY s.pid, d.overlay_fid
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _det_env AS
+        SELECT pid, overlay_fid,
+               ST_XMin(geom) - 0.01 AS xmin, ST_XMax(geom) + 0.01 AS xmax,
+               ST_YMin(geom) - 0.01 AS ymin, ST_YMax(geom) + 0.01 AS ymax
+        FROM _det_su
+    """)
+    # Split once so each piece joins only the overlay pieces near it, never the
+    # whole (possibly multi-million-vertex) overlay polygon per piece.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _det_ovtile AS
+        WITH t AS (
+            SELECT ov.fid AS overlay_fid, UNNEST({subdivide_sql("ov.geom")}) AS geom
+            FROM {overlay_source} ov
+            WHERE ov.fid IN (SELECT overlay_fid FROM _det_su)
+        )
+        SELECT *, {bbox_columns_sql("geom")} FROM t
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _det_ovclip AS
+        SELECT e.pid, ST_Union_Agg(ST_CollectionExtract(ST_Intersection(
+                   t.geom, ST_MakeEnvelope(e.xmin, e.ymin, e.xmax, e.ymax)
+               ), 3)) AS geom
+        FROM _det_env e JOIN _det_ovtile t
+          ON t.overlay_fid = e.overlay_fid
+         AND t.xmin <= e.xmax AND t.xmax >= e.xmin
+         AND t.ymin <= e.ymax AND t.ymax >= e.ymin
+        GROUP BY e.pid
+    """)
     # Original land the overlay clipped away beside a piece (the "neck") is
     # large when the clip sliced across the unit, near zero for a drawn lobe.
     conn.execute(f"""--sql
@@ -743,18 +778,17 @@ def _classify_detached_candidates(
             SELECT pid, fid, overlay_fid, area, geom FROM _det_dest
             WHERE outcome = 'candidate'
         ),
-        su AS (
-            SELECT pid, ST_Union_Agg(geom) AS geom FROM _det_src GROUP BY pid
-        ),
+        su AS (SELECT pid, geom FROM _det_su),
         outside AS (
-            SELECT c.pid, UNNEST(ST_Dump(ST_Difference(
-                su.geom, ST_CollectionExtract(ST_Intersection(ov.geom, ST_MakeEnvelope(
-                    ST_XMin(su.geom) - 0.01, ST_YMin(su.geom) - 0.01,
-                    ST_XMax(su.geom) + 0.01, ST_YMax(su.geom) + 0.01
-                )), 3)
-            ))).geom AS geom
-            FROM c JOIN su USING (pid) JOIN {overlay_source} ov
-              ON ov.fid = c.overlay_fid
+            SELECT c.pid, UNNEST(ST_Dump(
+                CASE WHEN oc.geom IS NULL THEN su.geom
+                     ELSE ST_Difference(su.geom, ST_CollectionExtract(oc.geom, 3))
+                END
+            )).geom AS geom
+            FROM c JOIN su USING (pid)
+            SEMI JOIN (SELECT DISTINCT overlay_fid FROM _det_ovtile) ex
+              ON ex.overlay_fid = c.overlay_fid
+            LEFT JOIN _det_ovclip oc USING (pid)
         ),
         neck AS (
             SELECT c.pid, sum(ST_Area(o.geom)) AS neck_area
@@ -777,7 +811,15 @@ def _classify_detached_candidates(
             ELSE 'lobe' END
         FROM _det_rule r WHERE r.pid = d.pid
     """)
-    for tmp in ("_det_rule", "_det_probe", "_det_src"):
+    for tmp in (
+        "_det_rule",
+        "_det_probe",
+        "_det_src",
+        "_det_su",
+        "_det_env",
+        "_det_ovtile",
+        "_det_ovclip",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
 
 

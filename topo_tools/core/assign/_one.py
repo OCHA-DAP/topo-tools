@@ -5,13 +5,12 @@ from logging import getLogger
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import (
-    CLIP_TILE_MIN_VERTICES,
     CRS,
     EQUAL_AREA_CRS,
     GEOMETRY_TYPE,
+    SUBDIVIDE_MIN_VERTICES,
 )
-from topo_tools.core.duckdb_utils import bbox_columns_sql
-from topo_tools.core.edge_clip import subdivide_boundary
+from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 
 logger = getLogger(__name__)
 
@@ -69,32 +68,25 @@ def prepare_overlay_tiles(
             xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE
         )
     """)
-    heavy_parts = conn.execute(f"""--sql
-        SELECT part_id, fid FROM "{name}_02_overlay_parts"
-        WHERE n_points >= {CLIP_TILE_MIN_VERTICES}
-    """).fetchall()
-    if heavy_parts:
+    heavy = conn.execute(f"""--sql
+        SELECT count(*) FROM "{name}_02_overlay_parts"
+        WHERE n_points >= {SUBDIVIDE_MIN_VERTICES}
+    """).fetchone()[0]
+    if heavy:
         logger.info(
-            "assign-one: tiling %d heavy overlay part(s) (>= %d vertices)",
-            len(heavy_parts),
-            CLIP_TILE_MIN_VERTICES,
+            "assign-one: splitting %d heavy overlay part(s) (>= %d vertices)",
+            heavy,
+            SUBDIVIDE_MIN_VERTICES,
         )
-    for part_id, overlay_fid in heavy_parts:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{name}_02_heavy_src" AS
-            SELECT part_geom AS geom FROM "{name}_02_overlay_parts"
-            WHERE part_id = {part_id}
-        """)
-        subdivide_boundary(
-            conn, f"{name}_02_heavy_src", "geom", f"{name}_02_heavy_tiles_raw"
+    conn.execute(f"""--sql
+        INSERT INTO "{name}_02_overlay_tiles" BY NAME
+        WITH t AS (
+            SELECT fid AS overlay_fid, UNNEST({subdivide_sql("part_geom")}) AS geom
+            FROM "{name}_02_overlay_parts"
+            WHERE n_points >= {SUBDIVIDE_MIN_VERTICES}
         )
-        conn.execute(f"""--sql
-            INSERT INTO "{name}_02_overlay_tiles" BY NAME
-            SELECT {overlay_fid} AS overlay_fid, geom, {bbox_columns_sql("geom")}
-            FROM "{name}_02_heavy_tiles_raw"
-        """)
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_heavy_src"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_heavy_tiles_raw"')
+        SELECT overlay_fid, geom, {bbox_columns_sql("geom")} FROM t
+    """)
 
 
 def _build_pairs(
@@ -130,7 +122,7 @@ def _build_pairs(
           ON p.xmax >= c.xmin AND p.xmin <= c.xmax
          AND p.ymax >= c.ymin AND p.ymin <= c.ymax
          AND ST_Intersects(c.part_geom, p.part_geom)
-        WHERE p.n_points < {CLIP_TILE_MIN_VERTICES}
+        WHERE p.n_points < {SUBDIVIDE_MIN_VERTICES}
         GROUP BY c.fid, p.fid
     """)
 

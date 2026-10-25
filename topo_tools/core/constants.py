@@ -17,8 +17,6 @@ DETACHED_MAX_ORIGINAL_SHARE = 0.5
 # Original land clipped away next to a piece, over its area; below this the
 # original drew the piece as a lobe joined only at a pinch point.
 DETACHED_MIN_NECK_RATIO = 0.1
-# Neighbour boundaries are split to this many vertices before pairing with pieces.
-DETACHED_SEGMENT_MAX_VERTICES = 256
 # Notches: unshared edges of two units within NOTCH_SPACING / 8 of each other
 # for at least NOTCH_MIN_SCORE spacings, edge-extend's default point spacing.
 NOTCH_SPACING = 0.0002
@@ -126,13 +124,10 @@ def is_noise_column(name: str) -> bool:
     )
 
 
-# core.clip skips grid-tiling below this vertex count and clips directly.
-CLIP_TILE_MIN_VERTICES = 5000
-# Target vertices per tile once tiling triggers; cell size is solved from
-# this against each overlay polygon's vertex density (see _adaptive_cell_size).
-CLIP_TILE_TARGET_VERTICES = 1350
-CLIP_TILE_MIN_CELL = 0.05
-CLIP_TILE_MAX_CELL = 5.0
+# Geometries with at least this many vertices are split before per-row joins.
+SUBDIVIDE_MIN_VERTICES = 5000
+# Most vertices any split piece may have.
+SUBDIVIDE_MAX_VERTICES = 1350
 
 _PARQUET_EXPORT = (
     "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"

@@ -14,10 +14,9 @@ from topo_tools.core.duckdb_utils import (
     get_connection,
     log_file,
     spawn_worker,
+    subdivide_sql,
     worker_result,
 )
-
-from ._tiling import subdivide_boundary
 
 if TYPE_CHECKING:
     import multiprocessing
@@ -128,12 +127,17 @@ def _clip_one_worker(
                 SELECT *, {bbox_columns_sql("geom")}
                 FROM read_parquet('{group_dir / "input.parquet"}')
             """)
-        subdivide_boundary(worker_conn, "clip_one", "geom", "clip_btile_raw")
+        if not worker_conn.execute(
+            "SELECT count(*) FROM clip_one WHERE geom IS NOT NULL"
+        ).fetchone()[0]:
+            msg = "no overlay geometry for this overlay_fid"
+            raise ValueError(msg)
         # Bbox columns precomputed here, not called inline in the join below:
         # DuckDB re-evaluates an inline envelope call per comparison, not per row.
         worker_conn.execute(f"""--sql
                 CREATE TABLE clip_btile AS
-                SELECT geom, {bbox_columns_sql("geom")} FROM clip_btile_raw
+                WITH t AS (SELECT UNNEST({subdivide_sql("geom")}) AS geom FROM clip_one)
+                SELECT geom, {bbox_columns_sql("geom")} FROM t
             """)
         # LEFT JOIN: an input polygon whose bbox misses every tile still emits a row.
         worker_conn.execute("""--sql

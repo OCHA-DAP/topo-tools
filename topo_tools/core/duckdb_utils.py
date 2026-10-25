@@ -17,7 +17,12 @@ from typing import NoReturn
 from duckdb import DuckDBPyConnection
 from duckdb import connect as duckdb_connect
 
-from topo_tools.core.constants import PARQUET_OPTS
+from topo_tools.core.constants import (
+    CRS,
+    PARQUET_OPTS,
+    SUBDIVIDE_MAX_VERTICES,
+    SUBDIVIDE_MIN_VERTICES,
+)
 
 logger = getLogger(__name__)
 
@@ -175,6 +180,17 @@ def bbox_columns_sql(geom_expr: str) -> str:
     return (
         f"ST_XMin({geom_expr}) AS xmin, ST_XMax({geom_expr}) AS xmax, "
         f"ST_YMin({geom_expr}) AS ymin, ST_YMax({geom_expr}) AS ymax"
+    )
+
+
+def subdivide_sql(geom_expr: str) -> str:
+    """Build a geometry list: geom_expr split into bounded-vertex pieces, or as is."""
+    # ST_Subdivide drops the CRS tag, so its pieces are re-tagged.
+    return (
+        f"CASE WHEN ST_NPoints({geom_expr}) >= {SUBDIVIDE_MIN_VERTICES} "
+        f"THEN list_transform(ST_Dump(ST_SetCRS(ST_Subdivide({geom_expr}, "
+        f"{SUBDIVIDE_MAX_VERTICES}), '{CRS}')), lambda d: d.geom) "
+        f"ELSE [{geom_expr}] END"
     )
 
 
