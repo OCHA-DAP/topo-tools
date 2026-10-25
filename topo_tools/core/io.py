@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import duckdb
 from duckdb import DuckDBPyConnection
 
-from .constants import COPY_OPTS, CRS, RESERVED_COLUMN_NAMES
+from .constants import COPY_OPTS, CRS, GDAL_CRS, RESERVED_COLUMN_NAMES
 from .coverage import close_notches, coverage_clean, has_valid_topology
 from .duckdb_utils import quote_identifier
 
@@ -160,7 +160,7 @@ def reproject_select_sql(
     rename_sql = "".join(f', "{c}" AS "{c}_orig"' for c in colliding_cols)
 
     # ST_Read tags geometry with source CRS; single-arg ST_Transform infers it.
-    # A CRS-less geometry is assumed to already be EPSG:4326, so only tagged.
+    # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged.
     geom_expr = (
         "ST_Force2D(ST_MakeValid(ST_Transform("
         f"ST_MakeValid(\"{geom_col}\"), '{CRS}', true)))"
@@ -255,9 +255,10 @@ def export_geometry_table(
         for a, b in (renames or {}).items()
     )
     rename_sql = f" RENAME ({rename})" if rename else ""
+    crs = CRS if dest.suffix == ".parquet" else GDAL_CRS
     conn.execute(f"""--sql
         COPY (
-            SELECT ST_SetCRS(geom, '{CRS}') AS geometry,
+            SELECT ST_SetCRS(geom, '{crs}') AS geometry,
                    * EXCLUDE ({exclude}){rename_sql}
             FROM "{table}"
         ) TO '{dest}' {COPY_OPTS[dest.suffix]}

@@ -234,8 +234,8 @@ Data crosses the process boundary as small Parquet files (`input.parquet`,
 DuckDB file is single-writer, and the group's own DuckDB file
 (`group.duckdb`) lives entirely inside that group's private temp directory,
 discarded when the group finishes (unless `--debug`). These files are
-written with `PARQUET_OPTS` (`core/constants.py`, GeoParquet V2), which keeps
-each geometry's `EPSG:4326` CRS exact through the round trip.
+written with `PARQUET_OPTS` (`core/constants.py`, GeoParquet 2.0), which
+keeps each geometry's `OGC:CRS84` CRS exact through the round trip.
 
 `edge_match()` raises only if **no** group produced any output at all (see
 "Two subprocess generations" above for the separate, stricter clip-stage

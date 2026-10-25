@@ -29,8 +29,11 @@ NOTCH_WINDOW_MARGIN = 0.002
 # Equal Earth, used by match/change to rank/compute areas for cross-polygon
 # area comparison (never stored).
 EQUAL_AREA_CRS = "EPSG:8857"
-# Every geometry is read, stored, and written tagged with this CRS.
-CRS = "EPSG:4326"
+# Every geometry is read, stored, and written tagged with this CRS (WGS84
+# lon/lat, the GeoParquet default, so its `geo` metadata omits the crs key).
+CRS = "OGC:CRS84"
+# Shapefile/GPKG/GeoJSON exports; GDAL writes the standard WGS84 definition for it.
+GDAL_CRS = "EPSG:4326"
 GEOMETRY_TYPE = f"GEOMETRY('{CRS}')"
 # Intermediate (subprocess hand-off) Parquet; V1 GeoParquet tags CRS-less as CRS84.
 PARQUET_OPTS = "(FORMAT PARQUET, GEOPARQUET_VERSION 'V2')"

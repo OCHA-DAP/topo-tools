@@ -3,7 +3,7 @@
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.assign import assign_many
-from topo_tools.core.constants import EQUAL_AREA_CRS
+from topo_tools.core.constants import CRS, EQUAL_AREA_CRS
 
 
 def main(conn: DuckDBPyConnection, name: str) -> None:
@@ -13,7 +13,7 @@ def main(conn: DuckDBPyConnection, name: str) -> None:
         CREATE OR REPLACE TABLE "{name}_02_share" AS
         WITH areas AS (
             SELECT fid AS input_fid,
-                   ST_Area(ST_Transform(geom, 'EPSG:4326', '{EQUAL_AREA_CRS}', true))
+                   ST_Area(ST_Transform(geom, '{CRS}', '{EQUAL_AREA_CRS}', true))
                        AS input_area
             FROM "{name}_input_01"
         )

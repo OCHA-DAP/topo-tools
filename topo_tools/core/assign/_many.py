@@ -5,7 +5,7 @@ from logging import getLogger
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.assign._one import _carry_forward_columns
-from topo_tools.core.constants import EQUAL_AREA_CRS
+from topo_tools.core.constants import CRS, EQUAL_AREA_CRS
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 
 logger = getLogger(__name__)
@@ -47,7 +47,7 @@ def assign_many(  # noqa: PLR0913
         SELECT c.fid AS input_fid, p.fid AS overlay_fid,
                SUM(ST_Area(ST_Transform(
                    ST_Intersection(c.part_geom, p.part_geom),
-                   'EPSG:4326', '{EQUAL_AREA_CRS}', true
+                   '{CRS}', '{EQUAL_AREA_CRS}', true
                ))) AS shared_area
         FROM "{name}_02_tmp1" c
         JOIN "{name}_02_tmp2" p

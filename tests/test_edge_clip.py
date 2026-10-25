@@ -97,7 +97,7 @@ def test_clip_crs_less_input_against_tagged_overlay(synthetic_overlays, tmp_path
         geom_type, area = conn.execute(
             f"SELECT typeof(geometry), ST_Area(geometry) FROM '{output_path}'"
         ).fetchone()
-    assert geom_type == "GEOMETRY('EPSG:4326')"
+    assert geom_type == "GEOMETRY('OGC:CRS84')"
     assert area == pytest.approx(_OVERLAY_A_AREA, abs=1e-6)
 
 
