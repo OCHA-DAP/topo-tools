@@ -44,6 +44,56 @@ def check_no_erosion(
         raise RuntimeError(msg)
 
 
+def _grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
+    conn: DuckDBPyConnection,
+    left: str,
+    right: str,
+    out: str,
+    *,
+    on: str,
+    tol: float,
+    key: str = "pid",
+) -> None:
+    """Create `out` (pid, near_pid): left/right rows whose tol-padded bboxes overlap.
+
+    Joins on grid cells, counting each pair in the cell of its overlap's min corner.
+    """
+    # A 99th-percentile-extent cell keeps both cells per row and rows per cell small.
+    cell = conn.execute(f"""--sql
+        SELECT greatest(quantile_cont(greatest(xmax - xmin, ymax - ymin), 0.99), {tol})
+        FROM (
+            SELECT xmin, xmax, ymin, ymax FROM "{left}"
+            UNION ALL SELECT xmin, xmax, ymin, ymax FROM "{right}"
+        )
+    """).fetchone()[0]
+
+    def cells(table: str, a: str) -> str:
+        return f"""(
+            SELECT {a}.*, cx, cy
+            FROM (
+                SELECT *, xmin - {tol} AS x0, ymin - {tol} AS y0,
+                       xmax + {tol} AS x1, ymax + {tol} AS y1
+                FROM "{table}"
+            ) {a},
+            LATERAL (SELECT UNNEST(range(
+                floor({a}.x0 / {cell})::BIGINT, floor({a}.x1 / {cell})::BIGINT + 1
+            )) AS cx),
+            LATERAL (SELECT UNNEST(range(
+                floor({a}.y0 / {cell})::BIGINT, floor({a}.y1 / {cell})::BIGINT + 1
+            )) AS cy)
+        )"""
+
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{out}" AS
+        SELECT l.{key} AS pid, r.{key} AS near_pid
+        FROM {cells(left, "l")} l JOIN {cells(right, "r")} r USING (cx, cy)
+        WHERE r.x0 <= l.x1 AND r.x1 >= l.x0 AND r.y0 <= l.y1 AND r.y1 >= l.y0
+          AND cx = floor(greatest(l.x0, r.x0) / {cell})::BIGINT
+          AND cy = floor(greatest(l.y0, r.y0) / {cell})::BIGINT
+          AND ({on})
+    """)
+
+
 def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     left: str,
@@ -57,15 +107,7 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
 
     Both tables need pid, geom and bbox columns; heavy parts are compared split.
     """
-    box = (
-        "{b}.xmin <= {a}.xmax + {t} AND {b}.xmax >= {a}.xmin - {t} "
-        "AND {b}.ymin <= {a}.ymax + {t} AND {b}.ymax >= {a}.ymin - {t}"
-    )
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{out}_cand" AS
-        SELECT l.pid, r.pid AS near_pid
-        FROM "{left}" l JOIN "{right}" r ON {box.format(a="l", b="r", t=tol)} AND ({on})
-    """)
+    _grid_pairs(conn, left, right, f"{out}_cand", on=on, tol=tol)
     cand_l = f'SELECT pid FROM "{out}_cand"'
     cand_r = f'SELECT near_pid FROM "{out}_cand"'
     sides = {"l": (left, cand_l), "r": (right, cand_r)}
@@ -78,19 +120,22 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
                 SELECT pid, UNNEST({subdivide_sql("geom")}) AS geom FROM "{table}"
                 WHERE pid IN ({pids})
             )
-            SELECT pid, geom, {bbox_columns_sql("geom")} FROM s
+            SELECT row_number() OVER () AS qid, pid, geom, {bbox_columns_sql("geom")}
+            FROM s
         """)
     rp = f"{out}_{'l' if left == right else 'r'}"
+    _grid_pairs(conn, f"{out}_l", rp, f"{out}_pp", on="TRUE", tol=tol, key="qid")
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
-        WITH pp AS (
+        WITH j AS (
             SELECT a.pid, b.pid AS near_pid, a.geom AS ag, b.geom AS bg
-            FROM "{out}_l" a JOIN "{rp}" b ON {box.format(a="a", b="b", t=tol)}
+            FROM "{out}_pp" pp
+            JOIN "{out}_l" a ON a.qid = pp.pid JOIN "{rp}" b ON b.qid = pp.near_pid
         )
-        SELECT DISTINCT pid, near_pid FROM pp
+        SELECT DISTINCT pid, near_pid FROM j
         SEMI JOIN "{out}_cand" USING (pid, near_pid) WHERE ST_DWithin(ag, bg, {tol})
     """)
-    for side in ("cand", "l", "r"):
+    for side in ("cand", "l", "r", "pp"):
         conn.execute(f'DROP TABLE IF EXISTS "{out}_{side}"')
 
 
