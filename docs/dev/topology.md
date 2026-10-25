@@ -72,11 +72,11 @@ This produces **0 gaps, 0 overlaps, 0 `ST_CoverageInvalidEdges`** on all tested 
 
 ### Topology checks (`_06_outputs.py`)
 
-`check_valid_topology()` (`core/coverage.py`) runs on the final `_05` table and raises `RuntimeError` on failure: it chains `check_invalid_edges()` (`ST_CoverageInvalidEdges_Agg(geom) IS NOT NULL`, via `has_invalid_edges`) then `check_gaps()` (via `has_gaps`). Both unnest MultiPolygon rows into single-polygon parts first, so a coverage split into multiple parts (e.g. mainland + offshore islet) doesn't hide a real interior-ring gap. There is no separate area-based check or epsilon-based warning tier; these are the only two topology gates in the pipeline.
+`check_valid_topology()` (`core/coverage.py`) runs on the final `_05` table and raises `RuntimeError` on failure: it chains `check_invalid_edges()` (`ST_CoverageInvalidEdges_Agg(geom) IS NOT NULL`, via `has_invalid_edges`) then `check_gaps()` (via `has_gaps`). `has_invalid_edges` hands the validator only parts with another part within `SNAP_TOLERANCE` (`_near_part_pairs`): an isolated part can't hold an invalid edge, and GEOS rebuilds a large neighbour's index for every part near it (see `docs/adr/0141`). Both unnest MultiPolygon rows into single-polygon parts first, so a coverage split into multiple parts (e.g. mainland + offshore islet) doesn't hide a real interior-ring gap. There is no separate area-based check or epsilon-based warning tier; these are the only two topology gates in the pipeline.
 
 `check_valid_topology()` defaults `gap_maximum_width` to `SNAP_TOLERANCE` (the same name GEOS's own `CoverageCleaner` uses, see `docs/adr/0002`), tolerating a wider hole: `edge-match`/`edge-mosaic`/`topo-clean`/`edge-stitch` all rely on this default, since a wider hole in their output may be a legitimate hole in the overlay layer's own shape (or a real gap left by design) rather than a defect (see `docs/adr/0035`, `docs/adr/0039`, `docs/dev/explanation/3-edge/edge_match.md`'s "`check_valid_topology` and overlay-layer gaps"). `edge-extend` is the one exception, passing `gap_maximum_width=0` explicitly, so any interior hole of any size still raises: it has no overlay layer, so its own footprint is the only thing it's guaranteeing coverage of, and a leftover hole here is always a bug.
 
-`has_gaps()` dumps the whole-table union into individual polygon parts before checking `ST_NumInteriorRings` on each. Calling `ST_NumInteriorRings` on the raw union result directly (the original implementation) is a latent bug: the union of any real multi-part dataset is almost always a `MultiPolygon`, and `ST_NumInteriorRings` silently returns `NULL` (never `> 0`) on a `MultiPolygon`, confirmed on `cod_admin4.parquet` (9,658 fids), where the undumped query returned `NULL` while the dump-then-max version correctly returned `0`. The undumped version would never have raised on a real interior-ring gap in any multi-part dataset, which is most real admin-boundary layers.
+`has_gaps()` dumps the whole-table union into individual polygon parts before checking `ST_NumInteriorRings` on each. Calling `ST_NumInteriorRings` on the raw union result directly (the original implementation) is a latent bug: the union of any real multi-part dataset is almost always a `MultiPolygon`, and `ST_NumInteriorRings` silently returns `NULL` (never `> 0`) on a `MultiPolygon`, confirmed on `cod_admin4.parquet` (9,658 fids), where the undumped query returned `NULL` while the dump-then-max version correctly returned `0`. The undumped version would never have raised on a real interior-ring gap in any multi-part dataset, which is most real admin-boundary layers. The gap check unions a table that has passed the invalid-edge check with `ST_CoverageUnion_Agg`, and raw input with `ST_Union_Agg` (see `docs/adr/0143`).
 
 ---
 
@@ -99,8 +99,10 @@ fragment instead would open a micro gap. Only an isolated fragment,
 touching nothing, is dropped.
 
 `ST_CoverageClean` absorbs micro parts at the default snapping distance,
-but returns a polygon that is entirely micro as an EMPTY geometry, and
+but returns a polygon that is entirely micro as an EMPTY geometry,
 `ST_CoverageInvalidEdges_Agg` doesn't flag a micro polygon that only
-touches its neighbours. `coverage_clean` therefore merges micro-polygons
-first, and `has_valid_topology` checks for them directly, so an
-auto-cleaned input is cleaned whenever it has one.
+touches its neighbours, and its snap can narrow a part just over
+`SNAP_TOLERANCE` wide to under it. `coverage_clean` therefore merges
+micro-polygons before the clean and again on its own output, and
+`has_valid_topology` checks for them directly, so an auto-cleaned input is
+cleaned whenever it has one. See `docs/adr/0142`.

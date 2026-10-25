@@ -31,8 +31,8 @@ docs); `edge-mosaic` is a thin wrapper chaining `assign-one` → `edge-clip` →
    runs.
 3. **`_01_clip`**: a thin wrapper joining `overlay_fid` onto
    `{name}_input_01` from `{name}_02_assign`, then calling
-   `core.edge_clip.main()`, the same per-`overlay_fid`-subprocess, adaptively
-   grid-tiled clip `edge-clip` exposes standalone, see `docs/dev/explanation/3-edge/edge_clip.md`.
+   `core.edge_clip.main()`, the same per-`overlay_fid`-subprocess, split
+   clip `edge-clip` exposes standalone, see `docs/dev/explanation/3-edge/edge_clip.md`.
    When `merge` is set (see "Overlay gap-fill and input passthrough" below),
    this stage also `UNION ALL BY NAME`s every whole unmatched input file's
    own already-extended geometry into `{name}_03` immediately after the
@@ -143,7 +143,7 @@ output, which `edge-mosaic` never re-verifies.
 | Input assumption | Input layer is raw, unextended | Input layer is already a finished `edge_extend()` output |
 | Assign strategy | `assign-many` (per-polygon plurality) | `assign-one` (per-file majority vote) |
 | Cost driver | Per-group Voronoi extension (~85% of wall time) | Assign + clip + stitch only, no extension |
-| Isolation | Two subprocess generations: per-group `edge-extend`, then batched per-`overlay_fid` `edge-clip` (`docs/adr/0020`) | Per-`overlay_fid` subprocess only, boundary adaptively grid-tiled (`docs/adr/0015`, `docs/adr/0016`, `docs/adr/0017`) |
+| Isolation | Two subprocess generations: per-group `edge-extend`, then batched per-`overlay_fid` `edge-clip` (`docs/adr/0020`) | Per-`overlay_fid` subprocess only, heavy overlay polygons split with `ST_Subdivide` (`docs/adr/0015`, `docs/adr/0140`) |
 | When to use | Input layer hasn't been extended yet | Reusing pre-extended layers against a new/different overlay polygon |
 
 ## Caveats
@@ -152,8 +152,8 @@ output, which `edge-mosaic` never re-verifies.
 Caveats section for the full detail on `assign-one`'s per-file majority vote
 and its residual risk (a file too small to form a real majority).
 
-**Clip runs one overlay fid at a time, each in its own subprocess with its
-boundary adaptively grid-tiled.** See `docs/dev/explanation/3-edge/edge_clip.md` for the
+**Clip runs one overlay fid at a time, each in its own subprocess, heavy
+overlay polygons split with `ST_Subdivide`.** See `docs/dev/explanation/3-edge/edge_clip.md` for the
 full detail.
 
 **Cross-provenance seam risk.** `docs/dev/explanation/3-edge/edge_stitch.md` documents
