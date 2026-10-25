@@ -8,6 +8,7 @@ from topo_tools.core.constants import (
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
+    DETACHED_SEGMENT_MAX_VERTICES,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
     NOTCH_SPACING,
@@ -494,42 +495,90 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     """)
     # A point contact measures about 2*tol of neighbour boundary; an edge far more.
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _det_dest AS
-        WITH d AS (
-            SELECT p.*, r.area / NULLIF(r.kept_area, 0) AS ratio,
-                   r.area / NULLIF(r.kept_area, 0) < {DETACHED_MERGE_MAX_RATIO} AS small
-            FROM _det_rank r JOIN _det_parts p USING (pid)
-            WHERE NOT r.kept
-        ),
-        n AS (
-            SELECT * FROM _det_parts
-            WHERE pid NOT IN (SELECT pid FROM d WHERE small IS NOT FALSE)
-        ),
-        pairs AS (
+        CREATE OR REPLACE TABLE _det_d AS
+        SELECT p.*, r.area / NULLIF(r.kept_area, 0) < {DETACHED_MERGE_MAX_RATIO}
+                   AS small
+        FROM _det_rank r JOIN _det_parts p USING (pid)
+        WHERE NOT r.kept
+    """)
+    # Only parts near a detached piece can be its destination; scanning every
+    # part of a whole-country overlay_fid here exhausts memory at scale.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _det_near AS
+        SELECT n.pid, n.rnid, n.fid, n.overlay_fid, n.geom,
+               n.xmin, n.xmax, n.ymin, n.ymax
+        FROM _det_parts n
+        WHERE n.pid NOT IN (SELECT pid FROM _det_d WHERE small IS NOT FALSE)
+          AND EXISTS (
+            SELECT 1 FROM _det_d s
+            WHERE n.overlay_fid IS NOT DISTINCT FROM s.overlay_fid
+              AND n.xmin <= s.xmax + {tol} AND n.xmax >= s.xmin - {tol}
+              AND n.ymin <= s.ymax + {tol} AND n.ymax >= s.ymin - {tol}
+          )
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _det_sbuf AS
+        SELECT pid, rnid, overlay_fid, xmin, xmax, ymin, ymax,
+               ST_Buffer(geom, {tol}) AS buf
+        FROM _det_d
+    """)
+    # Joined pairs copy the neighbour side's geometry per row, so a whole
+    # high-vertex neighbour part per pair exhausts memory; short segments don't.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _det_nseg AS
+        WITH segs AS (
+            SELECT pid, rnid, fid, overlay_fid,
+                   UNNEST(ST_Dump(ST_Subdivide(
+                       ST_Boundary(geom), {DETACHED_SEGMENT_MAX_VERTICES}
+                   ))).geom AS seg
+            FROM _det_near
+        )
+        SELECT *, {bbox_columns_sql("seg")} FROM segs
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _det_best AS
+        WITH pairs AS (
             SELECT s.pid, n.pid AS dest_pid, n.rnid AS dest_rnid, n.fid AS dest_fid,
-                   ST_Length(ST_Intersection(
-                       ST_Boundary(n.geom), ST_Buffer(s.geom, {tol})
-                   )) AS contact
-            FROM d s JOIN n
+                   sum(ST_Length(ST_Intersection(n.seg, s.buf))) AS contact
+            FROM _det_sbuf s JOIN _det_nseg n
               ON n.rnid <> s.rnid
              AND n.overlay_fid IS NOT DISTINCT FROM s.overlay_fid
              AND n.xmin <= s.xmax + {tol} AND n.xmax >= s.xmin - {tol}
              AND n.ymin <= s.ymax + {tol} AND n.ymax >= s.ymin - {tol}
-        ),
-        best AS (
-            SELECT * FROM pairs WHERE contact > {10 * tol}
-            QUALIFY row_number() OVER (PARTITION BY pid ORDER BY contact DESC, dest_fid)
-                = 1
+            GROUP BY s.pid, n.pid, n.rnid, n.fid
         )
+        SELECT * FROM pairs WHERE contact > {10 * tol}
+        QUALIFY row_number() OVER (PARTITION BY pid ORDER BY contact DESC, dest_fid)
+            = 1
+    """)
+    # Grouped per destination so each neighbour geometry is read once, not per piece.
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _det_attached AS
+        WITH c AS (
+            SELECT b.dest_pid, list(d.pid ORDER BY d.pid) AS pids,
+                   list(d.geom ORDER BY d.pid) AS pieces
+            FROM _det_d d JOIN _det_best b USING (pid)
+            WHERE d.small
+            GROUP BY b.dest_pid
+        ),
+        u AS (
+            SELECT UNNEST(c.pids) AS pid,
+                   UNNEST(list_transform(
+                       c.pieces, lambda x: ST_NumGeometries(ST_Union(x, n.geom)) = 1
+                   )) AS attached
+            FROM c JOIN _det_near n ON n.pid = c.dest_pid
+        )
+        SELECT pid FROM u WHERE attached
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _det_dest AS
         SELECT d.pid, d.rnid, d.fid, d.overlay_fid, d.source_file, d.area, d.geom,
                b.dest_rnid, b.dest_fid,
                CASE WHEN b.dest_pid IS NULL THEN 'isolated'
                     WHEN d.small IS NOT TRUE THEN 'too-large'
-                    WHEN ST_NumGeometries(ST_Union(d.geom, np.geom)) = 1
-                        THEN 'candidate'
+                    WHEN d.pid IN (SELECT pid FROM _det_attached) THEN 'candidate'
                     ELSE 'unattached' END AS outcome
-        FROM d LEFT JOIN best b USING (pid)
-        LEFT JOIN _det_parts np ON np.pid = b.dest_pid
+        FROM _det_d d LEFT JOIN _det_best b USING (pid)
     """)
     if original_table is None:
         conn.execute("""--sql
@@ -594,6 +643,12 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
         "_det_oparts",
         "_det_group",
         "_det_rank",
+        "_det_d",
+        "_det_near",
+        "_det_sbuf",
+        "_det_nseg",
+        "_det_best",
+        "_det_attached",
         "_det_dest",
     ):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")

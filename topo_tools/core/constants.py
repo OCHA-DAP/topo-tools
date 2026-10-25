@@ -17,6 +17,8 @@ DETACHED_MAX_ORIGINAL_SHARE = 0.5
 # Original land clipped away next to a piece, over its area; below this the
 # original drew the piece as a lobe joined only at a pinch point.
 DETACHED_MIN_NECK_RATIO = 0.1
+# Neighbour boundaries are split to this many vertices before pairing with pieces.
+DETACHED_SEGMENT_MAX_VERTICES = 256
 # Notches: unshared edges of two units within NOTCH_SPACING / 8 of each other
 # for at least NOTCH_MIN_SCORE spacings, edge-extend's default point spacing.
 NOTCH_SPACING = 0.0002

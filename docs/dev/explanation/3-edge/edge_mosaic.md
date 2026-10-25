@@ -72,10 +72,12 @@ file into one table up front, the same memory-safe pattern standalone
 into a pristine snapshot and its heavy-part tile decomposition cached
 (`core.assign.prepare_overlay_tiles()`), then each input file is loaded,
 assigned, and clipped alone against a fresh copy of that snapshot, one at a
-time. Each file's clip result is folded into a running `{name}_03}`
-accumulator immediately (`UNION ALL BY NAME`) rather than held until a
-final combine, keeping peak memory to roughly one overlay layer plus one input
-file at a time, not one overlay layer plus every input file. `fid` is kept
+time. Each file's clip result and its assign/drop/detached tables are
+written to Parquet under `tmp_dir` and combined once after the loop
+(`read_parquet(..., union_by_name = true)`), and each iteration's original
+layer covers only the original files whose extent overlaps that input file,
+keeping peak memory to roughly one overlay layer plus one input file at a
+time, not one overlay layer plus every input file. `fid` is kept
 globally unique across the whole run via a running offset applied right
 after each file loads (not by the union-time `row_number()` a
 single-file/combined-table run uses), then reassigned fresh via

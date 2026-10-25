@@ -17,6 +17,8 @@ from typing import NoReturn
 from duckdb import DuckDBPyConnection
 from duckdb import connect as duckdb_connect
 
+from topo_tools.core.constants import PARQUET_OPTS
+
 logger = getLogger(__name__)
 
 _GEO_PARQUET = (
@@ -183,6 +185,29 @@ def cleanup_tmp(name: str, tmp_dir: Path, *, parquet: bool = False) -> None:
     if parquet:
         for p in tmp_dir.glob(f"{name}*.parquet"):
             p.unlink(missing_ok=True)
+
+
+def spill_table(conn: DuckDBPyConnection, spill_dir: Path, table: str, i: int) -> None:
+    """Write table to spill_dir/table/{i}.parquet, keeping it out of the connection."""
+    out_dir = spill_dir / table
+    out_dir.mkdir(parents=True, exist_ok=True)
+    conn.execute(f"""--sql
+        COPY (SELECT * FROM "{table}") TO '{out_dir / f"{i:06d}.parquet"}'
+        {PARQUET_OPTS}
+    """)
+
+
+def collect_spilled(
+    conn: DuckDBPyConnection, spill_dir: Path, table: str, dest_table: str
+) -> None:
+    """Combine every spilled file of table, in spill order, into dest_table."""
+    conn.execute(f'DROP TABLE IF EXISTS "{dest_table}"')
+    conn.execute(f"""--sql
+        CREATE TABLE "{dest_table}" AS
+        SELECT * FROM read_parquet(
+            '{spill_dir / table}/*.parquet', union_by_name = true
+        )
+    """)
 
 
 def export_debug_tables(

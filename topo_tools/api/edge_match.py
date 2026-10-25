@@ -1,5 +1,6 @@
 """Public API: match input polygons to overlay boundaries, then extend to fill gaps."""
 
+import shutil
 from logging import getLogger
 from pathlib import Path
 
@@ -14,12 +15,15 @@ from topo_tools.core.assign import (
     load_overlay,
     prepare_overlay_tiles,
     resolve_merge_columns,
+    union_bbox,
     validate_merge_flags,
 )
 from topo_tools.core.duckdb_utils import (
+    collect_spilled,
     maybe_export_debug_tables,
     pipeline_connection,
     resolve_tmp_dir,
+    spill_table,
 )
 from topo_tools.core.edge_match import _01_inputs as inputs
 from topo_tools.core.edge_match import _02_groups as groups
@@ -309,28 +313,6 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
         logger.info("done: %s", name)
 
 
-def _union_bbox(
-    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
-) -> tuple[float, float, float, float]:
-    """Combine two (xmin, ymin, xmax, ymax) bboxes into their enclosing bbox."""
-    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
-
-
-def _fold(
-    conn: DuckDBPyConnection, acc_table: str, iter_table: str, *, seeded: bool
-) -> None:
-    """Fold iter_table into acc_table (seed on first call, UNION ALL BY NAME after)."""
-    if not seeded:
-        conn.execute(f'CREATE TABLE "{acc_table}" AS SELECT * FROM "{iter_table}"')
-    else:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{acc_table}" AS
-            SELECT * FROM "{acc_table}"
-            UNION ALL BY NAME
-            SELECT * FROM "{iter_table}"
-        """)
-
-
 def _assign(conn: DuckDBPyConnection, name: str, assign: str, **kwargs: object) -> None:
     """Run assign-one or assign-many, auto picking many when under half overlap."""
     if assign == "many":
@@ -381,7 +363,7 @@ def _assign(conn: DuckDBPyConnection, name: str, assign: str, **kwargs: object) 
     conn.execute(f'DROP TABLE IF EXISTS "{name}_02_overlay_auto"')
 
 
-def _match_multi_file(  # noqa: PLR0913, PLR0917
+def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
     conn: DuckDBPyConnection,
     name: str,
     paths: list[Path],
@@ -435,18 +417,16 @@ def _match_multi_file(  # noqa: PLR0913, PLR0917
         bbox = input_bbox_extent(conn, name)
         if bbox is not None:
             combined_bbox = (
-                bbox if combined_bbox is None else _union_bbox(combined_bbox, bbox)
+                bbox if combined_bbox is None else union_bbox(combined_bbox, bbox)
             )
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge
 
-    acc_input = f"{name}_input_01_acc"
-    acc_assign = f"{name}_02_assign_acc"
-    acc_unassigned = f"{name}_02_unassigned_acc"
-    for tbl in (acc_input, acc_assign, acc_unassigned):
-        conn.execute(f'DROP TABLE IF EXISTS "{tbl}"')
+    spilled = (f"{name}_input_01", f"{name}_02_assign", f"{name}_02_unassigned")
+    spill_dir = tmp_dir_path / f"{name}_spill"
+    shutil.rmtree(spill_dir, ignore_errors=True)
 
     fid_offset = 0
     for i, file_path in enumerate(paths):
@@ -466,21 +446,16 @@ def _match_multi_file(  # noqa: PLR0913, PLR0917
             input_columns=resolved_input_columns,
         )
 
-        seeded = i > 0
-        _fold(conn, acc_input, f"{name}_input_01", seeded=seeded)
-        _fold(conn, acc_assign, f"{name}_02_assign", seeded=seeded)
-        _fold(conn, acc_unassigned, f"{name}_02_unassigned", seeded=seeded)
+        for table in spilled:
+            spill_table(conn, spill_dir, table, i)
 
         new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
         fid_offset = new_max if new_max is not None else fid_offset
 
-    for acc, canonical in (
-        (acc_input, f"{name}_input_01"),
-        (acc_assign, f"{name}_02_assign"),
-        (acc_unassigned, f"{name}_02_unassigned"),
-    ):
-        conn.execute(f'DROP TABLE IF EXISTS "{canonical}"')
-        conn.execute(f'ALTER TABLE "{acc}" RENAME TO "{canonical}"')
+    for table in spilled:
+        collect_spilled(conn, spill_dir, table, table)
+    if not debug:
+        shutil.rmtree(spill_dir, ignore_errors=True)
 
     # groups/clip need every matched overlay fid, not just the last file's
     # narrowed set (assign_one narrows {name}_overlay_01 every iteration).

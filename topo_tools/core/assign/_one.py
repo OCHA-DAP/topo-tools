@@ -27,6 +27,13 @@ def input_bbox_extent(
     return None if row[0] is None else (row[0], row[1], row[2], row[3])
 
 
+def union_bbox(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
+    """Combine two (xmin, ymin, xmax, ymax) bboxes into their enclosing bbox."""
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+
 def prepare_overlay_tiles(
     conn: DuckDBPyConnection,
     name: str,

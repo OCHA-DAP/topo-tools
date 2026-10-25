@@ -1,5 +1,6 @@
 """Public API: fit already-extended input polygons into a new overlay layer."""
 
+import shutil
 from logging import getLogger
 from pathlib import Path
 
@@ -15,12 +16,17 @@ from topo_tools.core.assign import (
     load_overlay,
     prepare_overlay_tiles,
     resolve_merge_columns,
+    union_bbox,
     validate_merge_flags,
 )
+from topo_tools.core.constants import SNAP_TOLERANCE
 from topo_tools.core.duckdb_utils import (
+    bbox_columns_sql,
+    collect_spilled,
     maybe_export_debug_tables,
     pipeline_connection,
     resolve_tmp_dir,
+    spill_table,
 )
 from topo_tools.core.edge_mosaic import _01_clip as clip
 from topo_tools.core.edge_mosaic import _02_stitch as stitch
@@ -29,6 +35,7 @@ from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
     input_basename,
+    reproject_select_sql,
     resolve_input_path,
     sort_paths_by_column_count_desc,
 )
@@ -285,29 +292,56 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         logger.info("done: %s", name)
 
 
-def _union_bbox(
-    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
-) -> tuple[float, float, float, float]:
-    """Combine two (xmin, ymin, xmax, ymax) bboxes into their enclosing bbox."""
-    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+def _bboxes_overlap(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    margin: float,
+) -> bool:
+    """Whether two (xmin, ymin, xmax, ymax) bboxes overlap within margin."""
+    return (
+        a[0] <= b[2] + margin
+        and a[2] >= b[0] - margin
+        and a[1] <= b[3] + margin
+        and a[3] >= b[1] - margin
+    )
 
 
-def _fold(
-    conn: DuckDBPyConnection, acc_table: str, iter_table: str, *, seeded: bool
+def _original_bboxes(
+    conn: DuckDBPyConnection, originals: list[Path | str]
+) -> list[tuple[Path | str, tuple[float, float, float, float] | None]]:
+    """Return each original file's (xmin, ymin, xmax, ymax) extent, None if empty."""
+    result = []
+    for path in originals:
+        row = conn.execute(f"""--sql
+            SELECT MIN(xmin), MIN(ymin), MAX(xmax), MAX(ymax)
+            FROM (
+                SELECT {bbox_columns_sql("geom")}
+                FROM ({reproject_select_sql(conn, path, make_valid=False)})
+            )
+        """).fetchone()
+        result.append((path, None if row[0] is None else tuple(row)))
+    return result
+
+
+def _load_nearby_originals(
+    conn: DuckDBPyConnection,
+    name: str,
+    original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
 ) -> None:
-    """Fold iter_table into acc_table (seed on first call, UNION ALL BY NAME after)."""
-    if not seeded:
-        conn.execute(f'CREATE TABLE "{acc_table}" AS SELECT * FROM "{iter_table}"')
-    else:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{acc_table}" AS
-            SELECT * FROM "{acc_table}"
-            UNION ALL BY NAME
-            SELECT * FROM "{iter_table}"
-        """)
+    """Expose only the originals overlapping `{name}_input_01` as the original view."""
+    bbox = input_bbox_extent(conn, name)
+    nearby = [
+        path
+        for path, obox in original_bboxes
+        if bbox is not None
+        and obox is not None
+        and _bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
+    ]
+    # One far-away file keeps the view's schema when none is nearby.
+    load_original(conn, name, nearby or [original_bboxes[0][0]])
 
 
-def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
+def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     conn: DuckDBPyConnection,
     name: str,
     paths: list[Path],
@@ -334,8 +368,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
 ) -> None:
     """Assign/clip one input file at a time against one already-loaded overlay layer."""
     load_overlay(conn, name, overlay_path)
-    if originals:
-        load_original(conn, name, originals)
+    original_bboxes = _original_bboxes(conn, originals) if originals else []
     conn.execute(f"""--sql
         CREATE TABLE "{name}_overlay_full" AS SELECT * FROM "{name}_overlay_01"
     """)
@@ -360,27 +393,23 @@ def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
         bbox = input_bbox_extent(conn, name)
         if bbox is not None:
             combined_bbox = (
-                bbox if combined_bbox is None else _union_bbox(combined_bbox, bbox)
+                bbox if combined_bbox is None else union_bbox(combined_bbox, bbox)
             )
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge
 
-    acc_input = f"{name}_input_01_acc"
-    acc_assign = f"{name}_02_assign_acc"
-    acc_unassigned = f"{name}_02_unassigned_acc"
-    acc_dropped = f"{name}_03_dropped_acc"
-    acc_detached = f"{name}_03_detached_acc"
-    for tbl in (
-        acc_input,
-        acc_assign,
-        acc_unassigned,
-        acc_dropped,
-        acc_detached,
-        f"{name}_03",
-    ):
-        conn.execute(f'DROP TABLE IF EXISTS "{tbl}"')
+    spilled = {
+        f"{name}_03_iter": f"{name}_03",
+        f"{name}_input_01": f"{name}_input_01",
+        f"{name}_02_assign": f"{name}_02_assign",
+        f"{name}_02_unassigned": f"{name}_02_unassigned",
+        f"{name}_03_iter_dropped": f"{name}_03_dropped",
+        f"{name}_03_iter_detached": f"{name}_03_detached",
+    }
+    spill_dir = tmp_dir_path / f"{name}_spill"
+    shutil.rmtree(spill_dir, ignore_errors=True)
 
     fid_offset = 0
     for i, file_path in enumerate(paths):
@@ -390,6 +419,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
         """)
         load_input(conn, name, [file_path])
         conn.execute(f'UPDATE "{name}_input_01" SET fid = fid + {fid_offset}')
+        if originals:
+            _load_nearby_originals(conn, name, original_bboxes)
         assign_one(
             conn,
             name,
@@ -413,13 +444,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
             original_table=f"{name}_original_01" if originals else None,
         )
 
-        seeded = i > 0
-        _fold(conn, f"{name}_03", f"{name}_03_iter", seeded=seeded)
-        _fold(conn, acc_input, f"{name}_input_01", seeded=seeded)
-        _fold(conn, acc_assign, f"{name}_02_assign", seeded=seeded)
-        _fold(conn, acc_unassigned, f"{name}_02_unassigned", seeded=seeded)
-        _fold(conn, acc_dropped, f"{name}_03_iter_dropped", seeded=seeded)
-        _fold(conn, acc_detached, f"{name}_03_iter_detached", seeded=seeded)
+        for table in spilled:
+            spill_table(conn, spill_dir, table, i)
 
         new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
         fid_offset = new_max if new_max is not None else fid_offset
@@ -427,16 +453,10 @@ def _mosaic_multi_file(  # noqa: C901, PLR0913, PLR0915, PLR0917
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
 
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
-    conn.execute(f'ALTER TABLE "{acc_input}" RENAME TO "{name}_input_01"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_assign"')
-    conn.execute(f'ALTER TABLE "{acc_assign}" RENAME TO "{name}_02_assign"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_unassigned"')
-    conn.execute(f'ALTER TABLE "{acc_unassigned}" RENAME TO "{name}_02_unassigned"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_03_dropped"')
-    conn.execute(f'ALTER TABLE "{acc_dropped}" RENAME TO "{name}_03_dropped"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_03_detached"')
-    conn.execute(f'ALTER TABLE "{acc_detached}" RENAME TO "{name}_03_detached"')
+    for table, dest_table in spilled.items():
+        collect_spilled(conn, spill_dir, table, dest_table)
+    if not debug:
+        shutil.rmtree(spill_dir, ignore_errors=True)
 
     if passthrough:
         # The last loop iteration left _overlay_01 narrowed to its own
