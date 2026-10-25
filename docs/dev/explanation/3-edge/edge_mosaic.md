@@ -31,8 +31,8 @@ docs); `edge-mosaic` is a thin wrapper chaining `assign-one` → `edge-clip` →
    runs.
 3. **`_01_clip`**: a thin wrapper joining `overlay_fid` onto
    `{name}_input_01` from `{name}_02_assign`, then calling
-   `core.edge_clip.main()`, the same per-`overlay_fid`-subprocess, adaptively
-   grid-tiled clip `edge-clip` exposes standalone, see `docs/dev/explanation/3-edge/edge_clip.md`.
+   `core.edge_clip.main()`, the same per-`overlay_fid`-subprocess, split
+   clip `edge-clip` exposes standalone, see `docs/dev/explanation/3-edge/edge_clip.md`.
    When `merge` is set (see "Overlay gap-fill and input passthrough" below),
    this stage also `UNION ALL BY NAME`s every whole unmatched input file's
    own already-extended geometry into `{name}_03` immediately after the
@@ -72,10 +72,12 @@ file into one table up front, the same memory-safe pattern standalone
 into a pristine snapshot and its heavy-part tile decomposition cached
 (`core.assign.prepare_overlay_tiles()`), then each input file is loaded,
 assigned, and clipped alone against a fresh copy of that snapshot, one at a
-time. Each file's clip result is folded into a running `{name}_03}`
-accumulator immediately (`UNION ALL BY NAME`) rather than held until a
-final combine, keeping peak memory to roughly one overlay layer plus one input
-file at a time, not one overlay layer plus every input file. `fid` is kept
+time. Each file's clip result and its assign/drop/detached tables are
+written to Parquet under `tmp_dir` and combined once after the loop
+(`read_parquet(..., union_by_name = true)`), and each iteration's original
+layer covers only the original files whose extent overlaps that input file,
+keeping peak memory to roughly one overlay layer plus one input file at a
+time, not one overlay layer plus every input file. `fid` is kept
 globally unique across the whole run via a running offset applied right
 after each file loads (not by the union-time `row_number()` a
 single-file/combined-table run uses), then reassigned fresh via
@@ -141,7 +143,7 @@ output, which `edge-mosaic` never re-verifies.
 | Input assumption | Input layer is raw, unextended | Input layer is already a finished `edge_extend()` output |
 | Assign strategy | `assign-many` (per-polygon plurality) | `assign-one` (per-file majority vote) |
 | Cost driver | Per-group Voronoi extension (~85% of wall time) | Assign + clip + stitch only, no extension |
-| Isolation | Two subprocess generations: per-group `edge-extend`, then batched per-`overlay_fid` `edge-clip` (`docs/adr/0020`) | Per-`overlay_fid` subprocess only, boundary adaptively grid-tiled (`docs/adr/0015`, `docs/adr/0016`, `docs/adr/0017`) |
+| Isolation | Two subprocess generations: per-group `edge-extend`, then batched per-`overlay_fid` `edge-clip` (`docs/adr/0020`) | Per-`overlay_fid` subprocess only, heavy overlay polygons split with `ST_Subdivide` (`docs/adr/0015`, `docs/adr/0140`) |
 | When to use | Input layer hasn't been extended yet | Reusing pre-extended layers against a new/different overlay polygon |
 
 ## Caveats
@@ -150,8 +152,8 @@ output, which `edge-mosaic` never re-verifies.
 Caveats section for the full detail on `assign-one`'s per-file majority vote
 and its residual risk (a file too small to form a real majority).
 
-**Clip runs one overlay fid at a time, each in its own subprocess with its
-boundary adaptively grid-tiled.** See `docs/dev/explanation/3-edge/edge_clip.md` for the
+**Clip runs one overlay fid at a time, each in its own subprocess, heavy
+overlay polygons split with `ST_Subdivide`.** See `docs/dev/explanation/3-edge/edge_clip.md` for the
 full detail.
 
 **Cross-provenance seam risk.** `docs/dev/explanation/3-edge/edge_stitch.md` documents

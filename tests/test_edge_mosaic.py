@@ -355,6 +355,28 @@ def test_mosaic_multi_file_api(synthetic_inputs_split, synthetic_overlays, tmp_p
     assert [r[0] for r in rows] == [1, 2]
 
 
+def test_mosaic_multi_file_merge_untagged_inputs_tagged_overlay(
+    synthetic_overlays, tmp_path
+):
+    paths = []
+    for fid, wkt in _INPUT_WKT[:2]:
+        path = tmp_path / f"child_{fid}.parquet"
+        with duckdb.connect() as conn:
+            conn.execute("LOAD spatial")
+            conn.execute(f"""
+                COPY (SELECT {fid} AS input_id, ST_GeomFromText('{wkt}') AS geom)
+                TO '{path}' (FORMAT PARQUET, GEOPARQUET_VERSION 'NONE')
+            """)
+        paths.append(path)
+    output_path = tmp_path / "out.parquet"
+    mosaic(paths, synthetic_overlays, output_path, merge=True, overwrite=True)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        count = conn.execute(f"SELECT count(*) FROM '{output_path}'").fetchone()[0]
+    assert count == len(paths) + 1
+
+
 def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
     notch = (
         "POLYGON(({x0} 0, {x2} 0, {x2} 0.008, {x1} 0.008, {x1} 0.009, "

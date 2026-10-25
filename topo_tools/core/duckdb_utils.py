@@ -17,6 +17,13 @@ from typing import NoReturn
 from duckdb import DuckDBPyConnection
 from duckdb import connect as duckdb_connect
 
+from topo_tools.core.constants import (
+    CRS,
+    PARQUET_OPTS,
+    SUBDIVIDE_MAX_VERTICES,
+    SUBDIVIDE_MIN_VERTICES,
+)
+
 logger = getLogger(__name__)
 
 _GEO_PARQUET = (
@@ -176,6 +183,17 @@ def bbox_columns_sql(geom_expr: str) -> str:
     )
 
 
+def subdivide_sql(geom_expr: str) -> str:
+    """Build a geometry list: geom_expr split into bounded-vertex pieces, or as is."""
+    # ST_Subdivide drops the CRS tag, so its pieces are re-tagged.
+    return (
+        f"CASE WHEN ST_NPoints({geom_expr}) >= {SUBDIVIDE_MIN_VERTICES} "
+        f"THEN list_transform(ST_Dump(ST_SetCRS(ST_Subdivide({geom_expr}, "
+        f"{SUBDIVIDE_MAX_VERTICES}), '{CRS}')), lambda d: d.geom) "
+        f"ELSE [{geom_expr}] END"
+    )
+
+
 def cleanup_tmp(name: str, tmp_dir: Path, *, parquet: bool = False) -> None:
     """Remove tmp files for a named pipeline run."""
     for p in tmp_dir.glob(f"{name}.duckdb*"):
@@ -183,6 +201,29 @@ def cleanup_tmp(name: str, tmp_dir: Path, *, parquet: bool = False) -> None:
     if parquet:
         for p in tmp_dir.glob(f"{name}*.parquet"):
             p.unlink(missing_ok=True)
+
+
+def spill_table(conn: DuckDBPyConnection, spill_dir: Path, table: str, i: int) -> None:
+    """Write table to spill_dir/table/{i}.parquet, keeping it out of the connection."""
+    out_dir = spill_dir / table
+    out_dir.mkdir(parents=True, exist_ok=True)
+    conn.execute(f"""--sql
+        COPY (SELECT * FROM "{table}") TO '{out_dir / f"{i:06d}.parquet"}'
+        {PARQUET_OPTS}
+    """)
+
+
+def collect_spilled(
+    conn: DuckDBPyConnection, spill_dir: Path, table: str, dest_table: str
+) -> None:
+    """Combine every spilled file of table, in spill order, into dest_table."""
+    conn.execute(f'DROP TABLE IF EXISTS "{dest_table}"')
+    conn.execute(f"""--sql
+        CREATE TABLE "{dest_table}" AS
+        SELECT * FROM read_parquet(
+            '{spill_dir / table}/*.parquet', union_by_name = true
+        )
+    """)
 
 
 def export_debug_tables(

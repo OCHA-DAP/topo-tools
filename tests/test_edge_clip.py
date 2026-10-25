@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 from topo_tools.api.edge_clip import clip
 from topo_tools.cli.main import cli
-from topo_tools.core.constants import CLIP_TILE_MIN_VERTICES
+from topo_tools.core.constants import SUBDIVIDE_MIN_VERTICES
 
 _OVERLAY_WKT = [
     (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))"),
@@ -139,12 +139,12 @@ def _circle_wkt(cx, cy, r, n):
 
 
 def test_clip_heavy_overlay_tiling_finds_real_overlap(tmp_path):
-    """An overlay part at or above CLIP_TILE_MIN_VERTICES takes the tiled path.
+    """An overlay part at or above SUBDIVIDE_MIN_VERTICES takes the tiled path.
 
     Regression test: a heavy tile's bbox columns must survive the join
     that finds its real overlaps.
     """
-    n_points = CLIP_TILE_MIN_VERTICES + 200
+    n_points = SUBDIVIDE_MIN_VERTICES + 200
     overlays_path = tmp_path / "heavy_parents.parquet"
     _write_overlays(overlays_path, [(1, _circle_wkt(50, 50, 10, n_points))])
 

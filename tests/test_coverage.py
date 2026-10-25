@@ -191,6 +191,46 @@ def test_coverage_clean_removes_whole_micro_feature_instead_of_emptying_it():
         assert conn.execute("SELECT unit_a, unit_b FROM micro").fetchall() == [(3, 2)]
 
 
+# A clip sliver just over SNAP_TOLERANCE wide, which the clean's snap narrows under it.
+NEAR_MICRO_ROWS = [
+    (
+        1,
+        (
+            "POLYGON ((-127.40594181089371 50.01134009011129, "
+            "-127.405941787 50.011340097, "
+            "-127.40594179356547 50.011340112175425, -127.4059365680061 50.01135, "
+            "-127.40593 50.01135, -127.40593 50.011329999999994, "
+            "-127.40595 50.011329999999994, -127.40595 50.01133265649202, "
+            "-127.40594181089371 50.01134009011129))"
+        ),
+    ),
+    (
+        2,
+        (
+            "POLYGON ((-127.40594181089371 50.01134009011129, -127.4059418 50.0113401, "
+            "-127.40594179356547 50.011340112175425, -127.405941787 50.011340097, "
+            "-127.40594181089371 50.01134009011129))"
+        ),
+    ),
+]
+
+
+def test_coverage_clean_merges_a_part_its_snap_narrows_to_micro_width():
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        values = ", ".join(f"({fid}, '{wkt}')" for fid, wkt in NEAR_MICRO_ROWS)
+        conn.execute(
+            "CREATE TABLE synth AS SELECT fid, ST_GeomFromText(wkt) AS geom "
+            f"FROM (VALUES {values}) v(fid, wkt)"
+        )
+        assert not has_micro_polygons(conn, "synth")
+        coverage_clean(conn, "synth", "out", fids=None, micro_issues_table="micro")
+        assert not has_micro_polygons(conn, "out")
+        assert conn.execute("SELECT fid FROM out").fetchall() == [(1,)]
+        issues = conn.execute("SELECT key, unit_a, unit_b FROM micro").fetchall()
+        assert issues == [("micro-polygon-1", 2, 1)]
+
+
 @pytest.mark.parametrize("order", ["ASC", "DESC"])
 def test_coverage_clean_ignores_input_row_order(order):
     """The overlap goes to the same feature whichever row comes first."""

@@ -49,6 +49,7 @@ def _build_issues(
             table,
             within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
                 SELECT overlay_fid FROM "{name}_02_assign")""",
+            coverage=True,
         ),
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"

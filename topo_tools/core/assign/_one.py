@@ -5,13 +5,13 @@ from logging import getLogger
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import (
-    CLIP_TILE_MIN_VERTICES,
     CRS,
     EQUAL_AREA_CRS,
     GEOMETRY_TYPE,
+    SNAP_TOLERANCE,
+    SUBDIVIDE_MIN_VERTICES,
 )
-from topo_tools.core.duckdb_utils import bbox_columns_sql
-from topo_tools.core.edge_clip import subdivide_boundary
+from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 
 logger = getLogger(__name__)
 
@@ -25,6 +25,58 @@ def input_bbox_extent(
         FROM (SELECT {bbox_columns_sql("geom")} FROM "{name}_input_01")
     """).fetchone()
     return None if row[0] is None else (row[0], row[1], row[2], row[3])
+
+
+def union_bbox(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
+    """Combine two (xmin, ymin, xmax, ymax) bboxes into their enclosing bbox."""
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+
+def bboxes_overlap(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    margin: float,
+) -> bool:
+    """Whether two (xmin, ymin, xmax, ymax) bboxes overlap within margin."""
+    return (
+        a[0] <= b[2] + margin
+        and a[2] >= b[0] - margin
+        and a[1] <= b[3] + margin
+        and a[3] >= b[1] - margin
+    )
+
+
+def overlay_fid_bboxes(
+    conn: DuckDBPyConnection, table: str
+) -> list[tuple[int, tuple[float, float, float, float]]]:
+    """Return each non-empty overlay row's fid and (xmin, ymin, xmax, ymax) extent."""
+    rows = conn.execute(f"""--sql
+        SELECT fid, xmin, ymin, xmax, ymax
+        FROM (SELECT fid, {bbox_columns_sql("geom")} FROM "{table}")
+        WHERE xmin IS NOT NULL
+    """).fetchall()
+    return [(r[0], (r[1], r[2], r[3], r[4])) for r in rows]
+
+
+def load_nearby_overlay(
+    conn: DuckDBPyConnection,
+    name: str,
+    fid_bboxes: list[tuple[int, tuple[float, float, float, float]]],
+) -> None:
+    """Copy into `{name}_overlay_01` only the overlay rows near `{name}_input_01`."""
+    bbox = input_bbox_extent(conn, name)
+    nearby = [
+        str(fid)
+        for fid, obox in fid_bboxes
+        if bbox is not None and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
+    ]
+    where = f"WHERE fid IN ({','.join(nearby)})" if nearby else "WHERE FALSE"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_overlay_01" AS
+        SELECT * FROM "{name}_overlay_full" {where}
+    """)
 
 
 def prepare_overlay_tiles(
@@ -62,32 +114,25 @@ def prepare_overlay_tiles(
             xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE
         )
     """)
-    heavy_parts = conn.execute(f"""--sql
-        SELECT part_id, fid FROM "{name}_02_overlay_parts"
-        WHERE n_points >= {CLIP_TILE_MIN_VERTICES}
-    """).fetchall()
-    if heavy_parts:
+    heavy = conn.execute(f"""--sql
+        SELECT count(*) FROM "{name}_02_overlay_parts"
+        WHERE n_points >= {SUBDIVIDE_MIN_VERTICES}
+    """).fetchone()[0]
+    if heavy:
         logger.info(
-            "assign-one: tiling %d heavy overlay part(s) (>= %d vertices)",
-            len(heavy_parts),
-            CLIP_TILE_MIN_VERTICES,
+            "assign-one: splitting %d heavy overlay part(s) (>= %d vertices)",
+            heavy,
+            SUBDIVIDE_MIN_VERTICES,
         )
-    for part_id, overlay_fid in heavy_parts:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{name}_02_heavy_src" AS
-            SELECT part_geom AS geom FROM "{name}_02_overlay_parts"
-            WHERE part_id = {part_id}
-        """)
-        subdivide_boundary(
-            conn, f"{name}_02_heavy_src", "geom", f"{name}_02_heavy_tiles_raw"
+    conn.execute(f"""--sql
+        INSERT INTO "{name}_02_overlay_tiles" BY NAME
+        WITH t AS (
+            SELECT fid AS overlay_fid, UNNEST({subdivide_sql("part_geom")}) AS geom
+            FROM "{name}_02_overlay_parts"
+            WHERE n_points >= {SUBDIVIDE_MIN_VERTICES}
         )
-        conn.execute(f"""--sql
-            INSERT INTO "{name}_02_overlay_tiles" BY NAME
-            SELECT {overlay_fid} AS overlay_fid, geom, {bbox_columns_sql("geom")}
-            FROM "{name}_02_heavy_tiles_raw"
-        """)
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_heavy_src"')
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_heavy_tiles_raw"')
+        SELECT overlay_fid, geom, {bbox_columns_sql("geom")} FROM t
+    """)
 
 
 def _build_pairs(
@@ -123,7 +168,7 @@ def _build_pairs(
           ON p.xmax >= c.xmin AND p.xmin <= c.xmax
          AND p.ymax >= c.ymin AND p.ymin <= c.ymax
          AND ST_Intersects(c.part_geom, p.part_geom)
-        WHERE p.n_points < {CLIP_TILE_MIN_VERTICES}
+        WHERE p.n_points < {SUBDIVIDE_MIN_VERTICES}
         GROUP BY c.fid, p.fid
     """)
 

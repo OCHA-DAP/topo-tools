@@ -37,7 +37,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     open_gaps = f"{name}_04_tmp2"
     conn.execute(
         f'CREATE OR REPLACE TABLE "{open_gaps}" AS '
-        f"SELECT * FROM ({gap_issues_sql(conn, f'{name}_03')})"
+        f"SELECT * FROM ({gap_issues_sql(conn, f'{name}_03', coverage=True)})"
     )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02" AS

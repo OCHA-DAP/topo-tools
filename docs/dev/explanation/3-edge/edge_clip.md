@@ -73,18 +73,15 @@ so a worker started from stdin fails immediately with a `FileNotFoundError`
 that surfaces as a generic "worker exited with no result" error, easy to
 mistake for OOM.
 
-Within one overlay polygon's subprocess, that overlay polygon's boundary is grid-tiled
-before intersecting once its vertex count reaches `CLIP_TILE_MIN_VERTICES`
-(`core.edge_clip.subdivide_boundary`, `_tiling.py`), joining input polygons to tiles
-via bbox comparison rather than one `ST_Intersection` against a
-possibly-million-vertex whole. Below the threshold, the overlay polygon is clipped
-directly with no subdivision. Tile size is solved from that overlay polygon's own
-vertex density (`_adaptive_cell_size`) rather than a fixed constant,
-calibrated so South Africa's worst real case (281k vertices) lands at
-~1 degree cells; sparser or simpler overlay polygons get coarser cells automatically.
-See `docs/adr/0016` (grid-tiling a large overlay polygon's boundary before
-intersecting) and `docs/adr/0017` (the adaptive threshold/cell size) for
-the full empirical detail.
+Within one overlay polygon's subprocess, an overlay polygon of at least
+`SUBDIVIDE_MIN_VERTICES` vertices is split with `ST_Subdivide` into pieces of
+at most `SUBDIVIDE_MAX_VERTICES` vertices (`core.duckdb_utils.subdivide_sql`),
+and input polygons join to pieces by bbox comparison rather than one
+`ST_Intersection` against a possibly-million-vertex whole. A smaller overlay
+polygon is clipped directly. The same helper splits every heavy geometry the
+edge tools join against (assign pairs, clip-detached neighbours, the
+detached-part overlay union), so all of them share one vertex budget. See
+`docs/adr/0140`.
 
 ## Clip-detached pieces
 

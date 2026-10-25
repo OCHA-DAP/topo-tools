@@ -92,10 +92,10 @@ warning, not an error.
 against already-extended (often massively overshot) geometry, and a plain
 `ST_Intersection`-based area-sum join against a huge single overlay part
 (e.g. a country-scale admin0 polygon) is exactly the failure mode `edge-clip`
-itself grid-tiles around. So `assign_one` builds its own pairs table
-(`_build_pairs`), reusing `core.edge_clip.subdivide_boundary` to tile any
-overlay part at or above `CLIP_TILE_MIN_VERTICES` before intersecting, the
-same threshold and tiling logic `edge-clip` uses.
+splits around. So `assign_one` builds its own pairs table (`_build_pairs`),
+splitting any overlay part of at least `SUBDIVIDE_MIN_VERTICES` vertices with
+`subdivide_sql` before intersecting, the same helper and budget `edge-clip`
+uses.
 
 That tiling is split into its own function, `prepare_overlay_tiles()`, which
 takes an optional `input_bbox` (`xmin, ymin, xmax, ymax`) that skips any
@@ -108,10 +108,12 @@ calls it internally with the already-loaded input polygon's own bbox. `edge-mosa
 multi-file loop instead pre-scans every input file's bbox, unions them,
 and calls `prepare_overlay_tiles()` once before iterating with the combined
 bbox, passing `use_cached_tiles=True` on every file's `assign_one()` call, so
-the same overlay polygon's tiles aren't grid-subdivided from scratch on every one of
+the same overlay polygon's pieces aren't split from scratch on every one of
 possibly hundreds of files. See `docs/adr/0024` for the profiling
 discrepancy that motivated the caching split, and `docs/adr/0085` for the
-bbox prefilter.
+bbox prefilter. Each file's loop iteration loads only the overlay polygons
+whose bbox is near that file's input (`load_nearby_overlay`), which
+`assign_one` then narrows to the polygons it pairs with.
 
 For each `source_file`, `assign_one` counts how many of that file's input polygons
 intersect each candidate overlay polygon (a count of intersecting input polygons, not
