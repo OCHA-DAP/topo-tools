@@ -12,7 +12,9 @@ from topo_tools.core.assign import (
     assign_one,
     fill_unmatched_overlays,
     input_bbox_extent,
+    load_nearby_overlay,
     load_overlay,
+    overlay_fid_bboxes,
     prepare_overlay_tiles,
     resolve_merge_columns,
     union_bbox,
@@ -428,14 +430,12 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
     spill_dir = tmp_dir_path / f"{name}_spill"
     shutil.rmtree(spill_dir, ignore_errors=True)
 
+    overlay_bboxes = overlay_fid_bboxes(conn, f"{name}_overlay_full")
     fid_offset = 0
     for i, file_path in enumerate(paths):
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{name}_overlay_01" AS
-            SELECT * FROM "{name}_overlay_full"
-        """)
         inputs.load_and_clean_input(conn, name, file_path)
         conn.execute(f'UPDATE "{name}_input_01" SET fid = fid + {fid_offset}')
+        load_nearby_overlay(conn, name, overlay_bboxes)
         assign_one(
             conn,
             name,

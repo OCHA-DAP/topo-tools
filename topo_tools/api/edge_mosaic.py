@@ -9,11 +9,14 @@ from duckdb import DuckDBPyConnection
 from topo_tools.api._schema_fill_compose import apply_optional_fill, validate_fill_flags
 from topo_tools.core.assign import (
     assign_one,
+    bboxes_overlap,
     fill_unmatched_overlays,
     input_bbox_extent,
     load_input,
+    load_nearby_overlay,
     load_original,
     load_overlay,
+    overlay_fid_bboxes,
     prepare_overlay_tiles,
     resolve_merge_columns,
     union_bbox,
@@ -292,20 +295,6 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         logger.info("done: %s", name)
 
 
-def _bboxes_overlap(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-    margin: float,
-) -> bool:
-    """Whether two (xmin, ymin, xmax, ymax) bboxes overlap within margin."""
-    return (
-        a[0] <= b[2] + margin
-        and a[2] >= b[0] - margin
-        and a[1] <= b[3] + margin
-        and a[3] >= b[1] - margin
-    )
-
-
 def _original_bboxes(
     conn: DuckDBPyConnection, originals: list[Path | str]
 ) -> list[tuple[Path | str, tuple[float, float, float, float] | None]]:
@@ -335,7 +324,7 @@ def _load_nearby_originals(
         for path, obox in original_bboxes
         if bbox is not None
         and obox is not None
-        and _bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
+        and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
     ]
     # One far-away file keeps the view's schema when none is nearby.
     load_original(conn, name, nearby or [original_bboxes[0][0]])
@@ -411,14 +400,12 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     spill_dir = tmp_dir_path / f"{name}_spill"
     shutil.rmtree(spill_dir, ignore_errors=True)
 
+    overlay_bboxes = overlay_fid_bboxes(conn, f"{name}_overlay_full")
     fid_offset = 0
     for i, file_path in enumerate(paths):
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{name}_overlay_01" AS
-            SELECT * FROM "{name}_overlay_full"
-        """)
         load_input(conn, name, [file_path])
         conn.execute(f'UPDATE "{name}_input_01" SET fid = fid + {fid_offset}')
+        load_nearby_overlay(conn, name, overlay_bboxes)
         if originals:
             _load_nearby_originals(conn, name, original_bboxes)
         assign_one(
