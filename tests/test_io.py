@@ -238,7 +238,7 @@ def test_export_geometry_table_omits_default_crs_from_geo_metadata(tmp_path):
 def test_export_geometry_table_writes_standard_wgs84_prj(tmp_path):
     dest = tmp_path / "out.shp"
     with duckdb.connect() as conn:
-        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute("INSTALL spatial; LOAD spatial; SET geometry_always_xy = true;")
         conn.execute(
             "CREATE TABLE t AS SELECT 1 AS fid, 'a' AS x, "
             "ST_GeomFromText('POINT(0 0)') AS geom"
