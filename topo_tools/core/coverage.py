@@ -805,18 +805,14 @@ def _classify_detached_candidates(
               WHERE outcome = 'candidate')
     """)
     _owned_original_parts(conn, "_det_probe", "_det_src")
-    conn.execute("""--sql
+    conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_su AS
-        SELECT s.pid, d.overlay_fid, ST_Union_Agg(s.geom) AS geom
-        FROM _det_src s JOIN _det_dest d USING (pid)
-        GROUP BY s.pid, d.overlay_fid
-    """)
-    conn.execute("""--sql
-        CREATE OR REPLACE TABLE _det_env AS
-        SELECT pid, overlay_fid,
-               ST_XMin(geom) - 0.01 AS xmin, ST_XMax(geom) + 0.01 AS xmax,
-               ST_YMin(geom) - 0.01 AS ymin, ST_YMax(geom) + 0.01 AS ymax
-        FROM _det_su
+        WITH u AS (
+            SELECT s.pid, d.overlay_fid, ST_Union_Agg(s.geom) AS geom
+            FROM _det_src s JOIN _det_dest d USING (pid)
+            GROUP BY s.pid, d.overlay_fid
+        )
+        SELECT *, {bbox_columns_sql("geom")} FROM u
     """)
     # Split once so each piece joins only the overlay pieces near it, never the
     # whole (possibly multi-million-vertex) overlay polygon per piece.
@@ -830,15 +826,13 @@ def _classify_detached_candidates(
         SELECT *, {bbox_columns_sql("geom")} FROM t
     """)
     conn.execute("""--sql
-        CREATE OR REPLACE TABLE _det_ovclip AS
-        SELECT e.pid, ST_Union_Agg(ST_CollectionExtract(ST_Intersection(
-                   t.geom, ST_MakeEnvelope(e.xmin, e.ymin, e.xmax, e.ymax)
-               ), 3)) AS geom
-        FROM _det_env e JOIN _det_ovtile t
-          ON t.overlay_fid = e.overlay_fid
-         AND t.xmin <= e.xmax AND t.xmax >= e.xmin
-         AND t.ymin <= e.ymax AND t.ymax >= e.ymin
-        GROUP BY e.pid
+        CREATE OR REPLACE TABLE _det_ovnear AS
+        SELECT u.pid, ST_Union_Agg(t.geom) AS geom
+        FROM _det_su u JOIN _det_ovtile t
+          ON t.overlay_fid = u.overlay_fid
+         AND t.xmin <= u.xmax AND t.xmax >= u.xmin
+         AND t.ymin <= u.ymax AND t.ymax >= u.ymin
+        GROUP BY u.pid
     """)
     # Original land the overlay clipped away beside a piece (the "neck") is
     # large when the clip sliced across the unit, near zero for a drawn lobe.
@@ -858,7 +852,7 @@ def _classify_detached_candidates(
             FROM c JOIN su USING (pid)
             SEMI JOIN (SELECT DISTINCT overlay_fid FROM _det_ovtile) ex
               ON ex.overlay_fid = c.overlay_fid
-            LEFT JOIN _det_ovclip oc USING (pid)
+            LEFT JOIN _det_ovnear oc USING (pid)
         ),
         neck AS (
             SELECT c.pid, sum(ST_Area(o.geom)) AS neck_area
@@ -886,9 +880,8 @@ def _classify_detached_candidates(
         "_det_probe",
         "_det_src",
         "_det_su",
-        "_det_env",
         "_det_ovtile",
-        "_det_ovclip",
+        "_det_ovnear",
     ):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
 
