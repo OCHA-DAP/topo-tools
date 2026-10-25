@@ -107,6 +107,15 @@ in sync.
   tool MUST log a warning. `schema-map` then keeps crosswalk-row column
   order.
 
+## Geometry CRS
+
+- Every tool MUST tag geometry `OGC:CRS84` (WGS84 lon/lat) at read time (a
+  CRS-less source is assumed to already be WGS84 lon/lat), keep it tagged in
+  every internal table, and write every Parquet file, intermediate or final,
+  as GeoParquet 2.0 following geoparquet-io's conventions: the default CRS is
+  signalled by omitting the `geo` metadata's `crs` key. Shapefile,
+  GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
+
 ## CSV outputs
 
 - Every CSV a tool writes (`schema-map`'s crosswalk, `change`'s changelog,

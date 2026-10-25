@@ -1,5 +1,6 @@
 """Unit tests for core/io.py's remote-URL-aware path helpers."""
 
+import json
 from pathlib import Path
 
 import duckdb
@@ -179,3 +180,68 @@ def test_export_geometry_table_writes_geometry_first(tmp_path):
         export_geometry_table(conn, "t", dest)
         columns = [r[0] for r in conn.execute(f"DESCRIBE FROM '{dest}'").fetchall()]
     assert columns == ["geometry", "x"]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "copy_opts"),
+    [
+        (".parquet", "(FORMAT PARQUET, GEOPARQUET_VERSION 'NONE')"),
+        (".parquet", "(FORMAT PARQUET, GEOPARQUET_VERSION 'V1')"),
+        (".geojson", "(FORMAT GDAL, DRIVER 'GeoJSON')"),
+    ],
+    ids=["parquet-no-crs", "geoparquet-crs84", "geojson"],
+)
+def test_read_and_reproject_tags_every_source_crs84(tmp_path, suffix, copy_opts):
+    path = tmp_path / f"src{suffix}"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            "COPY (SELECT 1 AS x, "
+            "ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))') AS geom) "
+            f"TO '{path}' {copy_opts}"
+        )
+        read_and_reproject(conn, "out", path)
+        geom_type = conn.execute('SELECT typeof(geom) FROM "out_01"').fetchone()[0]
+    assert geom_type == "GEOMETRY('OGC:CRS84')"
+
+
+def test_export_geometry_table_tags_crs84(tmp_path):
+    dest = tmp_path / "out.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            "CREATE TABLE t AS SELECT 1 AS fid, ST_GeomFromText('POINT(0 0)') AS geom"
+        )
+        export_geometry_table(conn, "t", dest)
+        geom_type = conn.execute(f"DESCRIBE FROM '{dest}'").fetchone()[1]
+    assert geom_type == "GEOMETRY('OGC:CRS84')"
+
+
+def test_export_geometry_table_omits_default_crs_from_geo_metadata(tmp_path):
+    dest = tmp_path / "out.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            "CREATE TABLE t AS SELECT 1 AS fid, ST_GeomFromText('POINT(0 0)') AS geom"
+        )
+        export_geometry_table(conn, "t", dest)
+        geo = json.loads(
+            conn.execute(
+                f"SELECT decode(value) FROM parquet_kv_metadata('{dest}') "
+                "WHERE decode(key) = 'geo'"
+            ).fetchone()[0]
+        )
+    assert geo["version"] == "2.0.0"
+    assert "crs" not in geo["columns"]["geometry"]
+
+
+def test_export_geometry_table_writes_standard_wgs84_prj(tmp_path):
+    dest = tmp_path / "out.shp"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial; SET geometry_always_xy = true;")
+        conn.execute(
+            "CREATE TABLE t AS SELECT 1 AS fid, 'a' AS x, "
+            "ST_GeomFromText('POINT(0 0)') AS geom"
+        )
+        export_geometry_table(conn, "t", dest)
+    assert dest.with_suffix(".prj").read_text().startswith('GEOGCS["GCS_WGS_1984"')

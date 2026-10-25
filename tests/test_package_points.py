@@ -227,7 +227,7 @@ def test_every_point_covered_by_its_own_polygon(admin2_input, tmp_path):
             JOIN '{admin2_input}' src
               ON src.adm2_pcode IS NOT DISTINCT FROM p.code
             WHERE p.adm_lvl = 2
-              AND NOT ST_Covers(ST_SetCRS(src.geom, 'EPSG:4326'), p.geometry)
+              AND NOT ST_Covers(ST_SetCRS(src.geom, 'OGC:CRS84'), p.geometry)
         """).fetchone()[0]
     assert uncovered == 0
 

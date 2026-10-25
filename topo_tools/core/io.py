@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import duckdb
 from duckdb import DuckDBPyConnection
 
-from .constants import COPY_OPTS, RESERVED_COLUMN_NAMES
+from .constants import COPY_OPTS, CRS, GDAL_CRS, RESERVED_COLUMN_NAMES
 from .coverage import close_notches, coverage_clean, has_valid_topology
 from .duckdb_utils import quote_identifier
 
@@ -160,18 +160,18 @@ def reproject_select_sql(
     rename_sql = "".join(f', "{c}" AS "{c}_orig"' for c in colliding_cols)
 
     # ST_Read tags geometry with source CRS; single-arg ST_Transform infers it.
-    # Parquet geometries are untagged (assumed EPSG:4326), so skip transform.
+    # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged.
     geom_expr = (
         "ST_Force2D(ST_MakeValid(ST_Transform("
-        f"ST_MakeValid(\"{geom_col}\"), 'EPSG:4326', true)))"
+        f"ST_MakeValid(\"{geom_col}\"), '{CRS}', true)))"
         if geom_type != "GEOMETRY"
-        else f'ST_Force2D(ST_MakeValid("{geom_col}"))'
+        else f"ST_SetCRS(ST_Force2D(ST_MakeValid(\"{geom_col}\")), '{CRS}')"
     )
     if not make_valid:
         geom_expr = (
-            f"ST_Force2D(ST_Transform(\"{geom_col}\", 'EPSG:4326', true))"
+            f"ST_Force2D(ST_Transform(\"{geom_col}\", '{CRS}', true))"
             if geom_type != "GEOMETRY"
-            else f'ST_Force2D("{geom_col}")'
+            else f"ST_SetCRS(ST_Force2D(\"{geom_col}\"), '{CRS}')"
         )
 
     # ST_MakeValid runs again after transform, since reprojection can break
@@ -255,9 +255,12 @@ def export_geometry_table(
         for a, b in (renames or {}).items()
     )
     rename_sql = f" RENAME ({rename})" if rename else ""
+    crs = CRS if dest.suffix == ".parquet" else GDAL_CRS
     conn.execute(f"""--sql
         COPY (
-            SELECT geom AS geometry, * EXCLUDE ({exclude}){rename_sql} FROM "{table}"
+            SELECT ST_SetCRS(geom, '{crs}') AS geometry,
+                   * EXCLUDE ({exclude}){rename_sql}
+            FROM "{table}"
         ) TO '{dest}' {COPY_OPTS[dest.suffix]}
     """)
 

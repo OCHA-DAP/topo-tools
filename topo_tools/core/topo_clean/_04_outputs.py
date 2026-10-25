@@ -5,6 +5,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.constants import GEOMETRY_TYPE
 from topo_tools.core.coverage import (
     check_invalid_edges,
     detect_notches,
@@ -27,7 +28,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     remaining = f"{name}_04_tmp1"
     conn.execute(
         f'CREATE OR REPLACE TABLE "{remaining}" '
-        "(unit_a BIGINT, unit_b BIGINT, geom GEOMETRY)"
+        f"(unit_a BIGINT, unit_b BIGINT, geom {GEOMETRY_TYPE})"
     )
     if conn.execute(
         f"""SELECT count(*) FROM "{name}_02" WHERE kind = 'notch'"""
