@@ -44,7 +44,7 @@ def check_no_erosion(
         raise RuntimeError(msg)
 
 
-def _grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
+def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     left: str,
     right: str,
@@ -107,7 +107,7 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
 
     Both tables need pid, geom and bbox columns; heavy parts are compared split.
     """
-    _grid_pairs(conn, left, right, f"{out}_cand", on=on, tol=tol)
+    grid_pairs(conn, left, right, f"{out}_cand", on=on, tol=tol)
     cand_l = f'SELECT pid FROM "{out}_cand"'
     cand_r = f'SELECT near_pid FROM "{out}_cand"'
     sides = {"l": (left, cand_l), "r": (right, cand_r)}
@@ -124,7 +124,7 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
             FROM s
         """)
     rp = f"{out}_{'l' if left == right else 'r'}"
-    _grid_pairs(conn, f"{out}_l", rp, f"{out}_pp", on="TRUE", tol=tol, key="qid")
+    grid_pairs(conn, f"{out}_l", rp, f"{out}_pp", on="TRUE", tol=tol, key="qid")
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
         WITH j AS (

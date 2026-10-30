@@ -128,6 +128,13 @@ def is_noise_column(name: str) -> bool:
 SUBDIVIDE_MIN_VERTICES = 5000
 # Most vertices any split piece may have.
 SUBDIVIDE_MAX_VERTICES = 1350
+# Shared border points within this distance are one point; inputs and overlay
+# tiles snap to them at this distance before the clip.
+SHARED_POINT_TOLERANCE = 0.000000005
+# Inputs also snap to overlay vertices this close to a crossing input's vertex.
+OVERLAY_VERTEX_SNAP = 0.000000025
+# Input vertices one batch of clip input/tile pairs may carry.
+CLIP_PAIR_VERTEX_BUDGET = 20_000_000
 
 _PARQUET_EXPORT = (
     "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"
