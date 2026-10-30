@@ -4,6 +4,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import (
     CLIP_PAIR_VERTEX_BUDGET,
+    GEOMETRY_TYPE,
     OVERLAY_VERTEX_SNAP,
     SHARED_POINT_TOLERANCE,
 )
@@ -44,28 +45,41 @@ def _xy_table(select: str) -> str:
 def build_tiles(
     conn: DuckDBPyConnection, overlay_source: str, fids_sql: str, prefix: str
 ) -> None:
-    """Create `{prefix}_tiles` (tid, overlay_fid, geom, bbox) and `{prefix}_cut`.
+    """Add `{prefix}_tiles` (tid, overlay_fid, geom, bbox) and `{prefix}_cut` rows.
 
-    `{prefix}_cut` holds the tile vertices the subdivide adds per overlay fid;
-    the empty candidate tables collect_candidates appends to are created too.
+    Only fids not tiled yet are added; `{prefix}_cut` holds the tile vertices the
+    subdivide adds. The candidate tables collect_candidates appends to are created.
     """
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{prefix}_tiles" AS
-        SELECT row_number() OVER () AS tid, overlay_fid, geom,
-               {bbox_columns_sql("geom")}
-        FROM (
-            SELECT fid AS overlay_fid, UNNEST({subdivide_sql("geom")}) AS geom
-            FROM {overlay_source} WHERE fid IN ({fids_sql})
-        )
-    """)
-    conn.execute(
-        f'CREATE OR REPLACE TABLE "{prefix}_cut" '
-        "(overlay_fid BIGINT, x DOUBLE, y DOUBLE)"
-    )
-    fids = conn.execute(
-        f'SELECT DISTINCT overlay_fid FROM "{prefix}_tiles" ORDER BY 1'
-    ).fetchall()
+    for table, cols in (
+        (
+            "tiles",
+            (
+                f"tid BIGINT, overlay_fid BIGINT, geom {GEOMETRY_TYPE}, "
+                "xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE"
+            ),
+        ),
+        ("cut", "overlay_fid BIGINT, x DOUBLE, y DOUBLE"),
+        ("cand", "pri INTEGER, x DOUBLE, y DOUBLE"),
+        ("cutnear", "x DOUBLE, y DOUBLE"),
+        ("dcand", "x DOUBLE, y DOUBLE"),
+    ):
+        conn.execute(f'CREATE TABLE IF NOT EXISTS "{prefix}_{table}" ({cols})')
+    fids = conn.execute(f"""--sql
+        SELECT DISTINCT fid FROM ({fids_sql}) f(fid)
+        WHERE fid NOT IN (SELECT DISTINCT overlay_fid FROM "{prefix}_tiles")
+        ORDER BY 1
+    """).fetchall()
     for (g,) in fids:
+        conn.execute(f"""--sql
+            INSERT INTO "{prefix}_tiles" BY NAME
+            SELECT (SELECT coalesce(max(tid), 0) FROM "{prefix}_tiles")
+                   + row_number() OVER () AS tid,
+                   {g} AS overlay_fid, geom, {bbox_columns_sql("geom")}
+            FROM (
+                SELECT UNNEST({subdivide_sql("geom")}) AS geom
+                FROM {overlay_source} WHERE fid = {g}
+            )
+        """)
         conn.execute(f"""--sql
             INSERT INTO "{prefix}_cut"
             SELECT {g}, x, y FROM (
@@ -77,18 +91,18 @@ def build_tiles(
                       FROM {overlay_source} WHERE fid = {g})
             )
         """)
-    for table, cols in (
-        ("cand", "pri INTEGER, x DOUBLE, y DOUBLE"),
-        ("cutnear", "x DOUBLE, y DOUBLE"),
-        ("dcand", "x DOUBLE, y DOUBLE"),
-    ):
-        conn.execute(f'CREATE OR REPLACE TABLE "{prefix}_{table}" ({cols})')
 
 
 def pair_batches(
-    conn: DuckDBPyConnection, rows: str, tiles: str, out: str, rows_where: str
+    conn: DuckDBPyConnection,
+    rows: str,
+    tiles: str,
+    out: str,
+    overlay_fid: int | None = None,
 ) -> None:
     """Create `out` (fid, tid, b): row/tile bbox pairs, batched by row vertex count."""
+    where = "TRUE" if overlay_fid is None else f"overlay_fid = {overlay_fid}"
+    where_r = "TRUE" if overlay_fid is None else f"r.overlay_fid = {overlay_fid}"
     # Joining counts, never geometries, keeps one big row over many tiles in memory.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
@@ -100,9 +114,9 @@ def pair_batches(
               ON t.overlay_fid = r.overlay_fid
              AND t.xmax >= r.xmin AND t.xmin <= r.xmax
              AND t.ymax >= r.ymin AND t.ymin <= r.ymax
-            WHERE r.{rows_where}
+            WHERE {where_r}
         ) p
-        JOIN (SELECT fid, ST_NPoints(geom) AS np FROM "{rows}" WHERE {rows_where}) n
+        JOIN (SELECT fid, ST_NPoints(geom) AS np FROM "{rows}" WHERE {where}) n
           USING (fid)
     """)
 
@@ -117,7 +131,7 @@ def collect_candidates(conn: DuckDBPyConnection, input_table: str, prefix: str) 
     """)
     fids = x("SELECT DISTINCT overlay_fid FROM _pt_i ORDER BY 1").fetchall()
     for (g,) in fids:
-        pair_batches(conn, "_pt_i", f"{prefix}_tiles", "_pt_bat", f"overlay_fid = {g}")
+        pair_batches(conn, "_pt_i", f"{prefix}_tiles", "_pt_bat", g)
         x(f"""--sql
             CREATE OR REPLACE TABLE _pt_rb AS
             SELECT fid, ST_Boundary(geom) AS bnd FROM _pt_i WHERE overlay_fid = {g}
@@ -269,3 +283,21 @@ def pick_points(conn: DuckDBPyConnection, prefix: str) -> None:
     """)
     for t in ("_pt_cand", "_pt_ccp"):
         conn.execute(f"DROP TABLE IF EXISTS {t}")
+
+
+def prepare_points(
+    conn: DuckDBPyConnection, input_table: str, overlay_source: str, prefix: str
+) -> None:
+    """Build the `{prefix}_*` points tables for input_table (fid, overlay_fid, geom)."""
+    drop_points(conn, prefix)
+    build_tiles(
+        conn, overlay_source, f'SELECT overlay_fid FROM "{input_table}"', prefix
+    )
+    collect_candidates(conn, input_table, prefix)
+    pick_points(conn, prefix)
+
+
+def drop_points(conn: DuckDBPyConnection, prefix: str) -> None:
+    """Drop every `{prefix}_*` points table."""
+    for table in ("tiles", "cut", "cand", "cutnear", "dcand", "pts"):
+        conn.execute(f'DROP TABLE IF EXISTS "{prefix}_{table}"')

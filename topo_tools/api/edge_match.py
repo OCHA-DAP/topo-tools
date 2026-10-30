@@ -27,6 +27,7 @@ from topo_tools.core.duckdb_utils import (
     resolve_tmp_dir,
     spill_table,
 )
+from topo_tools.core.edge_clip import drop_points
 from topo_tools.core.edge_match import _01_inputs as inputs
 from topo_tools.core.edge_match import _02_groups as groups
 from topo_tools.core.edge_match import _03_clip as clip
@@ -285,7 +286,10 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_04",
                             overlay_snapshot_table=f"{name}_overlay_full",
+                            points_table=f"{name}_03_pt_pts",
                         )
+                    if not debug:
+                        drop_points(conn, f"{name}_03_pt")
                 elif s == "stitch":
                     stitch.main(conn, name, debug=debug)
                 elif s == "outputs":
@@ -492,7 +496,10 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_04",
             overlay_snapshot_table=f"{name}_overlay_01",
+            points_table=f"{name}_03_pt_pts",
         )
+    if not debug:
+        drop_points(conn, f"{name}_03_pt")
     stitch.main(conn, name, debug=debug)
     apply_optional_fill(
         conn,

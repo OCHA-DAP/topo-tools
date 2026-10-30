@@ -58,12 +58,13 @@ def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
 
     Joins on grid cells, counting each pair in the cell of its overlap's min corner.
     """
-    # A 99th-percentile-extent cell keeps both cells per row and rows per cell small.
+    # A 99th-percentile-extent cell keeps both cells per row and rows per cell small;
+    # points are left out, or many points would shrink it to tol under long rows.
     cell = conn.execute(f"""--sql
-        SELECT greatest(quantile_cont(greatest(xmax - xmin, ymax - ymin), 0.99), {tol})
+        SELECT greatest(quantile_cont(e, 0.99) FILTER (WHERE e > 0), {tol})
         FROM (
-            SELECT xmin, xmax, ymin, ymax FROM "{left}"
-            UNION ALL SELECT xmin, xmax, ymin, ymax FROM "{right}"
+            SELECT greatest(xmax - xmin, ymax - ymin) AS e FROM "{left}"
+            UNION ALL SELECT greatest(xmax - xmin, ymax - ymin) FROM "{right}"
         )
     """).fetchone()[0]
 

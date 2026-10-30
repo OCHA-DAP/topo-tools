@@ -31,6 +31,12 @@ from topo_tools.core.duckdb_utils import (
     resolve_tmp_dir,
     spill_table,
 )
+from topo_tools.core.edge_clip import (
+    build_tiles,
+    collect_candidates,
+    drop_points,
+    pick_points,
+)
 from topo_tools.core.edge_mosaic import _01_clip as clip
 from topo_tools.core.edge_mosaic import _02_stitch as stitch
 from topo_tools.core.edge_mosaic import _03_outputs as outputs
@@ -259,7 +265,10 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_03",
                             overlay_snapshot_table=f"{name}_overlay_full",
+                            points_table=f"{name}_02_pt_pts",
                         )
+                    if not debug:
+                        drop_points(conn, f"{name}_02_pt")
                     count = conn.execute(
                         f'SELECT COUNT(*) FROM "{name}_03"'
                     ).fetchone()[0]
@@ -388,6 +397,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge
+    points = f"{name}_02_pt"
+    drop_points(conn, points)
 
     spilled = {
         f"{name}_03_iter": f"{name}_03",
@@ -399,15 +410,23 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     }
     spill_dir = tmp_dir_path / f"{name}_spill"
     shutil.rmtree(spill_dir, ignore_errors=True)
+    assigned = (
+        f"{name}_input_01",
+        f"{name}_02_assign",
+        f"{name}_02_unassigned",
+        f"{name}_overlay_01",
+    )
+    assigned_dir = tmp_dir_path / f"{name}_assigned"
+    shutil.rmtree(assigned_dir, ignore_errors=True)
 
+    # Every file's shared points are collected before any clip, so both sides
+    # of a border between two files snap to the same points.
     overlay_bboxes = overlay_fid_bboxes(conn, f"{name}_overlay_full")
     fid_offset = 0
     for i, file_path in enumerate(paths):
         load_input(conn, name, [file_path])
         conn.execute(f'UPDATE "{name}_input_01" SET fid = fid + {fid_offset}')
         load_nearby_overlay(conn, name, overlay_bboxes)
-        if originals:
-            _load_nearby_originals(conn, name, original_bboxes)
         assign_one(
             conn,
             name,
@@ -417,6 +436,34 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             carry_columns=resolved_overlay_columns,
             input_columns=resolved_input_columns,
         )
+        build_tiles(
+            conn,
+            f'"{name}_overlay_full"',
+            f'SELECT overlay_fid FROM "{name}_02_assign"',
+            points,
+        )
+        conn.execute(f"""--sql
+            CREATE OR REPLACE VIEW "{points}_in" AS
+            SELECT c.fid, a.overlay_fid, c.geom
+            FROM "{name}_input_01" c JOIN "{name}_02_assign" a ON a.input_fid = c.fid
+        """)
+        collect_candidates(conn, f"{points}_in", points)
+        for table in assigned:
+            spill_table(conn, assigned_dir, table, i)
+        new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
+        fid_offset = new_max if new_max is not None else fid_offset
+    conn.execute(f'DROP VIEW IF EXISTS "{points}_in"')
+    pick_points(conn, points)
+
+    for i in range(len(paths)):
+        for table in assigned:
+            path = assigned_dir / table / f"{i:06d}.parquet"
+            conn.execute(f"""--sql
+                CREATE OR REPLACE TABLE "{table}" AS
+                SELECT * FROM read_parquet('{path}')
+            """)
+        if originals:
+            _load_nearby_originals(conn, name, original_bboxes)
         clip.main(
             conn,
             name,
@@ -429,16 +476,17 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             result_table=f"{name}_03_iter",
             raise_if_empty=False,
             original_table=f"{name}_original_01" if originals else None,
+            points=points,
         )
 
         for table in spilled:
             spill_table(conn, spill_dir, table, i)
 
-        new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
-        fid_offset = new_max if new_max is not None else fid_offset
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
+    if not debug:
+        shutil.rmtree(assigned_dir, ignore_errors=True)
 
     for table, dest_table in spilled.items():
         collect_spilled(conn, spill_dir, table, dest_table)
@@ -462,7 +510,10 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_03",
             overlay_snapshot_table=f"{name}_overlay_01",
+            points_table=f"{points}_pts",
         )
+    if not debug:
+        drop_points(conn, points)
 
     count = conn.execute(f'SELECT COUNT(*) FROM "{name}_03"').fetchone()[0]
     if count == 0:
