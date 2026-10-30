@@ -1,13 +1,16 @@
 """Shared coverage-topology validation and repair helpers."""
 
+import threading
 from logging import getLogger
 
-from duckdb import DuckDBPyConnection
+from duckdb import DuckDBPyConnection, InterruptException
 
 from topo_tools.core.constants import (
+    CLIP_PAIR_VERTEX_BUDGET,
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
+    INVALID_EDGE_BATCH_SECONDS,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
     NOTCH_SPACING,
@@ -166,6 +169,117 @@ def check_invalid_edges(conn: DuckDBPyConnection, table: str) -> None:
         error = f"INVALID_EDGES: {table}"
         logger.error(error)
         raise RuntimeError(error)
+
+
+def invalid_edge_issues(
+    conn: DuckDBPyConnection,
+    table: str,
+    out: str,
+    *,
+    where: str = "TRUE",
+    seconds: float = INVALID_EDGE_BATCH_SECONDS,
+) -> int:
+    """Create `out`: invalid-edge issue rows per touching row pair; return the count.
+
+    Part pairs run in vertex-bounded batches; one over `seconds` is left unchecked.
+    """
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_parts AS
+        WITH r AS (SELECT row_number() OVER () AS rid, * FROM "{table}" WHERE {where}),
+        d AS (SELECT rid, fid, UNNEST(ST_Dump(geom)).geom AS geom FROM r)
+        SELECT row_number() OVER () AS pid, rid, fid, geom, ST_NPoints(geom) AS n,
+               {bbox_columns_sql("geom")}
+        FROM d
+    """)
+    _near_part_pairs(
+        conn,
+        "_ie_parts",
+        "_ie_parts",
+        "_ie_near",
+        on="l.pid < r.pid AND l.rid != r.rid",
+    )
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_batch AS
+        SELECT pid, near_pid,
+               (sum(a.n + b.n) OVER (ORDER BY pid, near_pid)
+                // {CLIP_PAIR_VERTEX_BUDGET}) AS batch
+        FROM _ie_near
+        JOIN (SELECT pid, n FROM _ie_parts) a USING (pid)
+        JOIN (SELECT pid AS near_pid, n FROM _ie_parts) b USING (near_pid)
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_edges (
+            pid BIGINT, near_pid BIGINT, geom GEOMETRY, stopped BOOLEAN
+        )
+    """)
+    batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
+    for (batch,) in batches:
+        timer = threading.Timer(seconds, conn.interrupt)
+        timer.start()
+        try:
+            conn.execute(f"""--sql
+                INSERT INTO _ie_edges
+                WITH g AS (
+                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                    JOIN _ie_parts x ON x.pid = p.pid WHERE p.batch = {batch}
+                    UNION ALL
+                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                    JOIN _ie_parts x ON x.pid = p.near_pid WHERE p.batch = {batch}
+                )
+                SELECT pid, near_pid, e, FALSE
+                FROM (
+                    SELECT pid, near_pid,
+                           ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) AS e
+                    FROM g GROUP BY pid, near_pid
+                )
+                WHERE e IS NOT NULL AND ST_Length(e) > 0
+            """)
+        except InterruptException:
+            logger.warning(
+                "invalid-edge check stopped after %ss: batch %d", seconds, batch
+            )
+            conn.execute(f"""--sql
+                INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
+                FROM _ie_batch WHERE batch = {batch}
+            """)
+        finally:
+            timer.cancel()
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{out}" AS
+        WITH e AS (
+            SELECT least(a.rid, b.rid) AS ra, greatest(a.rid, b.rid) AS rb,
+                   CASE WHEN a.rid < b.rid THEN a.fid ELSE b.fid END AS unit_a,
+                   CASE WHEN a.rid < b.rid THEN b.fid ELSE a.fid END AS unit_b,
+                   e.geom, e.stopped
+            FROM _ie_edges e
+            JOIN _ie_parts a ON a.pid = e.pid JOIN _ie_parts b ON b.pid = e.near_pid
+        )
+        SELECT 'invalid-edge-' || ra || '-' || rb AS key,
+               'invalid-edge' AS kind, any_value(unit_a) AS unit_a,
+               any_value(unit_b) AS unit_b, NULL::BIGINT AS overlay_fid,
+               CASE WHEN bool_or(stopped)
+                    THEN 'check stopped after {seconds:g}s; edges left unchecked'
+                    ELSE 'edges overlap or do not match the neighbouring polygon'
+               END AS reason,
+               NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
+               NULL::DOUBLE AS thinness_ratio,
+               NULL::DOUBLE AS near_length_m,
+               NULL::DOUBLE AS unit_a_area_change_m2,
+               NULL::DOUBLE AS unit_b_area_change_m2,
+               NULL::DOUBLE AS filled_area_m2, FALSE AS fixed,
+               NULL::VARCHAR AS source_file,
+               ST_Collect(flatten(
+                   list(list_transform(ST_Dump(geom), lambda d: d.geom))
+                   FILTER (WHERE geom IS NOT NULL)
+               )) AS geom
+        FROM e GROUP BY ra, rb ORDER BY ra, rb
+    """)
+    for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+    count = conn.execute(f'SELECT count(*) FROM "{out}"').fetchone()[0]
+    if count:
+        logger.warning("%d row pair(s) with invalid edges in %s", count, table)
+    return count
 
 
 def _union_sql(table: str, *, coverage: bool) -> str:

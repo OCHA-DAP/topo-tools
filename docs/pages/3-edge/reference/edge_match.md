@@ -25,7 +25,7 @@ Each input file (or, with `--assign` many, each input polygon) is matched to the
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).
 - `--debug`: Keep intermediate tables, export them to Parquet, and log the time and memory each query takes.
 - `--tmp-dir TEXT`: Folder for the working DuckDB database and intermediate files (default: a new temporary folder, deleted afterwards unless `--debug` is set).
-- `--step [inputs|assign|groups|clip|stitch|outputs]`: Run only this step of the tool, for debugging.
+- `--step [inputs|assign|groups|clip|outputs]`: Run only this step of the tool, for debugging.
 - `--match-column TEXT`: Column in both layers, such as a p-code, used to match input polygons to overlay polygons. It wins over overlap where the two disagree. Can't be combined with `--overlay-match-column` or `--input-match-column`.
 - `--overlay-match-column TEXT`: Matching column in the overlay, when its name differs from the input's. Give it with `--input-match-column`.
 - `--input-match-column TEXT`: Matching column in the input, when its name differs from the overlay's. Give it with `--overlay-match-column`.

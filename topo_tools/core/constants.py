@@ -135,6 +135,8 @@ SHARED_POINT_TOLERANCE = 0.000000005
 OVERLAY_VERTEX_SNAP = 0.000000025
 # Input vertices one batch of clip input/tile pairs may carry.
 CLIP_PAIR_VERTEX_BUDGET = 20_000_000
+# core.coverage.invalid_edge_issues stops a batch of part pairs after this long.
+INVALID_EDGE_BATCH_SECONDS = 300
 
 _PARQUET_EXPORT = (
     "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"

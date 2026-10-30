@@ -38,8 +38,7 @@ from topo_tools.core.edge_clip import (
     pick_points,
 )
 from topo_tools.core.edge_mosaic import _01_clip as clip
-from topo_tools.core.edge_mosaic import _02_stitch as stitch
-from topo_tools.core.edge_mosaic import _03_outputs as outputs
+from topo_tools.core.edge_mosaic import _02_outputs as outputs
 from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
@@ -51,13 +50,12 @@ from topo_tools.core.io import (
 
 logger = getLogger(__name__)
 
-_STEP_ORDER = ["inputs", "assign", "clip", "stitch", "outputs"]
+_STEP_ORDER = ["inputs", "assign", "clip", "outputs"]
 
 _STEP_TABLES = {
     "inputs": ["{n}_input_01", "{n}_overlay_01", "{n}_overlay_full", "{n}_original_01"],
     "assign": ["{n}_02_pairs", "{n}_02_assign", "{n}_02_unassigned"],
     "clip": ["{n}_03", "{n}_03_dropped", "{n}_03_detached", "{n}_02_gap_fill"],
-    "stitch": ["{n}_04"],
     "outputs": [],
 }
 
@@ -275,13 +273,11 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     if count == 0:
                         msg = f"mosaic: no input polygon got an overlay for {name}"
                         raise RuntimeError(msg)
-                elif s == "stitch":
-                    stitch.main(conn, name, debug=debug)
                 elif s == "outputs":
                     apply_optional_fill(
                         conn,
                         name,
-                        f"{name}_04",
+                        f"{name}_03",
                         requested=fill_schema,
                         name_field=name_field,
                         code_field=code_field,
@@ -521,18 +517,24 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         raise RuntimeError(msg)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03" AS
-        SELECT * EXCLUDE (fid), ROW_NUMBER() OVER () AS fid FROM "{name}_03"
+        SELECT * EXCLUDE (fid), ROW_NUMBER() OVER () AS fid, fid AS input_fid
+        FROM "{name}_03"
     """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_03_passthrough" AS
+        SELECT fid FROM "{name}_03"
+        WHERE input_fid IN (SELECT input_fid FROM "{name}_02_unassigned")
+    """)
+    conn.execute(f'ALTER TABLE "{name}_03" DROP COLUMN input_fid')
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_overlay_parts"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_overlay_tiles"')
 
-    stitch.main(conn, name, debug=debug)
     apply_optional_fill(
         conn,
         name,
-        f"{name}_04",
+        f"{name}_03",
         requested=fill_schema,
         name_field=name_field,
         code_field=code_field,
@@ -547,5 +549,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         code_join=bool(overlay_match_column and input_match_column),
         passthrough=passthrough,
         fill_gaps=passthrough,
+        passthrough_fids=f'SELECT fid FROM "{name}_03_passthrough"',
         debug=debug,
     )
+    if not debug:
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_passthrough"')

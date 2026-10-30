@@ -1986,7 +1986,7 @@ def code_update(  # noqa: PLR0913, PLR0917
 @click.option(
     "--step",
     envvar="STEP",
-    type=click.Choice(["inputs", "assign", "groups", "clip", "stitch", "outputs"]),
+    type=click.Choice(["inputs", "assign", "groups", "clip", "outputs"]),
     default=None,
     help="Run only this step of the tool, for debugging.",
 )
@@ -2216,7 +2216,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
 @click.option(
     "--step",
     envvar="STEP",
-    type=click.Choice(["inputs", "assign", "clip", "stitch", "outputs"]),
+    type=click.Choice(["inputs", "assign", "clip", "outputs"]),
     default=None,
     help="Run only this step of the tool, for debugging.",
 )

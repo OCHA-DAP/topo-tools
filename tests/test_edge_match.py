@@ -33,7 +33,7 @@ _OVERLAY_WKT = [
     (2, "POLYGON((10 0, 13 0, 13 3, 10 3, 10 0))"),
 ]
 
-_STEPS = ["inputs", "assign", "groups", "clip", "stitch", "outputs"]
+_STEPS = ["inputs", "assign", "groups", "clip", "outputs"]
 
 
 def _write_synthetic(path, wkt_rows):
