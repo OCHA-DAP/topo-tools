@@ -40,13 +40,13 @@ below them:
 
 ## Deployment Targets
 
-The pipeline targets two memory-constrained environments: **DuckDB-WASM in
-the browser** (no disk, JS heap only, and the Python pipeline documents the SQL
-approach for eventual JS/TS porting) and **memory-limited containers**
-(typically 2–4 GB RAM, no swap; pip-install this package into whatever image
-you need, no Dockerfile ships here). Prefer approaches that minimize
-intermediate materializations, avoid platform-specific calls (`os.sysconf`,
-`/proc`, `subprocess`), and work with small buffer budgets.
+The pipeline targets two environments. **Global-scale runs** (every country at
+once) happen only on a 16 GB Mac with `threads=4` and DuckDB's default memory
+limit; keep their peak memory well under 16 GB. **DuckDB-WASM in the browser**
+(no disk, JS heap only) runs the same SQL on small datasets, so the Python
+pipeline documents the SQL approach for porting to JS/TS. Prefer approaches
+that minimize intermediate materializations and keep the SQL free of
+platform-specific calls (`os.sysconf`, `/proc`, `subprocess`).
 
 ## Architecture
 
