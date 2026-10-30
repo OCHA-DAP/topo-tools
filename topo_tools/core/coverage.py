@@ -3,7 +3,7 @@
 import threading
 from logging import getLogger
 
-from duckdb import DuckDBPyConnection, InterruptException
+from duckdb import DuckDBPyConnection, InterruptException, InvalidInputException
 
 from topo_tools.core.constants import (
     CLIP_PAIR_VERTEX_BUDGET,
@@ -181,7 +181,8 @@ def invalid_edge_issues(
 ) -> int:
     """Create `out`: invalid-edge issue rows per touching row pair; return the count.
 
-    Part pairs run in vertex-bounded batches; one over `seconds` is left unchecked.
+    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
+    a query over `seconds` is stopped and its pairs reported unchecked.
     """
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _ie_parts AS
@@ -244,6 +245,47 @@ def invalid_edge_issues(
             """)
         finally:
             timer.cancel()
+    # A pair alone flags edges its other neighbours match; recheck each flagged pair
+    # with every part near either side, keeping only edges along both.
+    flagged = conn.execute(
+        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
+    ).fetchall()
+    for a, b in flagged:
+        timer = threading.Timer(seconds, conn.interrupt)
+        timer.start()
+        try:
+            conn.execute(f"""--sql
+                UPDATE _ie_edges SET geom = (
+                    WITH g AS (
+                        SELECT geom FROM _ie_parts WHERE pid IN (
+                            SELECT {a} UNION SELECT {b}
+                            UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
+                            UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
+                        )
+                    ),
+                    e AS (
+                        SELECT UNNEST(ST_Dump(
+                            ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
+                        )).geom AS geom
+                        FROM g
+                    )
+                    SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
+                    FROM e
+                    WHERE ST_Length(e.geom) > 0 AND (
+                        SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
+                        FROM _ie_parts x WHERE x.pid IN ({a}, {b})
+                    )
+                )
+                WHERE pid = {a} AND near_pid = {b}
+            """)
+        except InterruptException:
+            conn.execute(f"""--sql
+                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
+                WHERE pid = {a} AND near_pid = {b}
+            """)
+        finally:
+            timer.cancel()
+    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
         WITH e AS (
@@ -346,6 +388,31 @@ def gap_issues_sql(
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
         {"" if within is None else _point_within_sql("g.geom", within)}
     """
+
+
+def gap_issues_table(
+    conn: DuckDBPyConnection, table: str, out: str, *, within: str | None = None
+) -> None:
+    """Create `out` from gap_issues_sql over a coverage union of `table`.
+
+    GEOS rejects a union over invalid edges; `out` then holds one row saying so.
+    """
+    try:
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{out}" AS
+            {gap_issues_sql(conn, table, within=within, coverage=True)}
+        """)
+    except InvalidInputException as err:
+        logger.warning("gap check failed on %s: %s", table, err)
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{out}" AS
+            SELECT * REPLACE (
+                'gap-check-failed' AS key, 'gap' AS kind,
+                'gap check failed: the coverage union rejected invalid edges'
+                    AS reason
+            )
+            FROM ({_EMPTY_ISSUES_SQL.replace(" WHERE FALSE", "")})
+        """)
 
 
 def _point_within_sql(geom: str, within: str) -> str:

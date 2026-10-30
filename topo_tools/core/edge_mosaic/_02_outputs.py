@@ -7,7 +7,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    gap_issues_sql,
+    gap_issues_table,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
@@ -26,14 +26,13 @@ _ISSUE_COLUMNS = """
 """
 
 
-def _build_issues(  # noqa: PLR0913
+def _build_issues(
     conn: DuckDBPyConnection,
     name: str,
     *,
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
-    coverage: bool = True,
 ) -> None:
     """Build `{name}_04`: every unassigned input polygon, gap-fill rows, and gaps."""
     table = f"{name}_03"
@@ -46,13 +45,7 @@ def _build_issues(  # noqa: PLR0913
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_03_dropped"
         """,
-        gap_issues_sql(
-            conn,
-            table,
-            within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-                SELECT overlay_fid FROM "{name}_02_assign")""",
-            coverage=coverage,
-        ),
+        f'SELECT * FROM "{name}_03_gaps"',
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"
         """,
@@ -124,16 +117,17 @@ def main(  # noqa: PLR0913
     where = (
         f"NOT coalesce(fid IN ({passthrough_fids}), FALSE)" if passthrough else "TRUE"
     )
-    invalid = invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
+    invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
+    gap_issues_table(
+        conn,
+        table,
+        f"{name}_03_gaps",
+        within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
+            SELECT overlay_fid FROM "{name}_02_assign")""",
+    )
 
     _build_issues(
-        conn,
-        name,
-        code_join=code_join,
-        passthrough=passthrough,
-        fill_gaps=fill_gaps,
-        # The coverage union raises on invalid edges.
-        coverage=not invalid,
+        conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
     )
 
     remaining = conn.execute(f"""--sql
@@ -165,4 +159,5 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_invalid"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_gaps"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')

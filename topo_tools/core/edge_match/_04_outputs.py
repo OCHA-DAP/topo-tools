@@ -7,7 +7,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    gap_issues_sql,
+    gap_issues_table,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
@@ -37,14 +37,13 @@ def _clip_targets_sql(name: str) -> str:
     """
 
 
-def _build_issues(  # noqa: PLR0913
+def _build_issues(
     conn: DuckDBPyConnection,
     name: str,
     *,
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
-    coverage: bool = True,
 ) -> None:
     """Build `{name}_05`: unassigned/dropped-group input polygons, plus non-noise gaps.
 
@@ -75,7 +74,7 @@ def _build_issues(  # noqa: PLR0913
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_04_dropped"
         """,
-        gap_issues_sql(conn, table, within=_clip_targets_sql(name), coverage=coverage),
+        f'SELECT * FROM "{name}_04_gaps"',
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_04_detached"
         """,
@@ -135,16 +134,11 @@ def main(  # noqa: PLR0913
         if passthrough
         else "TRUE"
     )
-    invalid = invalid_edge_issues(conn, table, f"{name}_04_invalid", where=where)
+    invalid_edge_issues(conn, table, f"{name}_04_invalid", where=where)
+    gap_issues_table(conn, table, f"{name}_04_gaps", within=_clip_targets_sql(name))
 
     _build_issues(
-        conn,
-        name,
-        code_join=code_join,
-        passthrough=passthrough,
-        fill_gaps=fill_gaps,
-        # The coverage union raises on invalid edges.
-        coverage=not invalid,
+        conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
     )
 
     remaining = conn.execute(f"""--sql
@@ -177,4 +171,5 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_invalid"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_04_gaps"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_05"')
