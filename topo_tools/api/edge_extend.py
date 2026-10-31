@@ -1,5 +1,7 @@
 """Public API: extend polygon boundaries outward with Voronoi diagrams."""
 
+import time
+from decimal import Decimal
 from logging import getLogger
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from topo_tools.core.edge_extend import _02_lines as lines
 from topo_tools.core.edge_extend import _05_merge as merge
 from topo_tools.core.edge_extend import _06_outputs as outputs
 from topo_tools.core.edge_extend import attempt
+from topo_tools.core.edge_extend._constants import MAX_POINTS
 from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
@@ -52,6 +55,8 @@ def extend(  # noqa: PLR0913
     overwrite: bool = True,
     debug: bool = False,
     step: str | None = None,
+    distance: Decimal | str | None = None,
+    max_points: int = MAX_POINTS,
 ) -> None:
     """Extend polygon boundaries outward with Voronoi diagrams to fill coverage gaps.
 
@@ -82,18 +87,25 @@ def extend(  # noqa: PLR0913
         for s in _STEP_ORDER:
             if step and step != s:
                 continue
-            if debug:
-                logger.info("=== %s ===", s)
+            logger.info("=== %s ===", s)
+            start = time.monotonic()
             if s == "inputs":
                 inputs.main(conn, name, input_path)
             elif s == "lines":
                 lines.main(conn, name)
             elif s == "attempt":
-                attempt.main(conn, name, debug=debug)
+                attempt.main(
+                    conn,
+                    name,
+                    distance=None if distance is None else Decimal(distance),
+                    max_points=max_points,
+                    debug=debug,
+                )
             elif s == "merge":
                 merge.main(conn, name, debug=debug)
             elif s == "outputs":
                 outputs.main(conn, name, output_path, debug=debug)
+            logger.info("%s done in %.0fs", s, time.monotonic() - start)
         maybe_export_debug_tables(
             conn, tmp_dir_path, name, step, _STEP_TABLES, debug=debug
         )

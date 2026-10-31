@@ -331,3 +331,35 @@ def test_extend_runs_on_input_past_antimeridian(tmp_path):
             f"SELECT count(*), max(ST_XMax(geometry)) FROM '{output_path}'"
         ).fetchone()
     assert (n, xmax) == (2, 180)
+
+
+def test_attempt_skips_distance_estimated_over_max_points(
+    synthetic_input, tmp_path, caplog
+):
+    output_path = tmp_path / "out.parquet"
+    with caplog.at_level("INFO"):
+        extend(synthetic_input, output_path, distance="0.0002", max_points=1_500)
+    assert "skip: synthetic_parquet distance=0.0002," in caplog.text
+    assert output_path.exists()
+
+
+def test_attempt_starts_at_given_distance(synthetic_input, tmp_path, caplog):
+    with caplog.at_level("INFO"):
+        extend(synthetic_input, tmp_path / "out.parquet", distance="0.01")
+    assert "attempt 1: synthetic_parquet distance=0.01," in caplog.text
+
+
+def test_attempt_raises_on_assignment_error_without_retry(
+    synthetic_input, tmp_path, monkeypatch
+):
+    calls = []
+
+    def fail(*_args, **_kwargs):
+        calls.append(1)
+        msg = "Voronoi assignment incomplete: 1/2 points assigned"
+        raise voronoi.AssignmentError(msg)
+
+    monkeypatch.setattr(voronoi, "main", fail)
+    with pytest.raises(RuntimeError, match=r"distance=.*assignment incomplete"):
+        extend(synthetic_input, tmp_path / "out.parquet")
+    assert len(calls) == 1

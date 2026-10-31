@@ -5,6 +5,10 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.constants import WORLD_BOUNDS_WKT
 
 
+class AssignmentError(RuntimeError):
+    """Raised when a boundary point falls in no Voronoi cell."""
+
+
 def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     """Create Voronoi polygons from points."""
     # A stable per-point id: a fid can have many boundary points, so
@@ -57,7 +61,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
             f"Voronoi assignment incomplete: "
             f"{assigned_count}/{point_count} points assigned"
         )
-        raise RuntimeError(msg)
+        raise AssignmentError(msg)
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03b"')

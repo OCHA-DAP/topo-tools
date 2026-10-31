@@ -1,6 +1,7 @@
 """Shared geodata read/write helpers."""
 
 import shutil
+import time
 from logging import getLogger
 from pathlib import Path
 from urllib.parse import urlparse
@@ -256,14 +257,23 @@ def read_reproject_and_clean(
     fix_notches: bool = False,
 ) -> None:
     """Read, reproject, and coverage-clean geodata into table `{name}_01`."""
+    start = time.monotonic()
     read_and_reproject(conn, name, path, layer)
+    logger.info("read %s in %.0fs", path, time.monotonic() - start)
 
     table = f"{name}_01"
     if fix_notches:
+        start = time.monotonic()
         close_notches(conn, table)
-    if not has_valid_topology(conn, table, gap_maximum_width=0):
+        logger.info("notches closed in %.0fs", time.monotonic() - start)
+    start = time.monotonic()
+    valid = has_valid_topology(conn, table, gap_maximum_width=0)
+    logger.info("coverage checked in %.0fs", time.monotonic() - start)
+    if not valid:
         logger.info("cleaning coverage: invalid edges or gaps detected")
+        start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
+        logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
 
 
 def export_geometry_table(

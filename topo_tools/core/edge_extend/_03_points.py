@@ -54,6 +54,22 @@ def build_segments(conn: DuckDBPyConnection, name: str) -> None:
     """)
 
 
+def estimate_count(conn: DuckDBPyConnection, name: str, distance: Decimal) -> int:
+    """Estimate main()'s point count from "{name}_03_tmp1", before differencing."""
+    d = float(distance)
+    return conn.execute(f"""--sql
+        SELECT (
+            count(*) FILTER (WHERE seg_len > {d * MAX_POINTS_PER_SEGMENT!r})
+                * {MAX_POINTS_PER_SEGMENT}
+            + coalesce(
+                sum(seg_len) FILTER (WHERE seg_len <= {d * MAX_POINTS_PER_SEGMENT!r}),
+                0
+            ) / {d!r}
+        )::BIGINT
+        FROM "{name}_03_tmp1"
+    """).fetchone()[0]
+
+
 def main(
     conn: DuckDBPyConnection, name: str, distance: Decimal, *, debug: bool = False
 ) -> None:
