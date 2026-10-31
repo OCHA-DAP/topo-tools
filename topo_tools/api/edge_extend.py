@@ -1,7 +1,6 @@
 """Public API: extend polygon boundaries outward with Voronoi diagrams."""
 
 import time
-from decimal import Decimal
 from logging import getLogger
 from pathlib import Path
 
@@ -15,7 +14,6 @@ from topo_tools.core.edge_extend import _02_lines as lines
 from topo_tools.core.edge_extend import _05_merge as merge
 from topo_tools.core.edge_extend import _06_outputs as outputs
 from topo_tools.core.edge_extend import attempt
-from topo_tools.core.edge_extend._constants import MAX_POINTS
 from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
@@ -55,8 +53,6 @@ def extend(  # noqa: PLR0913
     overwrite: bool = True,
     debug: bool = False,
     step: str | None = None,
-    distance: Decimal | str | None = None,
-    max_points: int = MAX_POINTS,
 ) -> None:
     """Extend polygon boundaries outward with Voronoi diagrams to fill coverage gaps.
 
@@ -94,13 +90,7 @@ def extend(  # noqa: PLR0913
             elif s == "lines":
                 lines.main(conn, name)
             elif s == "attempt":
-                attempt.main(
-                    conn,
-                    name,
-                    distance=None if distance is None else Decimal(distance),
-                    max_points=max_points,
-                    debug=debug,
-                )
+                attempt.main(conn, name, debug=debug)
             elif s == "merge":
                 merge.main(conn, name, debug=debug)
             elif s == "outputs":

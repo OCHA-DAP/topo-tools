@@ -18,6 +18,7 @@ from topo_tools.core.edge_extend import _01_inputs as inputs
 from topo_tools.core.edge_extend import _02_lines as lines
 from topo_tools.core.edge_extend import _03_points as points
 from topo_tools.core.edge_extend import _04_voronoi as voronoi
+from topo_tools.core.edge_extend import attempt
 
 # fid 1/2 touch exactly (valid coverage); fid 3 sits across a deliberate gap
 # for extension to fill; fid 4 is a MULTIPOLYGON (two disjoint parts).
@@ -334,19 +335,14 @@ def test_extend_runs_on_input_past_antimeridian(tmp_path):
 
 
 def test_attempt_skips_distance_estimated_over_max_points(
-    synthetic_input, tmp_path, caplog
+    synthetic_input, tmp_path, caplog, monkeypatch
 ):
+    monkeypatch.setattr(attempt, "MAX_POINTS", 1_500)
     output_path = tmp_path / "out.parquet"
     with caplog.at_level("INFO"):
-        extend(synthetic_input, output_path, distance="0.0002", max_points=1_500)
+        extend(synthetic_input, output_path)
     assert "skip: synthetic_parquet distance=0.0002," in caplog.text
     assert output_path.exists()
-
-
-def test_attempt_starts_at_given_distance(synthetic_input, tmp_path, caplog):
-    with caplog.at_level("INFO"):
-        extend(synthetic_input, tmp_path / "out.parquet", distance="0.01")
-    assert "attempt 1: synthetic_parquet distance=0.01," in caplog.text
 
 
 def test_attempt_raises_on_assignment_error_without_retry(

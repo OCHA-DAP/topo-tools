@@ -9,43 +9,32 @@ from duckdb import Error as DuckDBError
 
 from . import _03_points as points
 from . import _04_voronoi as voronoi
-from ._constants import DEFAULT_DISTANCE, MAX_POINTS, POINT_ESTIMATE_MIN_RATIO
+from ._constants import DEFAULT_DISTANCE, MAX_POINTS
 
 logger = getLogger(__name__)
 
 ATTEMPTS = 10
 
 
-def main(
-    conn: DuckDBPyConnection,
-    name: str,
-    *,
-    distance: Decimal | None = None,
-    max_points: int = MAX_POINTS,
-    debug: bool = False,
-) -> None:
+def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     """Try to generate Voronoi polygons, doubling the distance threshold on failure.
 
-    distance overrides the starting distance derived from the file's segments.
+    A distance whose estimated point count is over MAX_POINTS is skipped unbuilt.
     """
     points.build_segments(conn, name)
-    if distance is not None:
-        effective_distance = Decimal(distance)
-        logger.info("distance-calc: %s given=%s", name, effective_distance)
-    else:
-        effective_distance = _derived_distance(conn, name)
+    effective_distance = _derived_distance(conn, name)
 
     try:
         for i in range(ATTEMPTS):
             d = effective_distance * 2**i
             estimate = points.estimate_count(conn, name, d)
-            if estimate * POINT_ESTIMATE_MIN_RATIO > max_points:
+            if estimate > MAX_POINTS:
                 logger.info(
                     "skip: %s distance=%s, about %s points estimated (max %s)",
                     name,
                     d,
                     f"{estimate:,}",
-                    f"{max_points:,}",
+                    f"{MAX_POINTS:,}",
                 )
                 continue
             logger.info(
@@ -62,7 +51,7 @@ def main(
                     0
                 ][0]
                 logger.info("points: %s %s built", name, f"{count:,}")
-                _check_point_count(count, max_points)
+                _check_point_count(count)
                 voronoi.main(conn, name, debug=debug)
             except voronoi.AssignmentError as e:
                 error = f"{name} distance={d}: {e}"
@@ -98,7 +87,7 @@ def _derived_distance(conn: DuckDBPyConnection, name: str) -> Decimal:
     return effective_distance
 
 
-def _check_point_count(count: int, max_points: int) -> None:
-    if count > max_points:
+def _check_point_count(count: int) -> None:
+    if count > MAX_POINTS:
         msg = f"too many points: {count:,}"
         raise RuntimeError(msg)

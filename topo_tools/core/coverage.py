@@ -183,7 +183,8 @@ def _invalid_part_pairs(
     """)
     batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
     for i, (batch,) in enumerate(batches, 1):
-        logger.info("invalid-edge check: batch %d of %d", i, len(batches))
+        if len(batches) > 1:
+            logger.info("invalid-edge check: batch %d of %d", i, len(batches))
         done = _run_bounded(
             conn,
             f"""--sql
