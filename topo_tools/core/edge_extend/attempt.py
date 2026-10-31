@@ -23,6 +23,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     """
     points.build_segments(conn, name)
     effective_distance = _derived_distance(conn, name)
+    skipped = 0
 
     try:
         for i in range(ATTEMPTS):
@@ -36,6 +37,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
                     f"{estimate:,}",
                     f"{MAX_POINTS:,}",
                 )
+                skipped += 1
                 continue
             logger.info(
                 "attempt %d: %s distance=%s, about %s points estimated",
@@ -62,6 +64,8 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
                 logger.info("voronoi: %s done in %.0fs", name, time.monotonic() - start)
                 return
         error = f"{name} did not succeed generating voronoi polygons"
+        if skipped == ATTEMPTS:
+            error += f": every distance estimated over {MAX_POINTS:,} points"
         logger.error(error)
         raise RuntimeError(error)
     finally:

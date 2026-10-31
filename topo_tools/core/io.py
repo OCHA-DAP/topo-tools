@@ -24,6 +24,7 @@ logger = getLogger(__name__)
 # Esri FileGDB API type GUID for a feature class (spatial); stable across
 # versions, and how GDAL's own OpenFileGDB driver tells layers apart too.
 _ESRI_FEATURE_CLASS_TYPE = "{70737809-852C-4A03-9E22-2CECEA5B9BFA}"
+_OUTSIDE_WORLD = "a feature lies entirely outside world bounds (-180 -90 180 90)"
 
 
 def resolve_input_path(path: str | Path) -> Path | str:
@@ -205,7 +206,7 @@ def _world_clip_sql(col: str) -> str:
             AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
         ) THEN {col}
         WHEN NOT ST_Intersects({col}, {world})
-        THEN error('a feature lies entirely outside world bounds (-180 -90 180 90)')
+        THEN error('{_OUTSIDE_WORLD}')
         ELSE ST_SetCRS(ST_CollectionExtract(
             ST_Intersection(ST_MakeValid({col}), {world}), 3
         ), '{CRS}')
@@ -232,6 +233,9 @@ def read_and_reproject(
     try:
         conn.execute(f'CREATE OR REPLACE TABLE "{name}_01" AS {select_sql}')
     except duckdb.Error as e:
+        if _OUTSIDE_WORLD in str(e):
+            msg = f"failed to read {path}: {_OUTSIDE_WORLD}"
+            raise ValueError(msg) from e
         msg = (
             f"failed to read/reproject {path}: {e}; the source file may contain "
             "invalid geometry (e.g. an unclosed ring) that ST_MakeValid cannot repair"

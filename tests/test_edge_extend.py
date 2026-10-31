@@ -345,6 +345,14 @@ def test_attempt_skips_distance_estimated_over_max_points(
     assert output_path.exists()
 
 
+def test_attempt_raises_when_every_distance_is_skipped(
+    synthetic_input, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(attempt, "MAX_POINTS", 0)
+    with pytest.raises(RuntimeError, match="every distance estimated over 0 points"):
+        extend(synthetic_input, tmp_path / "out.parquet")
+
+
 def test_attempt_raises_on_assignment_error_without_retry(
     synthetic_input, tmp_path, monkeypatch
 ):

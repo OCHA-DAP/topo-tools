@@ -273,5 +273,6 @@ def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         _write_wkt(conn, path, ["POLYGON((181 0, 182 0, 182 1, 181 1, 181 0))"])
-        with pytest.raises(ValueError, match="outside world bounds"):
+        with pytest.raises(ValueError, match="outside world bounds") as e:
             read_and_reproject(conn, "out", path)
+    assert "unclosed ring" not in str(e.value)
