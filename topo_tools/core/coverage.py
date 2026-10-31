@@ -56,6 +56,7 @@ def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
     on: str,
     tol: float,
     key: str = "pid",
+    right_key: str | None = None,
 ) -> None:
     """Create `out` (pid, near_pid): left/right rows whose tol-padded bboxes overlap.
 
@@ -89,7 +90,7 @@ def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
-        SELECT l.{key} AS pid, r.{key} AS near_pid
+        SELECT l.{key} AS pid, r.{right_key or key} AS near_pid
         FROM {cells(left, "l")} l JOIN {cells(right, "r")} r USING (cx, cy)
         WHERE r.x0 <= l.x1 AND r.x1 >= l.x0 AND r.y0 <= l.y1 AND r.y1 >= l.y0
           AND cx = floor(greatest(l.x0, r.x0) / {cell})::BIGINT
@@ -1262,8 +1263,11 @@ _NOTCH_TOUCH = 1e-9
 _NOTCH_TMP = (
     "_notch_all",
     "_notch_ext",
+    "_notch_segp",
     "_notch_near",
     "_notch_ends",
+    "_notch_v",
+    "_notch_vp",
     "_notch_moves",
     "_notch_runs",
     "_notch_fseg",
@@ -1291,7 +1295,7 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         SELECT rowid AS rnid, fid, geom FROM "{table}"
     """)
     # Unshared segments only: a segment whose endpoints another unit also has is shared.
-    conn.execute(f"""--sql
+    conn.execute("""--sql
         CREATE OR REPLACE TABLE _notch_ext AS
         WITH rings AS (
             SELECT rnid, UNNEST(ST_Dump(ST_Boundary(geom))).geom AS g FROM _notch_all
@@ -1304,26 +1308,38 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
             FROM rings
         ),
         segs AS (
-            SELECT rnid, e, least(e[1], e[2]) AS k1, greatest(e[1], e[2]) AS k2
-            FROM (
-                SELECT rnid,
-                       UNNEST(list_transform(
-                           range(1, len(xy)), lambda i: [xy[i], xy[i + 1]]
-                       )) AS e
-                FROM pts
-            )
+            SELECT rnid, xy[i][1] AS x1, xy[i][2] AS y1,
+                   xy[i + 1][1] AS x2, xy[i + 1][2] AS y2,
+                   (xy[i][1], xy[i][2]) <= (xy[i + 1][1], xy[i + 1][2]) AS fw
+            FROM (SELECT rnid, xy, UNNEST(range(1, len(xy))) AS i FROM pts)
+        ),
+        keyed AS (
+            SELECT *,
+                   CASE WHEN fw THEN x1 ELSE x2 END AS kx1,
+                   CASE WHEN fw THEN y1 ELSE y2 END AS ky1,
+                   CASE WHEN fw THEN x2 ELSE x1 END AS kx2,
+                   CASE WHEN fw THEN y2 ELSE y1 END AS ky2
+            FROM segs
         ),
         shared AS (
-            SELECT k1, k2 FROM segs GROUP BY k1, k2 HAVING count(DISTINCT rnid) > 1
-        ),
-        ext AS (
-            SELECT row_number() OVER () AS sid, rnid,
-                   ST_MakeLine(ST_Point(e[1][1], e[1][2]), ST_Point(e[2][1], e[2][2]))
-                       AS geom
-            FROM segs ANTI JOIN shared USING (k1, k2)
+            SELECT kx1, ky1, kx2, ky2 FROM keyed
+            GROUP BY ALL HAVING count(DISTINCT rnid) > 1
         )
-        SELECT *, {bbox_columns_sql("geom")} FROM ext
+        SELECT row_number() OVER () AS sid, rnid,
+               ST_MakeLine(ST_Point(x1, y1), ST_Point(x2, y2)) AS geom,
+               least(x1, x2) AS xmin, greatest(x1, x2) AS xmax,
+               least(y1, y2) AS ymin, greatest(y1, y2) AS ymax
+        FROM keyed ANTI JOIN shared USING (kx1, ky1, kx2, ky2)
     """)
+    grid_pairs(
+        conn,
+        "_notch_ext",
+        "_notch_ext",
+        "_notch_segp",
+        on=f"l.rnid <> r.rnid AND ST_DWithin(l.geom, r.geom, {r})",
+        tol=r,
+        key="sid",
+    )
     # Per segment, its length within r of the other unit minus the length touching it.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _notch_near AS
@@ -1331,11 +1347,9 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
             SELECT a.sid, a.rnid AS own, b.rnid AS other,
                    any_value(a.geom) AS ag, ST_Union_Agg(b.geom) AS og,
                    list(b.sid) AS osids
-            FROM _notch_ext a JOIN _notch_ext b
-              ON a.rnid <> b.rnid
-             AND b.xmin <= a.xmax + {r} AND b.xmax >= a.xmin - {r}
-             AND b.ymin <= a.ymax + {r} AND b.ymax >= a.ymin - {r}
-             AND ST_DWithin(a.geom, b.geom, {r})
+            FROM _notch_segp p
+            JOIN _notch_ext a ON a.sid = p.pid
+            JOIN _notch_ext b ON b.sid = p.near_pid
             GROUP BY a.sid, a.rnid, b.rnid
         ),
         pieces AS (
@@ -1358,14 +1372,29 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         WHERE n.len > 1e-12
     """)
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _notch_moves AS
-        WITH v AS (
+        CREATE OR REPLACE TABLE _notch_v AS
+        SELECT row_number() OVER () AS vid, *,
+               x - lim AS xmin, x + lim AS xmax, y - lim AS ymin, y + lim AS ymax
+        FROM (
             SELECT own, other, x, y, any_value(p) AS p,
                    max(seglen) * {NOTCH_MAX_GAP_RATIO} AS lim
             FROM (SELECT *, ST_X(p) AS x, ST_Y(p) AS y FROM _notch_ends)
             GROUP BY own, other, x, y
-        ),
-        vd AS (
+        )
+    """)
+    grid_pairs(
+        conn,
+        "_notch_v",
+        "_notch_ext",
+        "_notch_vp",
+        on="r.rnid <> l.own",
+        tol=0,
+        key="vid",
+        right_key="sid",
+    )
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _notch_moves AS
+        WITH vd AS (
             SELECT v.own, v.other, v.x, v.y,
                    coalesce(min(ST_Distance(v.p, s.geom))
                                 FILTER (WHERE s.rnid = v.other), 'inf'::DOUBLE)
@@ -1373,10 +1402,9 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
                    AND NOT coalesce(bool_or(s.rnid <> v.other
                                        AND ST_DWithin(v.p, s.geom, {_NOTCH_TOUCH})),
                                FALSE) AS moves
-            FROM v JOIN _notch_ext s
-              ON s.rnid <> v.own
-             AND s.xmin <= v.x + v.lim AND s.xmax >= v.x - v.lim
-             AND s.ymin <= v.y + v.lim AND s.ymax >= v.y - v.lim
+            FROM _notch_vp vp
+            JOIN _notch_v v ON v.vid = vp.pid
+            JOIN _notch_ext s ON s.sid = vp.near_pid
             GROUP BY v.own, v.other, v.x, v.y, v.lim
         )
         SELECT e.sid, e.other, bool_or(coalesce(vd.moves, FALSE)) AS moves
