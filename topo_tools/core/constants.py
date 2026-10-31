@@ -3,6 +3,7 @@
 import re
 
 SNAP_TOLERANCE = 0.00000001
+WORLD_BOUNDS_WKT = "POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))"
 # core.coverage.coverage_clean_escalating adds this to snapping_distance
 # per retry when ST_CoverageInvalidEdges_Agg still flags the output.
 SNAP_ESCALATION_STEP = SNAP_TOLERANCE

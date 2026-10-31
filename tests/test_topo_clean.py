@@ -202,10 +202,10 @@ def scaled_gap_input(tmp_path):
     """
     path = tmp_path / "scaled_gap.parquet"
     wkt = [
-        (1, "POLYGON((0 0, 101 0, 101 50, 0 50, 0 0))"),
-        (2, "POLYGON((0 51, 101 51, 101 101, 0 101, 0 51))"),
-        (3, "POLYGON((0 50, 50 50, 50 51, 0 51, 0 50))"),
-        (4, "POLYGON((51 50, 101 50, 101 51, 51 51, 51 50))"),
+        (1, "POLYGON((0 -50, 101 -50, 101 0, 0 0, 0 -50))"),
+        (2, "POLYGON((0 1, 101 1, 101 51, 0 51, 0 1))"),
+        (3, "POLYGON((0 0, 50 0, 50 1, 0 1, 0 0))"),
+        (4, "POLYGON((51 0, 101 0, 101 1, 51 1, 51 0))"),
     ]
     values = ", ".join(f"({fid}, ST_GeomFromText('{w}'))" for fid, w in wkt)
     with duckdb.connect() as conn:
@@ -226,10 +226,10 @@ def gap_only_input(tmp_path):
     """
     path = tmp_path / "gap_only.parquet"
     wkt = [
-        (1, "POLYGON((0 0, 101 0, 101 50, 51 50, 50 50, 0 50, 0 0))"),
-        (2, "POLYGON((0 51, 50 51, 51 51, 101 51, 101 101, 0 101, 0 51))"),
-        (3, "POLYGON((0 50, 50 50, 50 51, 0 51, 0 50))"),
-        (4, "POLYGON((51 50, 101 50, 101 51, 51 51, 51 50))"),
+        (1, "POLYGON((0 -50, 101 -50, 101 0, 51 0, 50 0, 0 0, 0 -50))"),
+        (2, "POLYGON((0 1, 50 1, 51 1, 101 1, 101 51, 0 51, 0 1))"),
+        (3, "POLYGON((0 0, 50 0, 50 1, 0 1, 0 0))"),
+        (4, "POLYGON((51 0, 101 0, 101 1, 51 1, 51 0))"),
     ]
     values = ", ".join(f"({fid}, ST_GeomFromText('{w}'))" for fid, w in wkt)
     with duckdb.connect() as conn:
@@ -245,27 +245,21 @@ def gap_only_input(tmp_path):
 def noise_scale_gap_input(tmp_path):
     """Reuse gap_only_input's ring/gap topology, gap narrowed below SNAP_TOLERANCE.
 
-    Only the gap's width shrinks, ring stays at realistic 0-101 scale;
+    Only the gap's width shrinks, ring stays at realistic 101-wide scale;
     shrinking the whole ring instead collapsed the output at GEOS's own floor.
     """
     path = tmp_path / "noise_scale_gap.parquet"
     w = SNAP_TOLERANCE / 2
     wkt = [
-        (1, f"POLYGON((0 0, 101 0, 101 50, {50 + w} 50, 50 50, 0 50, 0 0))"),
+        (1, f"POLYGON((0 -50, 101 -50, 101 0, {50 + w} 0, 50 0, 0 0, 0 -50))"),
         (
             2,
-            (
-                f"POLYGON((0 {50 + w}, 50 {50 + w}, {50 + w} {50 + w}, "
-                f"101 {50 + w}, 101 101, 0 101, 0 {50 + w}))"
-            ),
+            (f"POLYGON((0 {w}, 50 {w}, {50 + w} {w}, 101 {w}, 101 51, 0 51, 0 {w}))"),
         ),
-        (3, f"POLYGON((0 50, 50 50, 50 {50 + w}, 0 {50 + w}, 0 50))"),
+        (3, f"POLYGON((0 0, 50 0, 50 {w}, 0 {w}, 0 0))"),
         (
             4,
-            (
-                f"POLYGON(({50 + w} 50, 101 50, 101 {50 + w}, "
-                f"{50 + w} {50 + w}, {50 + w} 50))"
-            ),
+            (f"POLYGON(({50 + w} 0, 101 0, 101 {w}, {50 + w} {w}, {50 + w} 0))"),
         ),
     ]
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt_}'))" for fid, wkt_ in wkt)

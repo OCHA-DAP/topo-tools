@@ -66,21 +66,15 @@ def test_inputs_cleans_input_but_loads_overlay_raw(tmp_path):
     """The input's sub-tolerance gap is closed; the same gap in the overlay is not."""
     w = SNAP_TOLERANCE / 2
     wkt = [
-        (1, f"POLYGON((0 0, 101 0, 101 50, {50 + w} 50, 50 50, 0 50, 0 0))"),
+        (1, f"POLYGON((0 -50, 101 -50, 101 0, {50 + w} 0, 50 0, 0 0, 0 -50))"),
         (
             2,
-            (
-                f"POLYGON((0 {50 + w}, 50 {50 + w}, {50 + w} {50 + w}, "
-                f"101 {50 + w}, 101 101, 0 101, 0 {50 + w}))"
-            ),
+            (f"POLYGON((0 {w}, 50 {w}, {50 + w} {w}, 101 {w}, 101 51, 0 51, 0 {w}))"),
         ),
-        (3, f"POLYGON((0 50, 50 50, 50 {50 + w}, 0 {50 + w}, 0 50))"),
+        (3, f"POLYGON((0 0, 50 0, 50 {w}, 0 {w}, 0 0))"),
         (
             4,
-            (
-                f"POLYGON(({50 + w} 50, 101 50, 101 {50 + w}, "
-                f"{50 + w} {50 + w}, {50 + w} 50))"
-            ),
+            (f"POLYGON(({50 + w} 0, 101 0, 101 {w}, {50 + w} {w}, {50 + w} 0))"),
         ),
     ]
     path = tmp_path / "gapped.parquet"

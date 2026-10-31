@@ -143,21 +143,15 @@ def test_inputs_closes_noise_scale_gap(tmp_path):
     path = tmp_path / "noise_gap.parquet"
     w = SNAP_TOLERANCE / 2
     wkt = [
-        (1, f"POLYGON((0 0, 101 0, 101 50, {50 + w} 50, 50 50, 0 50, 0 0))"),
+        (1, f"POLYGON((0 -50, 101 -50, 101 0, {50 + w} 0, 50 0, 0 0, 0 -50))"),
         (
             2,
-            (
-                f"POLYGON((0 {50 + w}, 50 {50 + w}, {50 + w} {50 + w}, "
-                f"101 {50 + w}, 101 101, 0 101, 0 {50 + w}))"
-            ),
+            (f"POLYGON((0 {w}, 50 {w}, {50 + w} {w}, 101 {w}, 101 51, 0 51, 0 {w}))"),
         ),
-        (3, f"POLYGON((0 50, 50 50, 50 {50 + w}, 0 {50 + w}, 0 50))"),
+        (3, f"POLYGON((0 0, 50 0, 50 {w}, 0 {w}, 0 0))"),
         (
             4,
-            (
-                f"POLYGON(({50 + w} 50, 101 50, 101 {50 + w}, "
-                f"{50 + w} {50 + w}, {50 + w} 50))"
-            ),
+            (f"POLYGON(({50 + w} 0, 101 0, 101 {w}, {50 + w} {w}, {50 + w} 0))"),
         ),
     ]
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt_}'))" for fid, wkt_ in wkt)
@@ -317,3 +311,23 @@ def test_points_bbox_prefilter_matches_global_union(tmp_path):
             WHERE ST_Area(ST_SymDifference(a.geom, b.geom)) > 1e-20
         """).fetchall()[0][0]
         assert mismatched == 0
+
+
+def test_extend_runs_on_input_past_antimeridian(tmp_path):
+    path = tmp_path / "antimeridian.parquet"
+    wkt = [
+        "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))",
+        "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))",
+    ]
+    values = ", ".join(f"({i}, ST_GeomFromText('{w}'))" for i, w in enumerate(wkt))
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
+    output_path = tmp_path / "out.parquet"
+    extend(path, output_path, overwrite=True)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        n, xmax = conn.execute(
+            f"SELECT count(*), max(ST_XMax(geometry)) FROM '{output_path}'"
+        ).fetchone()
+    assert (n, xmax) == (2, 180)

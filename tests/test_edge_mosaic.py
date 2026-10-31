@@ -21,7 +21,7 @@ _INPUT_WKT = [
     (1, "POLYGON((-5 -5, 1.5 -5, 1.5 5, -5 5, -5 -5))"),
     (2, "POLYGON((1.5 -5, 8 -5, 8 5, 1.5 5, 1.5 -5))"),
     (3, "POLYGON((8 -5, 20 -5, 20 20, 8 20, 8 -5))"),
-    (4, "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))"),
+    (4, "POLYGON((100 80, 101 80, 101 81, 100 81, 100 80))"),
 ]
 _OVERLAY_WKT = [
     (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))"),
@@ -1008,9 +1008,7 @@ def test_mosaic_multi_file_zero_overlap_file_does_not_abort_batch(tmp_path):
     _write_synthetic(
         file_b, [(2, "POLYGON((10.5 0.5, 11 0.5, 11 1, 10.5 1, 10.5 0.5))")]
     )
-    _write_synthetic(
-        file_c, [(3, "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))")]
-    )
+    _write_synthetic(file_c, [(3, "POLYGON((100 80, 101 80, 101 81, 100 81, 100 80))")])
 
     output_path = tmp_path / "out.parquet"
     issues_path = tmp_path / "issues.parquet"

@@ -2,7 +2,7 @@
 
 from duckdb import DuckDBPyConnection
 
-from ._constants import WORLD_BOUNDS_WKT
+from topo_tools.core.constants import WORLD_BOUNDS_WKT
 
 
 def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:

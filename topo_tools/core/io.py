@@ -8,7 +8,13 @@ from urllib.parse import urlparse
 import duckdb
 from duckdb import DuckDBPyConnection
 
-from .constants import COPY_OPTS, CRS, GDAL_CRS, RESERVED_COLUMN_NAMES
+from .constants import (
+    COPY_OPTS,
+    CRS,
+    GDAL_CRS,
+    RESERVED_COLUMN_NAMES,
+    WORLD_BOUNDS_WKT,
+)
 from .coverage import close_notches, coverage_clean, has_valid_topology
 from .duckdb_utils import quote_identifier
 
@@ -179,11 +185,30 @@ def reproject_select_sql(
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
     return f"""
-        SELECT * EXCLUDE ({exclude_sql}){rename_sql},
-               row_number() OVER () AS fid,
-               {geom_expr} AS geom
-        FROM ({read_expr})
+        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom)
+        FROM (
+            SELECT * EXCLUDE ({exclude_sql}){rename_sql},
+                   row_number() OVER () AS fid,
+                   {geom_expr} AS geom
+            FROM ({read_expr})
+        )
     """
+
+
+def _world_clip_sql(col: str) -> str:
+    """Build SQL clipping `col` to world bounds, only where its bbox goes past them."""
+    world = f"ST_GeomFromText('{WORLD_BOUNDS_WKT}')"
+    return f"""CASE
+        WHEN ST_IsEmpty({col}) OR (
+            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
+            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
+        ) THEN {col}
+        WHEN NOT ST_Intersects({col}, {world})
+        THEN error('a feature lies entirely outside world bounds (-180 -90 180 90)')
+        ELSE ST_SetCRS(ST_CollectionExtract(
+            ST_Intersection(ST_MakeValid({col}), {world}), 3
+        ), '{CRS}')
+        END"""
 
 
 def sort_paths_by_column_count_desc(

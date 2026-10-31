@@ -175,9 +175,10 @@ def test_overflow_writes_four_digit_code_and_issues_row(tmp_path):
         {
             "adm0_code": "BRA",
             "adm1_code": f"BRA-{i:04d}",
-            "wkt": f"POLYGON(({i} 0, {i + 1} 0, {i + 1} 1, {i} 1, {i} 0))",
+            "wkt": f"POLYGON(({x} 0, {x + 0.1} 0, {x + 0.1} 1, {x} 1, {x} 0))",
         }
         for i in range(total)
+        for x in [i / 10]
     ]
     input_path = tmp_path / "overflow.parquet"
     _write_synthetic(input_path, rows)
