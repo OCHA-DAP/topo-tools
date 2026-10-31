@@ -2063,7 +2063,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
 
     Each input file (or, with --assign many, each input polygon) is
     matched to the overlay polygon it overlaps most, extended to fill gaps,
-    clipped to that polygon, then stitched so the edges line up.
+    clipped to that polygon, with shared border points so the edges line up.
     OUTPUT_FILE defaults to INPUT_FILE with a "_matched" suffix. It's
     required when INPUT_FILE is a pattern matching more than one file, or
     when --input is given.
