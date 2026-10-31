@@ -1,21 +1,17 @@
 """Merges micro-polygons, checks invalid edges and exports the mosaicked output."""
 
-from logging import getLogger
 from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    gap_issues_table,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
 )
 from topo_tools.core.io import export_geometry_table, export_issues_table
-
-logger = getLogger(__name__)
 
 _ISSUE_COLUMNS = """
     NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
@@ -45,7 +41,6 @@ def _build_issues(
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_03_dropped"
         """,
-        f'SELECT * FROM "{name}_03_gaps"',
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"
         """,
@@ -118,27 +113,10 @@ def main(  # noqa: PLR0913
         f"NOT coalesce(fid IN ({passthrough_fids}), FALSE)" if passthrough else "TRUE"
     )
     invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
-    gap_issues_table(
-        conn,
-        table,
-        f"{name}_03_gaps",
-        within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-            SELECT overlay_fid FROM "{name}_02_assign")""",
-    )
 
     _build_issues(
         conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
     )
-
-    remaining = conn.execute(f"""--sql
-        SELECT COUNT(*) FROM "{name}_04" WHERE kind = 'gap'
-    """).fetchall()[0][0]
-    if remaining:
-        logger.warning(
-            "mosaic: %d gap(s) wider than the noise floor remain inside the overlay "
-            "polygons the output was clipped to, see the issues file",
-            remaining,
-        )
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_03_export" AS
@@ -159,5 +137,4 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_invalid"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_gaps"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')

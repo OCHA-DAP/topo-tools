@@ -91,14 +91,11 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
    the shared `core.assign.fill_unmatched_overlays()` to append every
    unmatched overlay polygon's own geometry, before the outputs stage.
 5. **`_04_outputs`**: runs the bounded invalid-edge check (orphan group
-   excluded) and the gap check, with no coverage gate (see `docs/adr/0144`),
-   then builds the issues report from the dropped input polygons collected in
+   excluded), with no coverage gate or gap check (see `docs/adr/0144`), then
+   builds the issues report from the dropped input polygons collected in
    stages 2/3 (or the passthrough input polygons and gap-filled overlay
-   polygons, when `merge` is set), their `invalid-edge` rows, plus any
-   leftover gap wider
-   than `SNAP_TOLERANCE`, logs a warning if any such gap remains, and
-   exports both the final layer and the issues report (only when it has
-   rows).
+   polygons, when `merge` is set) and their `invalid-edge` rows, and exports
+   both the final layer and the issues report (only when it has rows).
 
 ## Multi-file input
 
@@ -329,22 +326,11 @@ never came from overlay polygon vertex identity in the first place (see
 
 ## Overlay-layer gaps
 
-`_04_outputs.py` runs no `check_valid_topology` (see `docs/adr/0144`). Gaps are
-reported, never raised on.
-
-A zero-tolerance gate here breaks on a real case: matching South Africa's
-admin4 into South Africa's own admin0 boundary correctly reproduces the
-interior hole for Lesotho, a country fully enclosed by South Africa's
-territory. That hole isn't a defect `edge-match` introduced, it's the overlay
-layer's own legitimate shape, and a zero-tolerance gate raises `RuntimeError` over it. `edge-match` has no way to distinguish that case from
-an actual coverage defect by size alone (both can be wide), so instead of
-guessing, it stops treating "wide gap" as fatal and reports it: any gap
-wider than `SNAP_TOLERANCE` whose interior point falls inside an overlay
-polygon the output was clipped to gets a `kind='gap'` row in the issues report
-(width, area, thinness ratio) and a warning log, for a human to review. A hole
-outside every such overlay polygon, like Lesotho's, is the overlay layer's own
-shape and isn't reported.
-See `docs/adr/0035`.
+`_04_outputs.py` runs no `check_valid_topology` and no gap check (see
+`docs/adr/0144`), so a gap in the output is neither raised on nor reported. A
+zero-tolerance gate would fail on a real case: matching South Africa's admin4
+into its own admin0 reproduces the interior hole for Lesotho, which is the
+overlay layer's own shape, not a defect. See `docs/adr/0035`.
 
 ## Debug tables
 

@@ -105,22 +105,17 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Outputs
 
-- `edge-match` MUST NOT run the coverage check on its output. If the gap union
-  rejects the output, one `kind='gap'` row with key `gap-check-failed` MUST be
-  written instead of gap rows.
+- `edge-match` MUST NOT run the coverage check or a gap check on its output.
 - `edge-match` MUST export the final merged layer.
 - `edge-match` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every dropped input polygon, every
   input polygon belonging to a dropped group, every input polygon dropped for an empty
-  clip intersection, every clip-detached piece with an edge neighbour, every passthrough input polygon and gap-filled overlay polygon
-  (`merge` set only), and every leftover gap wider than `SNAP_TOLERANCE`
-  whose interior point falls inside an overlay polygon the output was clipped to,
-  so a human can audit what didn't make it into the output or what may
+  clip intersection, every clip-detached piece with an edge neighbour, and every passthrough input polygon and gap-filled overlay polygon
+  (`merge` set only), so a human can audit what didn't make it into the output or what may
   need review.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,
   `source_file` MUST record the input polygon's own origin file as a
-  parent-directory-plus-filename (not the full path). For a `gap-fill` or
-  `gap` row, `source_file` MUST be null, since neither has a single
-  originating input file.
+  parent-directory-plus-filename (not the full path). For a `gap-fill` row,
+  `source_file` MUST be null, since it has no single originating input file.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,
   `unit_a` MUST hold the input polygon's own fid; for a `dropped_group` row,
   `overlay_fid` and `reason` MUST record the group's assigned overlay polygon and
@@ -133,9 +128,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   hold the gap-filled overlay polygon's fid and `reason` MUST explain that the
   overlay polygon had no matched input polygons and was kept unclipped in the output;
   `unit_a` MUST be null, since the row is the overlay polygon itself, not an input polygon.
-  For a `gap` row, `area_m2`, `max_width_m`, and `thinness_ratio` MUST be
-  populated instead. A field that doesn't apply to a row's kind MUST be
-  null.
+  A field that doesn't apply to a row's kind MUST be null.
 - `edge-match` MUST produce the issues report only when it has at least one
   row; when it would be empty, no file MUST be written (and a stale file
   from a previous run at that path MUST be removed).

@@ -10,7 +10,6 @@ from topo_tools.core.coverage import (
     count_gaps,
     coverage_clean,
     detect_notches,
-    gap_issues_sql,
     has_gaps,
     has_invalid_edges,
     has_micro_polygons,
@@ -39,17 +38,6 @@ def test_has_gaps_tolerates_wide_hole_when_scoped():
         _write_polygon_with_hole(conn, hole_width=2.0)
         assert has_gaps(conn, "synth", gap_maximum_width=0)
         assert not has_gaps(conn, "synth", gap_maximum_width=SNAP_TOLERANCE)
-
-
-@pytest.mark.parametrize(("within", "rows"), [((1, 2), 1), ((5, 6), 0)])
-def test_gap_issues_keep_only_gaps_inside_within(within, rows):
-    with duckdb.connect() as conn:
-        conn.execute("INSTALL spatial; LOAD spatial;")
-        _write_polygon_with_hole(conn, hole_width=0.5)
-        lo, hi = within
-        box = f"SELECT ST_MakeEnvelope({lo}, {lo}, {hi}, {hi}) AS geom"
-        sql = gap_issues_sql(conn, "synth", within=box)
-        assert conn.execute(f"SELECT count(*) FROM ({sql})").fetchone()[0] == rows
 
 
 def test_check_valid_topology_raises_on_micro_gap_even_when_scoped():

@@ -3,7 +3,7 @@
 import threading
 from logging import getLogger
 
-from duckdb import DuckDBPyConnection, InterruptException, InvalidInputException
+from duckdb import DuckDBPyConnection, InterruptException
 
 from topo_tools.core.constants import (
     CLIP_PAIR_VERTEX_BUDGET,
@@ -363,13 +363,9 @@ def gap_issues_sql(
     table: str,
     *,
     min_width: float = SNAP_TOLERANCE,
-    within: str | None = None,
     coverage: bool = False,
 ) -> str:
-    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema.
-
-    `within` (a query yielding `geom`) keeps only gaps whose interior point it covers.
-    """
+    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema."""
     m2_per_deg2 = m2_per_deg2_factor(conn, table)
     width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
     thinness_ratio = "4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)"
@@ -386,47 +382,7 @@ def gap_issues_sql(
                NULL::VARCHAR AS source_file, geom
         FROM {gap_geometries_sql(table, coverage=coverage)} g
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
-        {"" if within is None else _point_within_sql("g.geom", within)}
     """
-
-
-def gap_issues_table(
-    conn: DuckDBPyConnection, table: str, out: str, *, within: str | None = None
-) -> None:
-    """Create `out` from gap_issues_sql over a coverage union of `table`.
-
-    GEOS rejects a union over invalid edges; `out` then holds one row saying so.
-    """
-    try:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{out}" AS
-            {gap_issues_sql(conn, table, within=within, coverage=True)}
-        """)
-    except InvalidInputException as err:
-        logger.warning("gap check failed on %s: %s", table, err)
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{out}" AS
-            SELECT * REPLACE (
-                'gap-check-failed' AS key, 'gap' AS kind,
-                'gap check failed: the coverage union rejected invalid edges'
-                    AS reason
-            )
-            FROM ({_EMPTY_ISSUES_SQL.replace(" WHERE FALSE", "")})
-        """)
-
-
-def _point_within_sql(geom: str, within: str) -> str:
-    """Build an AND clause: `geom`'s interior point lies in a `within` geometry."""
-    return f"""AND EXISTS (
-            SELECT 1 FROM (
-                SELECT geom, ST_XMin(geom) AS xmin, ST_XMax(geom) AS xmax,
-                       ST_YMin(geom) AS ymin, ST_YMax(geom) AS ymax
-                FROM ({within})
-            ) w, (SELECT ST_PointOnSurface({geom}) AS pt) q
-            WHERE ST_X(q.pt) BETWEEN w.xmin AND w.xmax
-              AND ST_Y(q.pt) BETWEEN w.ymin AND w.ymax
-              AND ST_Intersects(w.geom, q.pt)
-        )"""
 
 
 def short_source_file_sql(column: str) -> str:

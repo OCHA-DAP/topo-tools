@@ -32,14 +32,21 @@ run out of memory: `has_invalid_edges` puts all 1.2M parts into one
   `INVALID_EDGE_BATCH_SECONDS` (300s) stops, and its pairs are reported as
   unchecked. The results are `kind='invalid-edge'` issue rows. The check does
   not raise or fix anything.
-- Gap rows use `ST_CoverageUnion`. If it rejects the output, one `kind='gap'`
-  row with key `gap-check-failed` is written instead.
+- `edge-mosaic` and `edge-match` write no `gap` rows. A gap check needs a
+  union of the whole output, and at global scale that runs out of memory
+  (killed at 15,360 MB). Gap reporting is left to a follow-up.
 
 ## Consequences
 
 - Global prototype: 54 minutes at a 14 to 15 GB peak, with 0 pieces across
   378 touching country pairs. The overlay vertex snap moves row vertices
   by up to about 2.8 mm.
+- Global run (219 inputs, raw adm0): assign and clip took 2h10 at an 11.3 GB
+  peak, the micro merge fixed 32 parts, and the invalid-edge check took
+  8 minutes and flagged 149 row pairs. The outputs stage, run on the saved
+  clip tables, took 3 minutes at a 10.2 GB peak. The output has 354,967 rows
+  and 1,196,717 parts.
+- Small runs also get no `gap` rows.
 - West Africa (8 countries): 19.4s, 0 invalid-edge rows, and the whole-table
   `has_valid_topology` is True.
 - A run can export with invalid-edge rows. Inputs that overlap each other,

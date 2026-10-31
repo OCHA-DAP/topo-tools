@@ -40,14 +40,12 @@ sides of every overlay border sharing border points, so no stitch is needed
    normal clip; the api layer then calls the shared
    `core.assign.fill_unmatched_overlays()` to append every unmatched
    overlay polygon's own geometry into the same table, before the outputs stage.
-4. **`_02_outputs`**: no coverage gate (see `docs/adr/0144`). A bounded
-   invalid-edge check (`core.coverage.invalid_edge_issues`, passthrough rows
-   excluded) and a gap check (`gap_issues_table`) add their rows to an
-   issues report listing unassigned/passthrough input polygons (no dropped-group
-   kind, since there are no groups), any gap-filled overlay polygons, plus any
-   leftover gap wider than `SNAP_TOLERANCE` inside an overlay polygon the output
-   was clipped to, a warning log if any such gap
-   remains, and export (only when the issues report has rows).
+4. **`_02_outputs`**: no coverage gate or gap check (see `docs/adr/0144`). A
+   bounded invalid-edge check (`core.coverage.invalid_edge_issues`, passthrough
+   rows excluded) adds its rows to an issues report listing unassigned/passthrough
+   input polygons (no dropped-group kind, since there are no groups) and any
+   gap-filled overlay polygons, then exports (only when the issues report has
+   rows).
 
 ## Multi-file input
 
@@ -123,7 +121,7 @@ other (see `docs/adr/0079`, `docs/adr/0088`).
 ## Why neither input is coverage pre-checked
 
 Neither the overlay layer nor the input layer is checked or cleaned for coverage
-violations before assign/clip runs (see ADR-0018). `_02_outputs.py`'s invalid-edge and gap checks write what a dirty overlay or
+violations before assign/clip runs (see ADR-0018). `_02_outputs.py`'s invalid-edge check writes what a dirty overlay or
 input layer leaves in the output as issue rows, so it doesn't reach export
 unreported. The
 input layer is additionally assumed to already be a finished `edge_extend()`

@@ -1,13 +1,11 @@
 """Merges micro-polygons, checks invalid edges and exports the matched output."""
 
-from logging import getLogger
 from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    gap_issues_table,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
@@ -16,8 +14,6 @@ from topo_tools.core.coverage import (
 from topo_tools.core.edge_match._constants import PASSTHROUGH_OVERLAY_FID
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
-logger = getLogger(__name__)
-
 _ISSUE_COLUMNS = """
     NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
     NULL::DOUBLE AS thinness_ratio, NULL::DOUBLE AS near_length_m,
@@ -25,16 +21,6 @@ _ISSUE_COLUMNS = """
     NULL::DOUBLE AS unit_a_area_change_m2, NULL::DOUBLE AS unit_b_area_change_m2,
     NULL::DOUBLE AS filled_area_m2, FALSE AS fixed
 """
-
-
-def _clip_targets_sql(name: str) -> str:
-    """Build SQL for the overlay polygons the output was clipped to."""
-    return f"""
-        SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-            SELECT overlay_fid FROM "{name}_02_assign"
-            WHERE overlay_fid != {PASSTHROUGH_OVERLAY_FID}
-        )
-    """
 
 
 def _build_issues(
@@ -74,7 +60,6 @@ def _build_issues(
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_04_dropped"
         """,
-        f'SELECT * FROM "{name}_04_gaps"',
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_04_detached"
         """,
@@ -135,21 +120,10 @@ def main(  # noqa: PLR0913
         else "TRUE"
     )
     invalid_edge_issues(conn, table, f"{name}_04_invalid", where=where)
-    gap_issues_table(conn, table, f"{name}_04_gaps", within=_clip_targets_sql(name))
 
     _build_issues(
         conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
     )
-
-    remaining = conn.execute(f"""--sql
-        SELECT COUNT(*) FROM "{name}_05" WHERE kind = 'gap'
-    """).fetchall()[0][0]
-    if remaining:
-        logger.warning(
-            "match: %d gap(s) wider than the noise floor remain inside the overlay "
-            "polygons the output was clipped to, see the issues file",
-            remaining,
-        )
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_04_export" AS
@@ -171,5 +145,4 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_invalid"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_04_gaps"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_05"')
