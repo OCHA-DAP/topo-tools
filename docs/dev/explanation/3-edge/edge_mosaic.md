@@ -13,10 +13,11 @@ re-running Voronoi extension. It exists because `edge-match` redundantly redoes
 extension for input polygons that were already extended by an earlier pipeline
 run: `edge-match`'s own Colombia-scale profiling (see `docs/dev/explanation/3-edge/edge_match.md`)
 shows the `groups` stage (where per-overlay-polygon extension happens) at ~85% of
-total wall time. If the geometry is already extended, only assignment,
-clipping, and seam-closing need to happen: the same three primitives
-`assign`, `edge-clip`, and `edge-stitch` expose standalone (see their own explanation
-docs); `edge-mosaic` is a thin wrapper chaining `assign-one` → `edge-clip` → `edge-stitch`.
+total wall time. If the geometry is already extended, only assignment and clipping need to happen: the same two primitives
+`assign` and `edge-clip` expose standalone (see their own explanation docs);
+`edge-mosaic` is a thin wrapper chaining `assign-one` → `edge-clip`, with both
+sides of every overlay border sharing border points, so no stitch is needed
+(see `docs/adr/0144`).
 
 ## Pipeline
 
@@ -38,17 +39,10 @@ docs); `edge-mosaic` is a thin wrapper chaining `assign-one` → `edge-clip` →
    own already-extended geometry into `{name}_03` immediately after the
    normal clip; the api layer then calls the shared
    `core.assign.fill_unmatched_overlays()` to append every unmatched
-   overlay polygon's own geometry into the same table, before stitch ever runs.
-4. **`_02_stitch`**: calls `core.edge_stitch._02_clean.main()` directly, the
-   same whole-table `ST_CoverageClean` pass `edge-stitch` exposes standalone,
-   see `docs/dev/explanation/3-edge/edge_stitch.md`. Passthrough/gap-fill rows (if any)
-   are already part of `{name}_03` by this point, so they get the same
-   chance to resolve seams against their clipped neighbors as everything else.
-5. **`_03_outputs`**: the same `check_valid_topology()` hard gate as
-   `edge-match`, using its default `gap_maximum_width=SNAP_TOLERANCE` for the same
-   overlay-layer-hole reason (see `docs/dev/explanation/3-edge/edge_match.md`'s
-   "`check_valid_topology` and overlay-layer gaps", `docs/adr/0035`,
-   `docs/adr/0039`), an
+   overlay polygon's own geometry into the same table, before the outputs stage.
+4. **`_02_outputs`**: no coverage gate (see `docs/adr/0144`). A bounded
+   invalid-edge check (`core.coverage.invalid_edge_issues`, passthrough rows
+   excluded) and a gap check (`gap_issues_table`) add their rows to an
    issues report listing unassigned/passthrough input polygons (no dropped-group
    kind, since there are no groups), any gap-filled overlay polygons, plus any
    leftover gap wider than `SNAP_TOLERANCE` inside an overlay polygon the output
@@ -83,10 +77,10 @@ after each file loads (not by the union-time `row_number()` a
 single-file/combined-table run uses), then reassigned fresh via
 `ROW_NUMBER()` over the fully accumulated result once the loop ends,
 preserving the same "fid is renumbered fresh after the union" contract a
-combined-table run also guarantees. `stitch`/`outputs` still run exactly
-once, over the fully accumulated result, since closing a seam between two
-files' clipped output needs both sides' geometry at once (see ADR-0079).
-Every row on the internal `{name}_04` table still carries a `source_file`
+combined-table run also guarantees. Shared border points are picked once, from every file's candidates, before any
+file is clipped, and `outputs` runs once over the fully accumulated result, so
+files that meet at a border share vertices and are checked together.
+Every row on the internal `{name}_03` table still carries a `source_file`
 column tagging its origin file, whichever assembly path produced it; it's
 an `assign-one` working column, stripped before the exported output (see
 `docs/adr/0087`).
@@ -129,10 +123,9 @@ other (see `docs/adr/0079`, `docs/adr/0088`).
 ## Why neither input is coverage pre-checked
 
 Neither the overlay layer nor the input layer is checked or cleaned for coverage
-violations before assign/clip runs (see ADR-0018). `_03_outputs.py`'s hard
-`check_valid_topology()` gate on the final stitched output already
-guarantees correctness regardless: there is no path where a dirty overlay
-or input layer silently reaches export undetected, only a loud failure. The
+violations before assign/clip runs (see ADR-0018). `_02_outputs.py`'s invalid-edge and gap checks write what a dirty overlay or
+input layer leaves in the output as issue rows, so it doesn't reach export
+unreported. The
 input layer is additionally assumed to already be a finished `edge_extend()`
 output, which `edge-mosaic` never re-verifies.
 
@@ -142,7 +135,7 @@ output, which `edge-mosaic` never re-verifies.
 | --- | --- | --- |
 | Input assumption | Input layer is raw, unextended | Input layer is already a finished `edge_extend()` output |
 | Assign strategy | `assign-many` (per-polygon plurality) | `assign-one` (per-file majority vote) |
-| Cost driver | Per-group Voronoi extension (~85% of wall time) | Assign + clip + stitch only, no extension |
+| Cost driver | Per-group Voronoi extension (~85% of wall time) | Assign + clip only, no extension |
 | Isolation | Two subprocess generations: per-group `edge-extend`, then batched per-`overlay_fid` `edge-clip` (`docs/adr/0020`) | Per-`overlay_fid` subprocess only, heavy overlay polygons split with `ST_Subdivide` (`docs/adr/0015`, `docs/adr/0140`) |
 | When to use | Input layer hasn't been extended yet | Reusing pre-extended layers against a new/different overlay polygon |
 
@@ -163,11 +156,10 @@ tool versions or vintages (the portolan catalog has per-country pipeline
 drift, e.g. `phl` has v01 through v03), with no guarantee that any two
 `extended.parquet` files being combined into one `edge_mosaic()` input were even
 produced by compatible `edge_extend()` versions (only empirically-confirmed
-schema/CRS compatibility). The `check_valid_topology()` hard gate
-still runs and raises before export, but a multi-provenance mosaic run
-should have its overlay-to-overlay boundaries spot-checked visually (e.g. via
+schema/CRS compatibility). Seams between input files show up as `invalid-edge` rows, but a
+multi-provenance mosaic run should still have its overlay-to-overlay boundaries spot-checked visually (e.g. via
 the `geo-preview` skill), not just trusted because the hard gate passed.
-Use `--debug` to inspect the `{name}_04` table's `source_file` column
+Use `--debug` to inspect the `{name}_03` table's `source_file` column
 (dropped from the exported output, see `docs/adr/0087`) to find which two
 files actually meet at a flagged seam.
 
@@ -175,15 +167,14 @@ files actually meet at a flagged seam.
 passthrough file's boundary was never intersected against the overlay layer,
 unlike every clipped neighbor
 around it; any seam disagreement there is on top of the ordinary
-cross-provenance risk above, not instead of it. Stitch gets a chance to
-resolve it like any other seam, and the hard gate still raises if it
-can't, but a passthrough run is worth the same visual spot-check as a
+cross-provenance risk above, not instead of it. Passthrough rows are left out of the invalid-edge check, since nothing ties
+their edges to their clipped neighbours, so a passthrough run is worth the same visual spot-check as a
 multi-provenance one.
 
 ## Opt-in `schema-fill` composition (`fill_schema`)
 
 `edge-mosaic` MAY invoke `schema-fill`'s own fill logic itself, right
-after stitching and before export, via `fill_schema=True` (CLI:
+after clipping and before export, via `fill_schema=True` (CLI:
 `--fill-schema`). This lives entirely in `api/edge_mosaic.py`, at both
 insertion points (the single-file step loop's `outputs` branch and
 `_mosaic_multi_file()`'s own final stage), calling
