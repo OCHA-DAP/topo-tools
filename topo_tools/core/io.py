@@ -160,17 +160,19 @@ def reproject_select_sql(
     rename_sql = "".join(f', "{c}" AS "{c}_orig"' for c in colliding_cols)
 
     # ST_Read tags geometry with source CRS; single-arg ST_Transform infers it.
-    # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged.
+    # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged;
+    # one already in CRS skips the transform, which roughly doubles peak memory.
+    reproject = geom_type not in ("GEOMETRY", f"GEOMETRY('{CRS}')")
     geom_expr = (
         "ST_Force2D(ST_MakeValid(ST_Transform("
         f"ST_MakeValid(\"{geom_col}\"), '{CRS}', true)))"
-        if geom_type != "GEOMETRY"
+        if reproject
         else f"ST_SetCRS(ST_Force2D(ST_MakeValid(\"{geom_col}\")), '{CRS}')"
     )
     if not make_valid:
         geom_expr = (
             f"ST_Force2D(ST_Transform(\"{geom_col}\", '{CRS}', true))"
-            if geom_type != "GEOMETRY"
+            if reproject
             else f"ST_SetCRS(ST_Force2D(\"{geom_col}\"), '{CRS}')"
         )
 

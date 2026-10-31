@@ -27,11 +27,11 @@ from topo_tools.core.duckdb_utils import (
     resolve_tmp_dir,
     spill_table,
 )
+from topo_tools.core.edge_clip import drop_points
 from topo_tools.core.edge_match import _01_inputs as inputs
 from topo_tools.core.edge_match import _02_groups as groups
 from topo_tools.core.edge_match import _03_clip as clip
-from topo_tools.core.edge_match import _04_stitch as stitch
-from topo_tools.core.edge_match import _05_outputs as outputs
+from topo_tools.core.edge_match import _04_outputs as outputs
 from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
@@ -44,7 +44,7 @@ logger = getLogger(__name__)
 
 _ASSIGN_MODES = ("auto", "one", "many")
 
-_STEP_ORDER = ["inputs", "assign", "groups", "clip", "stitch", "outputs"]
+_STEP_ORDER = ["inputs", "assign", "groups", "clip", "outputs"]
 
 _STEP_TABLES = {
     "inputs": ["{n}_input_01", "{n}_overlay_01", "{n}_overlay_full"],
@@ -52,7 +52,6 @@ _STEP_TABLES = {
     # "groups" is absent: group ids aren't known ahead of time (dynamic
     # "{n}_g{overlay_fid}" names), so it falls through to the default below.
     "clip": ["{n}_04", "{n}_04_dropped", "{n}_04_detached", "{n}_02_gap_fill"],
-    "stitch": ["{n}_05"],
     "outputs": [],
 }
 
@@ -285,14 +284,15 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_04",
                             overlay_snapshot_table=f"{name}_overlay_full",
+                            points_table=f"{name}_03_pt_pts",
                         )
-                elif s == "stitch":
-                    stitch.main(conn, name, debug=debug)
+                    if not debug:
+                        drop_points(conn, f"{name}_03_pt")
                 elif s == "outputs":
                     apply_optional_fill(
                         conn,
                         name,
-                        f"{name}_05",
+                        f"{name}_04",
                         requested=fill_schema,
                         name_field=name_field,
                         code_field=code_field,
@@ -391,7 +391,7 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
 ) -> None:
     """Load/assign one input file at a time, sharing one already-loaded overlay layer.
 
-    Groups/clip/stitch/outputs run once over the fully accumulated result
+    Groups/clip/outputs run once over the fully accumulated result
     afterward, so cross-file input polygons sharing a overlay_fid extend together.
     """
     load_overlay(conn, name, overlay_path)
@@ -492,12 +492,14 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_04",
             overlay_snapshot_table=f"{name}_overlay_01",
+            points_table=f"{name}_03_pt_pts",
         )
-    stitch.main(conn, name, debug=debug)
+    if not debug:
+        drop_points(conn, f"{name}_03_pt")
     apply_optional_fill(
         conn,
         name,
-        f"{name}_05",
+        f"{name}_04",
         requested=fill_schema,
         name_field=name_field,
         code_field=code_field,

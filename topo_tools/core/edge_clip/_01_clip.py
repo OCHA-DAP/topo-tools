@@ -7,6 +7,7 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.coverage import merge_micro_polygons
 
 from ._engine import main as clip_engine
+from ._points import drop_points, prepare_points
 
 
 def main(  # noqa: PLR0913
@@ -27,6 +28,7 @@ def main(  # noqa: PLR0913
         FROM "{name}_input_01" c
         JOIN "{name}_02_assign" a ON a.input_fid = c.fid
     """)
+    prepare_points(conn, f"{name}_02_clip_in", f'"{name}_overlay_01"', f"{name}_02_pt")
     clip_engine(
         conn,
         f"{name}_02_clip_in",
@@ -36,6 +38,7 @@ def main(  # noqa: PLR0913
         threads=threads,
         debug=debug,
         original_table=original_table,
+        points=f"{name}_02_pt",
     )
     merge_micro_polygons(
         conn,
@@ -45,3 +48,4 @@ def main(  # noqa: PLR0913
     )
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_clip_in"')
+        drop_points(conn, f"{name}_02_pt")

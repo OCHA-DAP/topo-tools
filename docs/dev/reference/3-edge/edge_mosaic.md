@@ -53,17 +53,18 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 
 ## Clipping
 
+- Before clipping any file, `edge-mosaic` MUST collect shared border points from
+  every input file and the overlay tiles, then snap both the tiles and the input
+  polygons to them (see `docs/adr/0144`).
 - `edge-mosaic` MUST NOT re-run Voronoi extension on any input polygon; the input polygon
   layer is assumed already extended.
 - `edge-mosaic` MUST clip each assigned input polygon to its own assigned overlay polygon's
   geometry via `ST_Intersection`, one distinct assigned overlay fid at a
   time, each in its own spawned OS subprocess (see
   `docs/dev/explanation/3-edge/edge_mosaic.md`).
-- Within one overlay fid's subprocess, `edge-mosaic` MUST grid-subdivide that
-  overlay polygon's boundary into small tiles before intersecting once its vertex
-  count exceeds an adaptive threshold, sizing the tile grid from that
-  overlay polygon's own vertex density, and MUST join input polygons to tiles via bbox
-  comparison, never `ST_Intersects`.
+- `edge-mosaic` MUST split each heavy overlay polygon into tiles with `ST_Subdivide`
+  once, before the per-fid subprocesses, and MUST join input polygons to tiles by
+  bbox comparison.
 - An input polygon whose clipped result is empty MUST be dropped from the output,
   not treated as fatal, and MUST be recorded in the issues report as a
   `kind='clip-empty'` row (see Outputs).
@@ -73,25 +74,24 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   unless `merge` gap-filled at least one overlay polygon or kept at least one
   unmatched input file as passthrough (see Configuration).
 
-## Stitching
+## Invalid-edge check
 
-- `edge-mosaic` MUST run one whole-layer coverage-clean pass over the clipped
-  output, per `docs/dev/reference/3-edge/edge_stitch.md`, using the same fixed gap-closing
-  width as `edge-extend`'s own merge stage (see `docs/dev/reference/3-edge/edge_extend.md`), not
-  a per-polygon-scoped pass.
+- `edge-mosaic` MUST NOT run a coverage-clean pass over the clipped output.
+- `edge-mosaic` MUST check every pair of touching parts from different output rows,
+  passthrough rows excluded, for invalid edges. It MUST report each row pair with
+  invalid edges as a `kind='invalid-edge'` row, and MUST NOT raise on or fix them.
+- A check query MUST stop after `INVALID_EDGE_BATCH_SECONDS`, and its pairs MUST be
+  reported as unchecked.
 
 ## Outputs
 
-- `edge-mosaic`'s final output MUST pass the coverage check (no overlap, no gap at or below
-  `SNAP_TOLERANCE`) before export. A wider leftover gap does not block
-  export (see `docs/adr/0035`).
+- `edge-mosaic` MUST NOT run the coverage check or a gap check on its output.
 - `edge-mosaic` MUST export the final merged layer.
 - `edge-mosaic` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every input polygon dropped
   for an empty clip intersection, every clip-detached piece with an edge neighbour, every
   unassigned/passthrough input file,
-  every gap-filled/passthrough overlay polygon (when `merge` is set), and every
-  leftover gap wider than `SNAP_TOLERANCE` whose interior point falls inside an
-  overlay polygon the output was clipped to, so a human can audit what
+  and every gap-filled/passthrough overlay polygon (when `merge` is set), so a
+  human can audit what
   didn't make it into the output or what may need review.
 - Without `merge`, a whole unmatched input file MUST appear as an
   `unassigned` row: `unit_a` MUST hold the input polygon's own fid and
@@ -107,9 +107,8 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   MUST hold the gap-filled overlay polygon's fid and `reason` MUST explain that the
   overlay polygon had no matched input polygons and was kept unclipped in the output;
   `unit_a` and `source_file` MUST be null, since the row is the overlay polygon
-  itself, not an input polygon. For a `gap` row, `area_m2`, `max_width_m`, and
-  `thinness_ratio` MUST be populated instead. A field that doesn't apply
-  to a row's kind MUST be null.
+  itself, not an input polygon. A field that doesn't apply to a row's kind
+  MUST be null.
 - `edge-mosaic` MUST produce the issues report only when it has at least one
   row; when it would be empty, no file MUST be written (and a stale file
   from a previous run at that path MUST be removed).
@@ -126,10 +125,10 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   output path with an `_issues` suffix.
 - `edge-mosaic` MUST raise `FileExistsError` if either output path already
   exists and overwriting wasn't requested.
-- `step`, if given, MUST be one of `inputs`, `assign`, `edge-clip`, `edge-stitch`,
-  `outputs`; any other value MUST raise `ValueError`. `step` MUST be `None`
-  whenever more than one `input_paths` file is given; any other value MUST
-  raise `ValueError` (see `docs/adr/0079`).
+- `step`, if given, MUST be one of `inputs`, `assign`, `clip`, `outputs`; any
+  other value MUST raise `ValueError`. `step` MUST be `None` whenever more than
+  one `input_paths` file is given; any other value MUST raise `ValueError` (see
+  `docs/adr/0079`).
 - `edge-mosaic` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - `edge-mosaic` MAY accept `merge: bool = False` (CLI: `--merge`, a plain
@@ -161,7 +160,7 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   `input_include`/`input_exclude` (see `docs/adr/0077`, `docs/adr/0079`, `docs/adr/0083`, `docs/adr/0088`;
   supersedes the input-orphan passthrough of `docs/adr/0078`).
 - `edge-mosaic` MAY opt into cascading admin-hierarchy columns via
-  `fill_schema`/`--fill-schema`, right after stitching and before export
+  `fill_schema`/`--fill-schema`, right after clipping and before export
   (both the single-file step loop and the multi-file combine path).
   `name_field`/`code_field`/`--name-field`/`--code-field` (given together
   or both omitted; omitted falls back to structural auto-detection) and

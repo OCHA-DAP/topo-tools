@@ -13,9 +13,7 @@ its overlay polygon, then intersect it against that overlay polygon's geometry, 
 anything that clips to empty. Unlike `edge-match`/`edge-mosaic`'s internal use of the
 same clipping mechanism, standalone `edge-clip` never expects a caller to have
 already assigned `overlay_fid` itself; it does that internally, always via
-`assign-one` (see `docs/dev/explanation/3-edge/assign.md`, `docs/adr/0021`). It has no
-opinion about whether its output is coverage-clean; that's `edge-stitch`'s job
-downstream.
+`assign-one` (see `docs/dev/explanation/3-edge/assign.md`, `docs/adr/0021`). It does not check whether its output is coverage-clean.
 
 ## Pipeline
 
@@ -73,15 +71,38 @@ so a worker started from stdin fails immediately with a `FileNotFoundError`
 that surfaces as a generic "worker exited with no result" error, easy to
 mistake for OOM.
 
-Within one overlay polygon's subprocess, an overlay polygon of at least
+In the parent, before any subprocess, every overlay polygon of at least
 `SUBDIVIDE_MIN_VERTICES` vertices is split with `ST_Subdivide` into pieces of
 at most `SUBDIVIDE_MAX_VERTICES` vertices (`core.duckdb_utils.subdivide_sql`),
-and input polygons join to pieces by bbox comparison rather than one
+and each subprocess gets only its own tiles; input polygons join to pieces by bbox comparison rather than one
 `ST_Intersection` against a possibly-million-vertex whole. A smaller overlay
 polygon is clipped directly. The same helper splits every heavy geometry the
 edge tools join against (assign pairs, clip-detached neighbours, the
 detached-part overlay union), so all of them share one vertex budget. See
 `docs/adr/0140`.
+
+## Shared border points
+
+Clipping each row on its own leaves the two sides of an overlay border with
+different vertices. Before the clip, `core.edge_clip._points` builds one set
+of points that both sides use:
+
+1. `build_tiles` splits the overlay polygons into tiles once, in the parent,
+   and records the vertices the split adds (cut points).
+2. `collect_candidates` gathers candidates from each input table: overlay
+   vertices near another candidate (priority 0), cut points (1), vertices of
+   rows that cross a tile border, within `SHARED_POINT_TOLERANCE` of it (2),
+   and the crossings themselves (3).
+3. `pick_points` keeps one point per cluster within `SHARED_POINT_TOLERANCE`,
+   by priority, then x, then y.
+
+Each subprocess snaps its tiles and rows to the kept points inside its bbox,
+snaps rows once more to overlay vertices within `OVERLAY_VERTEX_SNAP`, then
+clips with `ST_Union_Agg(ST_Intersection(...))` over row-tile pairs, in
+batches of at most `CLIP_PAIR_VERTEX_BUDGET` vertices. `edge-mosaic` collects
+candidates from every input file before picking points, so files that meet
+at a border share them; `edge-match` and standalone `edge-clip` call
+`prepare_points` once on their clip input. See `docs/adr/0144`.
 
 ## Clip-detached pieces
 

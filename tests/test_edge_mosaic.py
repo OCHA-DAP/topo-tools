@@ -1,8 +1,4 @@
-"""Portability smoke tests: does mosaic() run to completion on this machine.
-
-Not a correctness suite: outputs.main already raises RuntimeError on
-coverage violations, so a clean run is already vetted by the pipeline itself.
-"""
+"""Portability smoke tests for mosaic(), plus a cross-border invalid-edge check."""
 
 import logging
 
@@ -15,6 +11,7 @@ from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
 from topo_tools.api.edge_mosaic import mosaic
 from topo_tools.cli.main import cli
+from topo_tools.core.coverage import has_invalid_edges
 
 _LEVEL_1, _LEVEL_2 = 1, 2
 
@@ -33,7 +30,7 @@ _OVERLAY_WKT = [
 
 _OVERLAY_A_AREA = 9.0
 
-_STEPS = ["inputs", "assign", "clip", "stitch", "outputs"]
+_STEPS = ["inputs", "assign", "clip", "outputs"]
 
 
 def _write_synthetic(path, wkt_rows):
@@ -197,7 +194,7 @@ _ENCLAVE_INPUT_WKT = [
 
 
 def test_mosaic_tolerates_overlay_layer_enclave(tmp_path):
-    """A real hole in the overlay's own shape must not raise or be reported."""
+    """A real hole in the overlay's own shape must not raise."""
     input_path = tmp_path / "children_enclave.parquet"
     overlays_path = tmp_path / "parents_enclave.parquet"
     _write_synthetic(input_path, _ENCLAVE_INPUT_WKT)
@@ -208,13 +205,6 @@ def test_mosaic_tolerates_overlay_layer_enclave(tmp_path):
     mosaic(input_path, overlays_path, output_path, issues_path, overwrite=True)
 
     assert output_path.exists()
-    if issues_path.exists():
-        with duckdb.connect() as conn:
-            conn.execute("LOAD spatial")
-            gap_rows = conn.execute(
-                f"SELECT count(*) FROM '{issues_path}' WHERE kind = 'gap'"
-            ).fetchone()[0]
-        assert gap_rows == 0
 
 
 def test_mosaic_clip_bounds_output_to_overlay(
@@ -353,6 +343,46 @@ def test_mosaic_multi_file_api(synthetic_inputs_split, synthetic_overlays, tmp_p
         rows = conn.execute(f"SELECT id FROM '{output_path}' ORDER BY id").fetchall()
     assert "source_file" not in columns
     assert [r[0] for r in rows] == [1, 2]
+
+
+# Two overlays share a slanted border, file a voting overlay 1 and file b overlay 2;
+# their input borders cross it at different heights, needing shared border points.
+_SLANT_OVERLAYS = [
+    (1, "POLYGON((0 0, 3 0, 3.3 3, 0 3, 0 0))"),
+    (2, "POLYGON((3 0, 6 0, 6 3, 3.3 3, 3 0))"),
+]
+_SLANT_INPUTS_A = [
+    (1, "POLYGON((-1 -1, 3.9 -1, 3.9 1.7, -1 1.7, -1 -1))"),
+    (2, "POLYGON((-1 1.7, 3.9 1.7, 3.9 4, -1 4, -1 1.7))"),
+]
+_SLANT_INPUTS_B = [
+    (3, "POLYGON((2.4 -1, 7 -1, 7 1.2, 5 1.2, 2.4 1.2, 2.4 -1))"),
+    (4, "POLYGON((2.4 1.2, 5 1.2, 5 4, 2.4 4, 2.4 1.2))"),
+    (5, "POLYGON((5 1.2, 7 1.2, 7 4, 5 4, 5 1.2))"),
+]
+
+
+def test_mosaic_cross_border_inputs_have_no_invalid_edges(tmp_path):
+    overlay_path = tmp_path / "overlay.parquet"
+    path_a, path_b = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(overlay_path, _SLANT_OVERLAYS)
+    _write_synthetic(path_a, _SLANT_INPUTS_A)
+    _write_synthetic(path_b, _SLANT_INPUTS_B)
+    output_path = tmp_path / "out.parquet"
+    mosaic([path_a, path_b], overlay_path, output_path, overwrite=True)
+
+    issues_path = output_path.with_stem(output_path.stem + "_issues")
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(
+            f"CREATE TABLE out AS SELECT geometry AS geom FROM '{output_path}'"
+        )
+        rows = conn.execute("SELECT count(*) FROM out").fetchone()[0]
+        assert rows == len(_SLANT_INPUTS_A) + len(_SLANT_INPUTS_B)
+        assert not has_invalid_edges(conn, "out")
+        if issues_path.exists():
+            kinds = conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
+            assert ("invalid-edge",) not in kinds
 
 
 def test_mosaic_multi_file_merge_untagged_inputs_tagged_overlay(

@@ -1,20 +1,17 @@
-"""Validates topology and exports the mosaicked output."""
+"""Merges micro-polygons, checks invalid edges and exports the mosaicked output."""
 
-from logging import getLogger
 from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    check_valid_topology,
-    gap_issues_sql,
+    invalid_edge_issues,
+    merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
 )
 from topo_tools.core.io import export_geometry_table, export_issues_table
-
-logger = getLogger(__name__)
 
 _ISSUE_COLUMNS = """
     NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
@@ -33,8 +30,8 @@ def _build_issues(
     passthrough: bool = False,
     fill_gaps: bool = False,
 ) -> None:
-    """Build `{name}_05`: every unassigned input polygon, gap-fill rows, and gaps."""
-    table = f"{name}_04"
+    """Build `{name}_04`: every unassigned input polygon, gap-fill rows, and gaps."""
+    table = f"{name}_03"
     short_source_file = short_source_file_sql("source_file")
     parts = [
         f"""
@@ -44,16 +41,10 @@ def _build_issues(
                {_ISSUE_COLUMNS}, {short_source_file} AS source_file, geom
         FROM "{name}_03_dropped"
         """,
-        gap_issues_sql(
-            conn,
-            table,
-            within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-                SELECT overlay_fid FROM "{name}_02_assign")""",
-            coverage=True,
-        ),
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"
         """,
+        f'SELECT * FROM "{name}_03_invalid"',
     ]
     if passthrough:
         parts.append(f"""
@@ -91,7 +82,7 @@ def _build_issues(
             )
         )
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_05" AS
+        CREATE OR REPLACE TABLE "{name}_04" AS
         {" UNION ALL BY NAME ".join(parts)}
     """)
 
@@ -105,34 +96,37 @@ def main(  # noqa: PLR0913
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
+    passthrough_fids: str | None = None,
     debug: bool = False,
 ) -> None:
-    """Output the mosaicked layer + issues report to dest/issues_dest."""
-    check_valid_topology(conn, f"{name}_04")
+    """Output the mosaicked layer + issues report to dest/issues_dest.
+
+    `passthrough_fids` selects passthrough rows' fids, default the unassigned inputs.
+    """
+    table = f"{name}_03"
+    merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
+    # Passthrough input polygons are kept unclipped, overlapping neighbours by design.
+    passthrough_fids = (
+        passthrough_fids or f'SELECT input_fid FROM "{name}_02_unassigned"'
+    )
+    where = (
+        f"NOT coalesce(fid IN ({passthrough_fids}), FALSE)" if passthrough else "TRUE"
+    )
+    invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
 
     _build_issues(
         conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
     )
 
-    remaining = conn.execute(f"""--sql
-        SELECT COUNT(*) FROM "{name}_05" WHERE kind = 'gap'
-    """).fetchall()[0][0]
-    if remaining:
-        logger.warning(
-            "mosaic: %d gap(s) wider than the noise floor remain inside the overlay "
-            "polygons the output was clipped to, see the issues file",
-            remaining,
-        )
-
     conn.execute(f"""--sql
-        CREATE OR REPLACE TEMP VIEW "{name}_04_export" AS
-        SELECT * EXCLUDE (source_file) FROM "{name}_04"
+        CREATE OR REPLACE TEMP VIEW "{name}_03_export" AS
+        SELECT * EXCLUDE (source_file) FROM "{name}_03"
     """)
-    export_geometry_table(conn, f"{name}_04_export", dest)
-    export_issues_table(conn, f"{name}_05", issues_dest)
+    export_geometry_table(conn, f"{name}_03_export", dest)
+    export_issues_table(conn, f"{name}_04", issues_dest)
 
     if not debug:
-        conn.execute(f'DROP VIEW IF EXISTS "{name}_04_export"')
+        conn.execute(f'DROP VIEW IF EXISTS "{name}_03_export"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_overlay_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_pairs"')
@@ -140,6 +134,7 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_unassigned"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_detached"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_invalid"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_04_micro"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_05"')

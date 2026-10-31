@@ -34,6 +34,8 @@ sidebar:
 
 ## Clipping
 
+- `edge-clip` MUST snap the overlay tiles and input polygons to shared border points
+  before clipping (see `docs/adr/0144`).
 - `edge-clip` MUST clip each row to its own `overlay_fid`'s geometry via
   `ST_Intersection`, one distinct `overlay_fid` at a time, each in its own
   spawned OS subprocess.
@@ -54,9 +56,7 @@ sidebar:
 
 ## Outputs
 
-- `edge-clip` MUST NOT run the coverage check
-  on its own output: closing seams between clipped pieces is `edge-stitch`'s
-  job, not `edge-clip`'s.
+- `edge-clip` MUST NOT run the coverage check on its own output.
 - `edge-clip` MUST raise `RuntimeError` if the clipped result has zero rows.
 - `edge-clip` MUST export the clipped layer to the output file.
 - `edge-clip` MUST export an issues report alongside it, using the same columns as every other tool's issues report, whenever it has at least one

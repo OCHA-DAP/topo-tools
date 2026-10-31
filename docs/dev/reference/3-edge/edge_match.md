@@ -77,44 +77,45 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Clipping
 
+- Before clipping, `edge-match` MUST collect shared border points from every
+  extended group and the overlay tiles, then snap both the tiles and the extended
+  polygons to them (see `docs/adr/0144`).
 - `edge-match` MUST clip every real group's reassembled, extended output to its
   own `overlay_fid`'s geometry, per `docs/dev/reference/3-edge/edge_clip.md`, one distinct
   `overlay_fid` at a time, each in its own spawned OS subprocess. The orphan
   group (`merge` set only) MUST NOT be clipped; it has no overlay polygon to clip
   against. An overlay polygon matched by zero input polygons (`merge` set only) MUST be
   appended to the clipped result afterward, via its own unclipped
-  geometry, before stitching.
+  geometry, before the invalid-edge check.
 - Unlike a failed group's extension, `edge-match` MUST raise immediately if any
   real `overlay_fid`'s clip subprocess fails, aborting the whole run rather than
   dropping just that group.
 - `edge-match` MUST merge or keep every clip-detached piece in the clipped result, recording each one with an edge
   neighbour as a `kind='detached-part'` row.
 
-## Stitching
+## Invalid-edge check
 
-- `edge-match` MUST run one whole-layer coverage-clean pass over the clipped
-  output, per `docs/dev/reference/3-edge/edge_stitch.md`, using the same fixed gap-closing
-  width as `edge-extend`'s own merge stage (see `docs/dev/reference/3-edge/edge_extend.md`), not
-  a per-polygon-scoped pass.
+- `edge-match` MUST NOT run a coverage-clean pass over the clipped output.
+- `edge-match` MUST check every pair of touching parts from different output rows,
+  rows of the orphan group (`PASSTHROUGH_OVERLAY_FID`) excluded, for invalid edges.
+  It MUST report each row pair with invalid edges as a `kind='invalid-edge'` row,
+  and MUST NOT raise on or fix them.
+- A check query MUST stop after `INVALID_EDGE_BATCH_SECONDS`, and its pairs MUST be
+  reported as unchecked.
 
 ## Outputs
 
-- `edge-match`'s final output MUST pass the coverage check (no overlap, no gap at or below
-  `SNAP_TOLERANCE`) before export. A wider leftover gap does not block
-  export (see `docs/adr/0035`).
+- `edge-match` MUST NOT run the coverage check or a gap check on its output.
 - `edge-match` MUST export the final merged layer.
 - `edge-match` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every dropped input polygon, every
   input polygon belonging to a dropped group, every input polygon dropped for an empty
-  clip intersection, every clip-detached piece with an edge neighbour, every passthrough input polygon and gap-filled overlay polygon
-  (`merge` set only), and every leftover gap wider than `SNAP_TOLERANCE`
-  whose interior point falls inside an overlay polygon the output was clipped to,
-  so a human can audit what didn't make it into the output or what may
+  clip intersection, every clip-detached piece with an edge neighbour, and every passthrough input polygon and gap-filled overlay polygon
+  (`merge` set only), so a human can audit what didn't make it into the output or what may
   need review.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,
   `source_file` MUST record the input polygon's own origin file as a
-  parent-directory-plus-filename (not the full path). For a `gap-fill` or
-  `gap` row, `source_file` MUST be null, since neither has a single
-  originating input file.
+  parent-directory-plus-filename (not the full path). For a `gap-fill` row,
+  `source_file` MUST be null, since it has no single originating input file.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,
   `unit_a` MUST hold the input polygon's own fid; for a `dropped_group` row,
   `overlay_fid` and `reason` MUST record the group's assigned overlay polygon and
@@ -127,9 +128,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   hold the gap-filled overlay polygon's fid and `reason` MUST explain that the
   overlay polygon had no matched input polygons and was kept unclipped in the output;
   `unit_a` MUST be null, since the row is the overlay polygon itself, not an input polygon.
-  For a `gap` row, `area_m2`, `max_width_m`, and `thinness_ratio` MUST be
-  populated instead. A field that doesn't apply to a row's kind MUST be
-  null.
+  A field that doesn't apply to a row's kind MUST be null.
 - `edge-match` MUST produce the issues report only when it has at least one
   row; when it would be empty, no file MUST be written (and a stale file
   from a previous run at that path MUST be removed).
@@ -146,8 +145,8 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   output path with an `_issues` suffix.
 - `edge-match` MUST raise `FileExistsError` if either output path already
   exists and overwriting wasn't requested.
-- `step`, if given, MUST be one of `inputs`, `assign`, `groups`, `edge-clip`,
-  `edge-stitch`, `outputs`; any other value MUST raise `ValueError`. `step`
+- `step`, if given, MUST be one of `inputs`, `assign`, `groups`, `clip`,
+  `outputs`; any other value MUST raise `ValueError`. `step`
   MUST be `None` whenever more than one input file is given; any other
   value MUST raise `ValueError` (see `docs/adr/0084`).
 - `edge-match` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
@@ -182,7 +181,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   or combined with any of `overlay_include`/`overlay_exclude`/
   `input_include`/`input_exclude` (see `docs/adr/0077`, `docs/adr/0081`, `docs/adr/0088`).
 - `edge-match` MAY opt into cascading admin-hierarchy columns via
-  `fill_schema`/`--fill-schema`, right after stitching and before export
+  `fill_schema`/`--fill-schema`, right after clipping and before export
   (both the single-file step loop and the multi-file combine path).
   `name_field`/`code_field`/`--name-field`/`--code-field` (given together
   or both omitted; omitted falls back to structural auto-detection) and

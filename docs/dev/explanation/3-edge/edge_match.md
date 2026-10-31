@@ -9,7 +9,7 @@ sidebar:
 
 `edge-match` fits an **input** polygon layer into a coarser **overlay** layer
 (e.g. admin4 into admin0), reusing `edge-extend`'s Voronoi gap-filling pipeline
-under the hood, then the same `assign`/`edge-clip`/`edge-stitch` primitives `edge-mosaic`
+under the hood, then the same `assign`/`edge-clip` primitives `edge-mosaic`
 uses. This doc covers the parts that are specific to `edge-match`: the
 overlap/assignment algorithm, the per-group subprocess design, and the
 constraints it inherits from `edge-extend`. See `docs/dev/topology.md` for the
@@ -38,7 +38,7 @@ than one file, or when `--input` is given.
 | `--threads` | DuckDB thread count. |
 | `--debug` | Keep intermediate tables, export to Parquet, log timing/memory per query. |
 | `--tmp-dir` | Intermediate DuckDB + Parquet location. |
-| `--step` | Run only one named stage: `inputs`, `assign`, `groups`, `edge-clip`, `edge-stitch`, `outputs`. Unavailable when multiple input files are given. |
+| `--step` | Run only one named stage: `inputs`, `assign`, `groups`, `clip`, `outputs`. Unavailable when multiple input files are given. |
 
 ```sh
 # Fit an admin4 layer into a single country boundary
@@ -83,21 +83,19 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
    group runs afterward (see "Overlay gap-fill and input passthrough").
 4. **`_03_clip`**: one batched call into `core.edge_clip.main()` over every
    real group's rows at once, clipping each to its own `overlay_fid`'s
-   geometry. See `docs/dev/explanation/3-edge/edge_clip.md` for the algorithm. The
+   geometry. Before the clip, `prepare_points` builds shared border points over
+   the whole clip input. See `docs/dev/explanation/3-edge/edge_clip.md` for the
+   algorithm. The
    orphan group's rows (when present) are split out first and unioned back
    in afterward, unclipped. When `merge` is set, the api layer then calls
    the shared `core.assign.fill_unmatched_overlays()` to append every
-   unmatched overlay polygon's own geometry, before stitch ever runs.
-5. **`_04_stitch`**: calls `core.edge_stitch._02_clean.main()` directly: a
-   single whole-table `ST_CoverageClean` pass over the clipped output to
-   close cross-group seams. See `docs/dev/explanation/3-edge/edge_stitch.md`.
-6. **`_05_outputs`**: validates topology (any overlap, or a gap at or below
-   `SNAP_TOLERANCE`, raises), builds the issues report from the dropped
-   input polygons collected in stages 2/3 (or the passthrough input polygons and
-   gap-filled overlay polygons, when `merge` is set) plus any leftover gap wider
-   than `SNAP_TOLERANCE`, logs a warning if any such gap remains, and
-   exports both the final layer and the issues report (only when it has
-   rows).
+   unmatched overlay polygon's own geometry, before the outputs stage.
+5. **`_04_outputs`**: runs the bounded invalid-edge check (orphan group
+   excluded), with no coverage gate or gap check (see `docs/adr/0144`), then
+   builds the issues report from the dropped input polygons collected in
+   stages 2/3 (or the passthrough input polygons and gap-filled overlay
+   polygons, when `merge` is set) and their `invalid-edge` rows, and exports
+   both the final layer and the issues report (only when it has rows).
 
 ## Multi-file input
 
@@ -116,8 +114,7 @@ assigned alone against a fresh copy of that snapshot, one at a time, folding
 `{name}_input_01`, `{name}_02_assign`, and `{name}_02_unassigned` into running
 accumulators (`UNION ALL BY NAME`) rather than holding every file until a
 final combine. `fid` is kept globally unique via a running offset applied
-right after each file's assign step. `groups`, `clip`, `stitch`, and
-`outputs` all run exactly once afterward, over the fully accumulated result,
+right after each file's assign step. `groups`, `clip`, and `outputs` all run exactly once afterward, over the fully accumulated result,
 not per file: grouping is keyed purely by `overlay_fid`
 (`_02_groups.py::list_groups`), so input polygons from different files sharing a
 `overlay_fid` extend together as one Voronoi group only if groups runs after
@@ -320,38 +317,20 @@ point disagreeing by float noise, it's two *different* groups' Voronoi
 extensions, built independently, with no knowledge of each other,
 genuinely disagreeing about how far to reach near their shared overlay polygon
 border. No vertex-snapping tolerance in a sane range closes a
-meters-to-hundreds-of-meters gap; that's real gap-filling work, which is
-exactly what `edge-stitch`'s whole-table `ST_CoverageClean` pass is for (see
-`docs/dev/explanation/3-edge/edge_stitch.md`). Reverted both variants; the clip step stays
+meters-to-hundreds-of-meters gap; that's real gap-filling work, not vertex
+snapping. Reverted both variants; the clip step stays
 a plain `ST_Intersection`. This null result is also why `_01_inputs.py`
 later dropped coverage-cleaning the overlay layer entirely: seam quality
 never came from overlay polygon vertex identity in the first place (see
 `docs/adr/0086`).
 
-## `check_valid_topology` and overlay-layer gaps
+## Overlay-layer gaps
 
-`_05_outputs.py` calls `check_valid_topology(conn, f"{name}_05")`, relying
-on its default `gap_maximum_width=SNAP_TOLERANCE` (see `docs/adr/0039`): it
-still raises on any overlap or mismatched edge, but only raises on a gap
-at or below `SNAP_TOLERANCE`, not any gap.
-
-A zero-tolerance gate here breaks on a real case: matching South Africa's
-admin4 into South Africa's own admin0 boundary correctly reproduces the
-interior hole for Lesotho, a country fully enclosed by South Africa's
-territory. That hole isn't a defect `edge-match` introduced, it's the overlay
-layer's own legitimate shape, and the old strict gate raised
-`RuntimeError` over it. `edge-match` has no way to distinguish that case from
-an actual coverage defect by size alone (both can be wide), so instead of
-guessing, it stops treating "wide gap" as fatal and reports it: any gap
-wider than `SNAP_TOLERANCE` whose interior point falls inside an overlay
-polygon the output was clipped to gets a `kind='gap'` row in the issues report
-(width, area, thinness ratio) and a warning log, for a human to review. A hole
-outside every such overlay polygon, like Lesotho's, is the overlay layer's own
-shape and isn't reported.
-Only a leftover gap at or below `SNAP_TOLERANCE` still raises, since
-nothing that small should ever survive the pipeline's own noise-floor
-cleaning passes; a leftover one there is unambiguously a bug, not a real
-absence. See `docs/adr/0035`.
+`_04_outputs.py` runs no `check_valid_topology` and no gap check (see
+`docs/adr/0144`), so a gap in the output is neither raised on nor reported. A
+zero-tolerance gate would fail on a real case: matching South Africa's admin4
+into its own admin0 reproduces the interior hole for Lesotho, which is the
+overlay layer's own shape, not a defect. See `docs/adr/0035`.
 
 ## Debug tables
 
@@ -369,8 +348,7 @@ inspectable independently of the main connection's exports. `--step=clip
 
 ## Opt-in `schema-fill` composition (`fill_schema`)
 
-`edge-match` MAY invoke `schema-fill`'s own fill logic itself, right after
-stitching and before export, via `fill_schema=True` (CLI:
+`edge-match` MAY invoke `schema-fill`'s own fill logic itself, right after clipping and before export, via `fill_schema=True` (CLI:
 `--fill-schema`). This lives entirely in `api/edge_match.py`, at both
 insertion points (the single-file step loop's `outputs` branch and
 `_match_multi_file()`'s own final stage), calling
