@@ -143,22 +143,139 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
         conn.execute(f'DROP TABLE IF EXISTS "{out}_{side}"')
 
 
+def _run_bounded(conn: DuckDBPyConnection, sql: str, seconds: float | None) -> bool:
+    """Run sql, interrupted after `seconds` (None waits); return False if stopped."""
+    timer = None if seconds is None else threading.Timer(seconds, conn.interrupt)
+    if timer:
+        timer.start()
+    try:
+        conn.execute(sql)
+    except InterruptException:
+        return False
+    finally:
+        if timer:
+            timer.cancel()
+    return True
+
+
+def _invalid_part_pairs(
+    conn: DuckDBPyConnection, on: str, *, seconds: float | None, first: bool = False
+) -> None:
+    """Create `_ie_edges` (pid, near_pid, geom, stopped) from `_ie_parts` pairs `on`.
+
+    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
+    with first=True, stops at the first confirmed pair.
+    """
+    _near_part_pairs(conn, "_ie_parts", "_ie_parts", "_ie_near", on=on)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_batch AS
+        SELECT pid, near_pid,
+               (sum(a.n + b.n) OVER (ORDER BY pid, near_pid)
+                // {CLIP_PAIR_VERTEX_BUDGET}) AS batch
+        FROM _ie_near
+        JOIN (SELECT pid, n FROM _ie_parts) a USING (pid)
+        JOIN (SELECT pid AS near_pid, n FROM _ie_parts) b USING (near_pid)
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_edges (
+            pid BIGINT, near_pid BIGINT, geom GEOMETRY, stopped BOOLEAN
+        )
+    """)
+    batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
+    for i, (batch,) in enumerate(batches, 1):
+        logger.info("invalid-edge check: batch %d of %d", i, len(batches))
+        done = _run_bounded(
+            conn,
+            f"""--sql
+            INSERT INTO _ie_edges
+            WITH g AS (
+                SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                JOIN _ie_parts x ON x.pid = p.pid WHERE p.batch = {batch}
+                UNION ALL
+                SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                JOIN _ie_parts x ON x.pid = p.near_pid WHERE p.batch = {batch}
+            )
+            SELECT pid, near_pid, e, FALSE
+            FROM (
+                SELECT pid, near_pid,
+                       ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) AS e
+                FROM g GROUP BY pid, near_pid
+            )
+            WHERE e IS NOT NULL AND ST_Length(e) > 0
+            """,
+            seconds,
+        )
+        if not done:
+            logger.warning(
+                "invalid-edge check stopped after %ss: batch %d", seconds, batch
+            )
+            conn.execute(f"""--sql
+                INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
+                FROM _ie_batch WHERE batch = {batch}
+            """)
+    # A pair alone flags edges its other neighbours match; recheck each flagged pair
+    # with every part near either side, keeping only edges along both.
+    flagged = conn.execute(
+        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
+    ).fetchall()
+    for i, (a, b) in enumerate(flagged, 1):
+        if i % 100 == 1:
+            logger.info("invalid-edge recheck: pair %d of %d", i, len(flagged))
+        done = _run_bounded(
+            conn,
+            f"""--sql
+            UPDATE _ie_edges SET geom = (
+                WITH g AS (
+                    SELECT geom FROM _ie_parts WHERE pid IN (
+                        SELECT {a} UNION SELECT {b}
+                        UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
+                        UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
+                    )
+                ),
+                e AS (
+                    SELECT UNNEST(ST_Dump(
+                        ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
+                    )).geom AS geom
+                    FROM g
+                )
+                SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
+                FROM e
+                WHERE ST_Length(e.geom) > 0 AND (
+                    SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
+                    FROM _ie_parts x WHERE x.pid IN ({a}, {b})
+                )
+            )
+            WHERE pid = {a} AND near_pid = {b}
+            """,
+            seconds,
+        )
+        if not done:
+            conn.execute(f"""--sql
+                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
+                WHERE pid = {a} AND near_pid = {b}
+            """)
+        if (
+            first
+            and conn.execute(f"""--sql
+            SELECT geom IS NOT NULL FROM _ie_edges WHERE pid = {a} AND near_pid = {b}
+        """).fetchone()[0]
+        ):
+            break
+    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
+
+
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     """Return True if `table.geom` has any overlaps or unmatched shared edges."""
-    # A part with no other part within the gap width can't hold an invalid edge, and
-    # GEOS rebuilds a large neighbour's index per such part.
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _inv_parts AS
+        CREATE OR REPLACE TABLE _ie_parts AS
         WITH d AS (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
-        SELECT row_number() OVER () AS pid, geom, {bbox_columns_sql("geom")} FROM d
+        SELECT row_number() OVER () AS pid, geom, ST_NPoints(geom) AS n,
+               {bbox_columns_sql("geom")}
+        FROM d
     """)
-    _near_part_pairs(conn, "_inv_parts", "_inv_parts", "_inv_near", on="l.pid < r.pid")
-    invalid = conn.execute(f"""--sql
-        SELECT ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) IS NOT NULL
-        FROM _inv_parts
-        WHERE pid IN (SELECT pid FROM _inv_near UNION SELECT near_pid FROM _inv_near)
-    """).fetchall()[0][0]
-    for tmp in ("_inv_parts", "_inv_near"):
+    _invalid_part_pairs(conn, "l.pid < r.pid", seconds=None, first=True)
+    invalid = conn.execute("SELECT count(*) > 0 FROM _ie_edges").fetchone()[0]
+    for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
     return invalid
 
@@ -181,8 +298,7 @@ def invalid_edge_issues(
 ) -> int:
     """Create `out`: invalid-edge issue rows per touching row pair; return the count.
 
-    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
-    a query over `seconds` is stopped and its pairs reported unchecked.
+    A query over `seconds` is stopped and its pairs reported unchecked.
     """
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _ie_parts AS
@@ -192,100 +308,7 @@ def invalid_edge_issues(
                {bbox_columns_sql("geom")}
         FROM d
     """)
-    _near_part_pairs(
-        conn,
-        "_ie_parts",
-        "_ie_parts",
-        "_ie_near",
-        on="l.pid < r.pid AND l.rid != r.rid",
-    )
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _ie_batch AS
-        SELECT pid, near_pid,
-               (sum(a.n + b.n) OVER (ORDER BY pid, near_pid)
-                // {CLIP_PAIR_VERTEX_BUDGET}) AS batch
-        FROM _ie_near
-        JOIN (SELECT pid, n FROM _ie_parts) a USING (pid)
-        JOIN (SELECT pid AS near_pid, n FROM _ie_parts) b USING (near_pid)
-    """)
-    conn.execute("""--sql
-        CREATE OR REPLACE TABLE _ie_edges (
-            pid BIGINT, near_pid BIGINT, geom GEOMETRY, stopped BOOLEAN
-        )
-    """)
-    batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
-    for (batch,) in batches:
-        timer = threading.Timer(seconds, conn.interrupt)
-        timer.start()
-        try:
-            conn.execute(f"""--sql
-                INSERT INTO _ie_edges
-                WITH g AS (
-                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
-                    JOIN _ie_parts x ON x.pid = p.pid WHERE p.batch = {batch}
-                    UNION ALL
-                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
-                    JOIN _ie_parts x ON x.pid = p.near_pid WHERE p.batch = {batch}
-                )
-                SELECT pid, near_pid, e, FALSE
-                FROM (
-                    SELECT pid, near_pid,
-                           ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) AS e
-                    FROM g GROUP BY pid, near_pid
-                )
-                WHERE e IS NOT NULL AND ST_Length(e) > 0
-            """)
-        except InterruptException:
-            logger.warning(
-                "invalid-edge check stopped after %ss: batch %d", seconds, batch
-            )
-            conn.execute(f"""--sql
-                INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
-                FROM _ie_batch WHERE batch = {batch}
-            """)
-        finally:
-            timer.cancel()
-    # A pair alone flags edges its other neighbours match; recheck each flagged pair
-    # with every part near either side, keeping only edges along both.
-    flagged = conn.execute(
-        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
-    ).fetchall()
-    for a, b in flagged:
-        timer = threading.Timer(seconds, conn.interrupt)
-        timer.start()
-        try:
-            conn.execute(f"""--sql
-                UPDATE _ie_edges SET geom = (
-                    WITH g AS (
-                        SELECT geom FROM _ie_parts WHERE pid IN (
-                            SELECT {a} UNION SELECT {b}
-                            UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
-                            UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
-                        )
-                    ),
-                    e AS (
-                        SELECT UNNEST(ST_Dump(
-                            ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
-                        )).geom AS geom
-                        FROM g
-                    )
-                    SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
-                    FROM e
-                    WHERE ST_Length(e.geom) > 0 AND (
-                        SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
-                        FROM _ie_parts x WHERE x.pid IN ({a}, {b})
-                    )
-                )
-                WHERE pid = {a} AND near_pid = {b}
-            """)
-        except InterruptException:
-            conn.execute(f"""--sql
-                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
-                WHERE pid = {a} AND near_pid = {b}
-            """)
-        finally:
-            timer.cancel()
-    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
+    _invalid_part_pairs(conn, "l.pid < r.pid AND l.rid != r.rid", seconds=seconds)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
         WITH e AS (
