@@ -54,6 +54,17 @@ jobs:
             echo "newer=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Delete a stale bump branch from an unmerged earlier run
+        if: steps.tap.outputs.newer == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="heads/bump-topo-tools-${{ steps.pypi.outputs.version }}"
+          if gh api "repos/OCHA-DAP/homebrew-topo-tools/git/ref/$ref" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/OCHA-DAP/homebrew-topo-tools/git/refs/$ref"
+          fi
+
       - name: Open Homebrew formula bump PR
         if: steps.tap.outputs.newer == 'true'
         env:
