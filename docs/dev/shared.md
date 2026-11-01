@@ -25,7 +25,7 @@ in sync.
 - The `topo-clean` tool MAY reuse `topo-detect`'s logic; `topo-detect` MUST NOT depend on
   `topo-clean` (see `docs/dev/explanation/2-topology/topo_detect.md`, `docs/adr/0028`).
 - The shared constants, coverage-validation, file I/O, database-connection,
-  units, assign, edge-clip, topo-detect, and edge-stitch helpers MUST NOT depend on any
+  units, assign, clip (`core.clip`), and topo-detect helpers MUST NOT depend on any
   of the five tool packages (`edge-extend`, `edge-match`, `topo-clean`, `change`,
   `edge-mosaic`); they are leaf building blocks usable by all of them.
 - The admin-column naming helpers (`core.admin_columns`) MUST NOT depend on
@@ -46,10 +46,10 @@ in sync.
 - `package-polygons`, `package-points`, and `package-lines` MAY all depend
   on `core.dissolve`'s stage functions directly; `core.dissolve` MUST NOT
   depend on any of them.
-- `edge-stitch`, `edge-match`, and `edge-mosaic` MAY opt into `schema-fill`'s
+- `edge-match` and `edge-mosaic` MAY opt into `schema-fill`'s
   fill logic from their own `api.*` layer only, via the private
-  `api._schema_fill_compose` helper; `core.edge_stitch`, `core.edge_match`,
-  and `core.edge_mosaic` themselves MUST NOT depend on `core.schema_fill`
+  `api._schema_fill_compose` helper; `core.edge_match` and
+  `core.edge_mosaic` themselves MUST NOT depend on `core.schema_fill`
   or `core.schema_map` (see `docs/adr/0095`).
 - `core.code` (the shared code-format/cascade/rewrite primitive) MUST NOT
   depend on `code-create` or `code-update`.
@@ -70,7 +70,7 @@ in sync.
 
 ## Multi-file combine ordering
 
-- `edge-stitch`, `edge-match`, and `edge-mosaic` MUST sort multi-file inputs
+- `edge-match` and `edge-mosaic` MUST sort multi-file inputs
   by column count descending (ties by filename) before unioning/folding
   them. Output column order MUST NOT depend on caller-supplied file order
   (see `docs/adr/0094`).
@@ -180,9 +180,9 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   fid, including the part's own polygon), or drop it when it touches no
   polygon. A polygon left with no parts MUST be removed.
 - Every `coverage_clean` call merges micro-polygons before
-  `ST_CoverageClean` runs, so `edge-extend`, `edge-stitch`, `edge-match`,
-  `edge-mosaic`, `topo-clean` and every auto-cleaned input apply this
-  rule. `edge-clip` applies it to its clipped output, `topo-clean` again
+  `ST_CoverageClean` runs, so `edge-extend`, `edge-match`, `edge-mosaic`,
+  `topo-clean` and every auto-cleaned input apply this rule. The clip
+  (`core.clip`) applies it to its clipped output, `topo-clean` again
   after its fix, and `package-polygons`, `package-points` and
   `package-lines` to their input.
 - Each merged or dropped part MUST be reported as a `micro-polygon` row
@@ -202,7 +202,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   original part of the same polygon, or when at least
   `DETACHED_MAX_ORIGINAL_SHARE` (50%) of its area is original land. An
   original polygon belongs to the pre-clip part holding its interior point.
-- `edge-clip`, `edge-match` and `edge-mosaic` MUST merge a piece under
+- `edge-match` and `edge-mosaic` MUST merge a piece under
   `DETACHED_MERGE_MAX_RATIO` (1%) of its kept piece's area into the polygon,
   assigned to the same overlay polygon, it shares the longest edge with
   (ties to the lowest fid), when under 50% of the piece is original land or
@@ -211,7 +211,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   stay, reported as `kept: matches original shape`.
 - Without an original layer, such a piece MUST stay, reported as
   `kept: no original layer`. `edge-match` always uses its own
-  pre-extension input; `edge-clip` and `edge-mosaic` take one via
+  pre-extension input; `edge-mosaic` takes one via
   `original_path`/`original_paths` (CLI: `--original`).
 - A destination MUST be a kept piece, a single-part polygon, or a piece
   kept as too large. A point contact, or a neighbour that is any other
@@ -244,16 +244,6 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   `docs/adr/0037`). It MUST NOT raise over a gap wider than that: gaps
   above the requested fill width may legitimately remain by design and
   are only logged.
-- `edge-stitch` MUST raise if its final output has any overlap, or any gap at
-  or below `SNAP_TOLERANCE` (see `docs/adr/0038`). It MUST NOT raise over
-  a wider gap, but MUST log a warning and record it in the issues report
-  described in `docs/dev/reference/3-edge/edge_stitch.md`.
-- `edge-clip` performs no topology hard gate at all: it clips an input polygon to its
-  assigned overlay polygon's geometry one `overlay_fid` at a time and does not
-  itself validate whole-layer coverage. It MAY still produce an issues
-  report (a `clip-empty` row for any input polygon whose clip result was empty,
-  a `detached-part` row for each clip-detached piece with an edge neighbour, plus `code-mismatch`/`code-fallback` rows when a match column is
-  supplied, see below).
 - `change` performs no topology hard gate at all; it is a read-only
   comparison between two inputs, not a fix.
 - `topo-detect` performs no topology hard gate at all; it is a read-only
@@ -261,7 +251,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 
 ## Issues report schema
 
-`topo-clean`, `edge-match`, `edge-mosaic`, `edge-clip`, and `edge-stitch` each MAY
+`topo-clean`, `edge-match`, and `edge-mosaic` each MAY
 produce an issues report alongside their main output, sharing one column
 schema: `key`, `kind`, `area_m2`, `max_width_m`, `thinness_ratio`,
 `near_length_m`, `unit_a`, `unit_b`, `overlay_fid`, `reason`, `unit_a_area_change_m2`,
@@ -280,9 +270,8 @@ write their own schema (see their references), always, even with zero
 rows, as CSV by default; `validate` summarizes all four reports in its own
 schema (see its reference).
 
-None of `edge-match`/`edge-mosaic`/`edge-clip`/`edge-stitch`'s *main*
-output carries a `source_file` column at all, even though every one of
-them tags it internally on the input table: it exists only to let
+Neither `edge-match`'s nor `edge-mosaic`'s *main* output carries a
+`source_file` column at all, even though both tag it internally on the input table: it exists only to let
 `assign-one` group a file's input polygons for its per-file majority vote (see
 `docs/dev/explanation/3-edge/assign.md`), not as a user-facing column, and each
 tool's outputs stage strips it before export (see `docs/adr/0087`).
@@ -290,7 +279,7 @@ tool's outputs stage strips it before export (see `docs/adr/0087`).
 compatibility, always null (it's a single-layer tool with no per-polygon
 origin file).
 
-`edge-match`, `edge-mosaic`, and `edge-clip` all share a `kind='clip-empty'`
+`edge-match` and `edge-mosaic` share a `kind='clip-empty'`
 row for any input polygon whose clip intersection with its assigned overlay polygon came
 back empty (see `docs/adr/0082`): `unit_a` MUST hold the input polygon's fid,
 `overlay_fid` its assigned overlay polygon's fid, `reason` MUST explain the
@@ -324,7 +313,7 @@ previous run, it MUST be deleted rather than left in place.
 
 ## Code-based assignment override
 
-`edge-match`, `edge-mosaic`, and standalone `edge-clip` all MAY accept a `match_column`
+`edge-match` and `edge-mosaic` MAY accept a `match_column`
 name (same column on both layers) or an `overlay_match_column`/
 `input_match_column` pair (different names), mutually exclusive with each
 other; supplying only one of the pair MUST raise `ValueError`. When given,
@@ -341,10 +330,6 @@ rows, reusing the schema above:
   match's overlay polygon.
 - `kind='code-fallback'`: no code match existed; the spatial result was
   used instead. `unit_a` and `overlay_fid` MUST be populated the same way.
-
-This gives standalone `edge-clip` its only issues-report capability: it produces
-one only when `match_column`/`overlay_match_column`/`input_match_column` is
-supplied and it yields at least one row (see `docs/dev/reference/3-edge/edge_clip.md`).
 
 ## Hierarchical code format and retention
 
@@ -392,7 +377,7 @@ its supporting functions:
 
 ## Overlay-column carry-forward
 
-`edge-match`, `edge-mosaic`, and standalone `edge-clip` all MAY copy named
+`edge-match` and `edge-mosaic` MAY copy named
 overlay-layer columns onto every matched input polygon. Names are always
 caller-specified, never inferred from either layer's schema (see
 `docs/adr/0077`). A name colliding with `core.assign`'s own reserved
@@ -400,11 +385,6 @@ columns (`input_fid`, `overlay_fid`, `assignment_method`, `spatial_agrees`)
 MUST raise `ValueError`; a name colliding with the input layer's own
 schema MUST also raise `ValueError` (an explicit pre-check, not left to
 the SQL layer to reject on its own, see `docs/adr/0077`).
-
-Standalone `edge-clip` exposes this as a plain `carry_columns` list (CLI:
-repeatable, comma-splittable `--carry-column`), attribute-carrying only,
-with no gap-fill concept of its own (`edge-clip` is a strict 1:1
-primitive, see `docs/dev/reference/3-edge/edge_clip.md`).
 
 `edge-mosaic` and `edge-match` both expose this as a plain boolean
 `merge: bool = False` (CLI: `--merge`), coupled with two passthrough

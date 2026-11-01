@@ -30,14 +30,10 @@ already-fitted layer against it, skipping Voronoi extension entirely:
 
 ## The primitives underneath
 
-`edge-match` and `edge-mosaic` chain three primitives, each also
-runnable on its own for a narrower job: `edge-extend` (extend a layer
-outward with no overlay to fit), `edge-clip` (assign each input polygon to an
-overlay polygon and clip it), and `edge-stitch` (close seams in an already-tiled
-layer).
+`edge-match` runs `edge-extend` underneath, which is also runnable on its
+own to extend a layer outward with no overlay to fit.
 
 See the [`edge-match`](../../reference/3-edge/edge_match.md),
 [`edge-mosaic`](../../reference/3-edge/edge_mosaic.md),
-[`edge-extend`](../../reference/3-edge/edge_extend.md),
-[`edge-clip`](../../reference/3-edge/edge_clip.md), and
-[`edge-stitch`](../../reference/3-edge/edge_stitch.md) references for details.
+and [`edge-extend`](../../reference/3-edge/edge_extend.md) references for
+details.

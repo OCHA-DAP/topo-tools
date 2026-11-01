@@ -118,7 +118,7 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 - `edge-mosaic` MUST accept one or more input files and exactly one overlay
   file per call. The CLI additionally accepts `--input` (repeatable and
   comma-separable) alongside the glob-capable `INPUT_FILE` positional, both
-  usable together, matching `edge-clip`'s own `--input` idiom.
+  usable together, matching `edge-match`'s own `--input` idiom.
 - With a single input file, the output path MUST default to that input
   path with a `_mosaicked` suffix. With multiple input files, `output_path`
   MUST be given explicitly. The issues-report path MUST default to the

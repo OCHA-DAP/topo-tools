@@ -4,8 +4,8 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.edge_clip import main as clip_main
-from topo_tools.core.edge_clip import prepare_points
+from topo_tools.core.clip import main as clip_main
+from topo_tools.core.clip import prepare_points
 
 
 def main(  # noqa: PLR0913

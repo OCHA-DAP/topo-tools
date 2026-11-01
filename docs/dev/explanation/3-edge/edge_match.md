@@ -9,8 +9,8 @@ sidebar:
 
 `edge-match` fits an **input** polygon layer into a coarser **overlay** layer
 (e.g. admin4 into admin0), reusing `edge-extend`'s Voronoi gap-filling pipeline
-under the hood, then the same `assign`/`edge-clip` primitives `edge-mosaic`
-uses. This doc covers the parts that are specific to `edge-match`: the
+under the hood, then the same `assign` and clip (`core.clip`) primitives
+`edge-mosaic` uses. This doc covers the parts that are specific to `edge-match`: the
 overlap/assignment algorithm, the per-group subprocess design, and the
 constraints it inherits from `edge-extend`. See `docs/dev/topology.md` for the
 coverage-clean background both tools share.
@@ -81,11 +81,10 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
    recorded, with the overlay polygon id and failure reason, for the issues report.
    When `merge` is set and any input polygons were unassigned, one more orphan
    group runs afterward (see "Overlay gap-fill and input passthrough").
-4. **`_03_clip`**: one batched call into `core.edge_clip.main()` over every
+4. **`_03_clip`**: one batched call into `core.clip.main()` over every
    real group's rows at once, clipping each to its own `overlay_fid`'s
    geometry. Before the clip, `prepare_points` builds shared border points over
-   the whole clip input. See `docs/dev/explanation/3-edge/edge_clip.md` for the
-   algorithm. The
+   the whole clip input (see `docs/adr/0144`). The
    orphan group's rows (when present) are split out first and unioned back
    in afterward, unclipped. When `merge` is set, the api layer then calls
    the shared `core.assign.fill_unmatched_overlays()` to append every
@@ -131,26 +130,18 @@ files. Every row on the internal `{name}_05` table still carries a `source_file`
 column tagging its origin file; it's an `assign-one` working column,
 stripped before the exported output (see `docs/adr/0087`).
 
-## Two subprocess generations: edge-extend, then batched edge-clip
+## Two subprocess generations: edge-extend, then batched clip
 
-Before the `assign`/`edge-clip`/`edge-stitch` extraction, each group's subprocess ran
-`edge-extend`'s pipeline *and* clipped to that group's overlay polygon in the same
-process. `core.edge_clip` now always isolates per distinct `overlay_fid` in its
-own spawned subprocess, uniformly for every caller, so `edge-match` moved to two
-subprocess generations per run instead: a per-group `edge-extend`-only
-subprocess (unchanged in count/shape from before), followed by a second,
-later generation of per-`overlay_fid` clip subprocesses (`edge-clip`'s own
-mechanism, batched over the whole reassembled table). See
+`core.clip` isolates each distinct `overlay_fid` in its own spawned
+subprocess, so `edge-match` runs two subprocess generations: a per-group
+`edge-extend`-only subprocess, followed by a second generation of
+per-`overlay_fid` clip subprocesses, batched over the whole reassembled table. See
 `docs/adr/0020-match-clip-two-subprocess-generations.md` for the empirical
 re-verification this required and its results.
 
-One consequence: a single bad `overlay_fid` in the `edge-clip` step now aborts
-the whole run, rather than edge-match's old per-group continue-past-failure
-behavior for clip failures specifically. Per-group `edge-extend` failures (OOM,
-or exhausting `attempt.py`'s 10 retries) still continue, dropping just that
-group, as before; only clip's own hard-fail-on-first-bad-`overlay_fid`
-semantics are new, and apply uniformly to every `edge-clip` caller including
-`edge-match` (see `docs/dev/explanation/3-edge/edge_clip.md`).
+A single bad `overlay_fid` in the clip step aborts the whole run. Per-group
+`edge-extend` failures (OOM, or exhausting `attempt.py`'s 10 retries)
+continue, dropping just that group.
 
 ## Overlay gap-fill and input passthrough
 
@@ -172,7 +163,7 @@ instead of a real `overlay_fid`, and run through the identical per-group
 group's own input polygons, never an overlay polygon, so a group made of nothing but
 orphans extends exactly like any other group; it just never gets clipped
 afterward (`_03_clip` splits sentinel rows out before calling
-`core.edge_clip.main()`, unions them back into `{name}_04` afterward,
+`core.clip.main()`, unions them back into `{name}_04` afterward,
 unclipped), since there is no overlay polygon to clip against. A
 successfully-extended orphan is reported as a `kind='passthrough'` issues
 row rather than `unassigned`; an orphan group whose extension itself
@@ -190,7 +181,7 @@ default; with `merge` set, that overlay polygon's own geometry and carried colum
 are kept in the output unclipped instead, reported as a `kind='gap-fill'`
 row. This is the shared `core.assign.fill_unmatched_overlays()` helper
 (the same one `edge-mosaic` calls), called from the api layer right after
-`_03_clip`'s `core.edge_clip.main()` call returns, against a
+`_03_clip`'s `core.clip.main()` call returns, against a
 `{name}_overlay_full` snapshot taken before assign narrows
 `{name}_overlay_01` to only-matched fids. Both mechanisms are identical in
 outcome to `edge-mosaic`'s own `merge`, given an equivalent
@@ -271,7 +262,7 @@ pre-extraction fused-subprocess design). Stage breakdown:
 
 `groups` still dominates as expected (1,120 sequential subprocess spawns,
 each running the per-group `edge-extend` pipeline) but no longer accounts for
-the clip work it used to do inline; that now shows up as its own `edge-clip`
+the clip work it used to do inline; that shows up as its own clip
 stage, batched over all 1,120 overlay fids after every group has finished.
 
 ## Rejected: `ST_Snap` around the clip step's `ST_Intersection`
@@ -283,7 +274,7 @@ because many *independent* per-fid `ST_Difference` calls against
 *independently computed* neighbor unions invent slightly different
 floating-point crossing points for what should be the same vertex. Two
 variants of the same idea were tried in what was then `edge-match`'s own inline
-clip step (now `core.edge_clip`), on the theory that a shared, exact overlay polygon
+clip step (`core.clip`), on the theory that a shared, exact overlay polygon
 boundary (the overlay layer was coverage-cleaned in `_01_inputs.py` at the
 time, so two adjacent overlay polygons' shared edge was vertex-identical) should let
 two independently-clipped groups tile seamlessly if their output vertices

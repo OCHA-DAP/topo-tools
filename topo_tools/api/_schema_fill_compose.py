@@ -1,4 +1,4 @@
-"""Opt-in schema-fill composition for edge-stitch/edge-match/edge-mosaic."""
+"""Opt-in schema-fill composition for edge-match/edge-mosaic."""
 
 from duckdb import DuckDBPyConnection
 

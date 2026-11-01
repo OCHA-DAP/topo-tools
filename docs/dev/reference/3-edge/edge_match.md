@@ -81,7 +81,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   extended group and the overlay tiles, then snap both the tiles and the extended
   polygons to them (see `docs/adr/0144`).
 - `edge-match` MUST clip every real group's reassembled, extended output to its
-  own `overlay_fid`'s geometry, per `docs/dev/reference/3-edge/edge_clip.md`, one distinct
+  own `overlay_fid`'s geometry, one distinct
   `overlay_fid` at a time, each in its own spawned OS subprocess. The orphan
   group (`merge` set only) MUST NOT be clipped; it has no overlay polygon to clip
   against. An overlay polygon matched by zero input polygons (`merge` set only) MUST be

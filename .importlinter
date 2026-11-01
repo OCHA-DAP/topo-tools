@@ -108,23 +108,11 @@ forbidden_modules =
     topo_tools.core.edge_mosaic
     topo_tools.core.schema_join
 
-[importlinter:contract:core-edge_clip-is-leaf]
-name = core.edge_clip must not depend on any tool package
+[importlinter:contract:core-clip-is-leaf]
+name = core.clip must not depend on any tool package
 type = forbidden
 source_modules =
-    topo_tools.core.edge_clip
-forbidden_modules =
-    topo_tools.core.edge_extend
-    topo_tools.core.edge_match
-    topo_tools.core.topo_clean
-    topo_tools.core.change
-    topo_tools.core.edge_mosaic
-
-[importlinter:contract:core-edge_stitch-is-leaf]
-name = core.edge_stitch must not depend on any tool package
-type = forbidden
-source_modules =
-    topo_tools.core.edge_stitch
+    topo_tools.core.clip
 forbidden_modules =
     topo_tools.core.edge_extend
     topo_tools.core.edge_match
@@ -394,11 +382,10 @@ forbidden_modules =
     topo_tools.core.code_update
     topo_tools.core.code
     topo_tools.core.dissolve
-    topo_tools.core.edge_clip
+    topo_tools.core.clip
     topo_tools.core.edge_extend
     topo_tools.core.edge_match
     topo_tools.core.edge_mosaic
-    topo_tools.core.edge_stitch
     topo_tools.core.name_clean
     topo_tools.core.name_detect
     topo_tools.core.package_lines
@@ -475,11 +462,10 @@ forbidden_modules =
     topo_tools.core.code_detect
     topo_tools.core.code_update
     topo_tools.core.dissolve
-    topo_tools.core.edge_clip
+    topo_tools.core.clip
     topo_tools.core.edge_extend
     topo_tools.core.edge_match
     topo_tools.core.edge_mosaic
-    topo_tools.core.edge_stitch
     topo_tools.core.name_clean
     topo_tools.core.name_detect
     topo_tools.core.package_lines

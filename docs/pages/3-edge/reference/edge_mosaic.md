@@ -2,7 +2,7 @@
 title: "edge-mosaic"
 description: "Fit an already-extended input layer into a new overlay layer."
 sidebar:
-  order: 7
+  order: 5
 ---
 
 Fit an already-extended input layer into a new overlay layer.

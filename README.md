@@ -23,8 +23,6 @@ Full documentation: <https://ocha-dap.github.io/cod-site/tools/docs/>
 | **edge-match** | fit an input layer into an overlay layer |
 | **edge-extend** | fill gaps with a Voronoi extension |
 | **edge-mosaic** | re-clip an extended input layer into a new overlay layer |
-| **edge-clip** | clip an input layer to an overlay layer |
-| **edge-stitch** | close seams in a tiled layer |
 | **change** | classify changes between two polygon layer versions |
 | **code-create** | assign a fresh hierarchical code, ranked per parent |
 | **code-update** | carry codes over from an old layer to a new one |

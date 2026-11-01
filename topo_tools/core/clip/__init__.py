@@ -1,4 +1,4 @@
-"""Clip tool: clips each input polygon to its assigned overlay polygon's geometry."""
+"""Clip engine edge-match and edge-mosaic share: input polygons to overlay polygons."""
 
 from ._engine import main
 from ._points import (

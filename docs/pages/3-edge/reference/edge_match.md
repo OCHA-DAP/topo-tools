@@ -2,7 +2,7 @@
 title: "edge-match"
 description: "Fit an input layer into the polygons of a coarser overlay layer."
 sidebar:
-  order: 6
+  order: 4
 ---
 
 Fit an input layer into the polygons of a coarser overlay layer.

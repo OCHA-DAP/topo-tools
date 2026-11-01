@@ -4,11 +4,9 @@ from .change import change
 from .code_create import code_create
 from .code_detect import detect as code_detect
 from .code_update import code_update
-from .edge_clip import clip as edge_clip
 from .edge_extend import extend as edge_extend
 from .edge_match import match as edge_match
 from .edge_mosaic import mosaic as edge_mosaic
-from .edge_stitch import stitch as edge_stitch
 from .name_clean import clean as name_clean
 from .name_detect import detect as name_detect
 from .package import package
@@ -28,11 +26,9 @@ __all__ = [
     "code_create",
     "code_detect",
     "code_update",
-    "edge_clip",
     "edge_extend",
     "edge_match",
     "edge_mosaic",
-    "edge_stitch",
     "name_clean",
     "name_detect",
     "package",
