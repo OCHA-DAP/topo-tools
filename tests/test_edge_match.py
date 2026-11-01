@@ -167,12 +167,12 @@ def test_match_agrees_with_spatial_is_a_noop(
             if issues_path.exists()
             else []
         )
-    assert ids == [1, 2, 3]
+    assert ids == [1, 2]
     assert "code-mismatch" not in kinds
 
 
 def test_match_full_run(synthetic_inputs, synthetic_overlays, tmp_path, caplog):
-    """Auto keeps assign-one (2 of 4 overlap Overlay A); input 3 clip-empties."""
+    """Auto keeps assign-one (2 of 4 overlap Overlay A); inputs 3 and 4 clip-empty."""
     output_path = tmp_path / "out.parquet"
     with caplog.at_level(logging.INFO):
         match(synthetic_inputs, synthetic_overlays, output_path, overwrite=True)
@@ -187,7 +187,7 @@ def test_match_full_run(synthetic_inputs, synthetic_overlays, tmp_path, caplog):
                 f"SELECT id FROM '{output_path}' ORDER BY id"
             ).fetchall()
         ]
-    assert ids == [1, 2, 4]
+    assert ids == [1, 2]
 
 
 def test_match_auto_switches_to_many_under_half(synthetic_overlays, tmp_path, caplog):
@@ -294,7 +294,7 @@ def test_match_issues_file_records_unassigned_input(
 def test_match_default_issues_file_records_clip_empty_input(
     synthetic_inputs, synthetic_overlays, tmp_path
 ):
-    """Default assign-one forces input 3 onto Overlay A; its clip comes back empty."""
+    """Default assign-one forces inputs 3 and 4 onto Overlay A; both clips are empty."""
     output_path = tmp_path / "out.parquet"
     issues_path = tmp_path / "issues.parquet"
     match(
@@ -312,14 +312,13 @@ def test_match_default_issues_file_records_clip_empty_input(
             d[0] for d in conn.execute(f"SELECT * FROM '{issues_path}'").description
         ]
 
-    clip_empty_input_fid = 3
     winning_overlay_fid = 1
-    assert len(rows) == 1
-    row = dict(zip(cols, rows[0], strict=True))
-    assert row["kind"] == "clip-empty"
-    assert row["unit_a"] == clip_empty_input_fid
-    assert row["overlay_fid"] == winning_overlay_fid
-    assert row["reason"] is not None
+    issues = [dict(zip(cols, row, strict=True)) for row in rows]
+    assert sorted(row["unit_a"] for row in issues) == [3, 4]
+    for row in issues:
+        assert row["kind"] == "clip-empty"
+        assert row["overlay_fid"] == winning_overlay_fid
+        assert row["reason"] is not None
 
 
 def test_match_issues_file_absent_when_nothing_dropped(tmp_path):

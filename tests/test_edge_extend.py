@@ -367,3 +367,70 @@ def test_attempt_raises_on_assignment_error_without_retry(
     with pytest.raises(RuntimeError, match=r"distance=.*assignment incomplete"):
         extend(synthetic_input, tmp_path / "out.parquet")
     assert len(calls) == 1
+
+
+def _cell_tables(conn, cells):
+    conn.execute("LOAD spatial")
+    conn.execute("""
+        CREATE TABLE t_04_tmp0 AS SELECT * FROM (VALUES
+            (1, 1, ST_Point(0.5, 0.5)), (2, 2, ST_Point(1.5, 0.5)),
+            (3, 3, ST_Point(1.5, 0.5))) v(point_id, fid, geom)
+    """)
+    conn.execute(
+        "CREATE TABLE t_04_tmp1 AS SELECT * FROM "
+        "(VALUES "
+        + ", ".join(f"({i}, ST_GeomFromText('{w}'))" for i, w in cells)
+        + ") v(cell_id, geom)"
+    )
+    conn.execute("""
+        CREATE TABLE t_04_tmp2 AS
+        SELECT a.point_id, a.fid, b.cell_id, b.geom,
+            ST_Contains(b.geom, a.geom) AS inside
+        FROM t_04_tmp0 a JOIN t_04_tmp1 b ON ST_Intersects(a.geom, b.geom)
+    """)
+
+
+def test_check_cells_accepts_one_point_per_cell_and_duplicates():
+    with duckdb.connect() as conn:
+        _cell_tables(
+            conn,
+            [
+                (1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
+                (2, "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"),
+            ],
+        )
+        voronoi.check_cells(conn, "t")
+
+
+def test_check_cells_raises_on_cell_holding_several_points():
+    with duckdb.connect() as conn:
+        _cell_tables(conn, [(1, "POLYGON((0 0, 2 0, 2 1, 0 1, 0 0))")])
+        with pytest.raises(voronoi.AssignmentError, match="holds 2 points from 3"):
+            voronoi.check_cells(conn, "t")
+
+
+def test_points_skip_map_cut_edges(tmp_path):
+    """Edges on the antimeridian and the poles seed no Voronoi points."""
+    path = tmp_path / "cut.parquet"
+    wkt = [
+        "POLYGON((170 -90, 180 -90, 180 -80, 170 -80, 170 -90))",
+        "POLYGON((160 -90, 170 -90, 170 -80, 160 -80, 160 -90))",
+    ]
+    values = ", ".join(f"({i}, ST_GeomFromText('{w}'))" for i, w in enumerate(wkt))
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        inputs.main(conn, "cut", path)
+        lines.main(conn, "cut")
+        points.build_segments(conn, "cut")
+        points.main(conn, "cut", Decimal("0.5"))
+        on_cut, total = conn.execute("""--sql
+            SELECT
+                count(*) FILTER (WHERE abs(ST_X(geom)) = 180 OR abs(ST_Y(geom)) = 90),
+                count(*)
+            FROM cut_03b
+        """).fetchone()
+    assert on_cut == 0
+    assert total > 0

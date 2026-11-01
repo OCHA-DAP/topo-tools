@@ -6,7 +6,7 @@ from topo_tools.core.constants import WORLD_BOUNDS_WKT
 
 
 class AssignmentError(RuntimeError):
-    """Raised when a boundary point falls in no Voronoi cell."""
+    """Raised when a point falls in no Voronoi cell, or a cell holds several."""
 
 
 def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
@@ -22,7 +22,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     # bounds: see docs/adr/0096 for why a global or unconditional clip breaks.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_04_tmp1" AS
-        SELECT CASE
+        SELECT row_number() OVER () AS cell_id, CASE
             WHEN ST_XMin(geom) < -180 OR ST_XMax(geom) > 180
               OR ST_YMin(geom) < -90 OR ST_YMax(geom) > 90
             THEN ST_CollectionExtract(
@@ -44,7 +44,8 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     # cell boundary; such a point can match multiple cells, so dedupe by point_id.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_04_tmp2" AS
-        SELECT a.point_id, a.fid, b.geom
+        SELECT a.point_id, a.fid, b.cell_id, b.geom,
+            ST_Contains(b.geom, a.geom) AS inside
         FROM "{name}_04_tmp0" AS a
         JOIN "{name}_04_tmp1" AS b
         ON ST_Intersects(a.geom, b.geom)
@@ -62,6 +63,7 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
             f"{assigned_count}/{point_count} points assigned"
         )
         raise AssignmentError(msg)
+    check_cells(conn, name)
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03b"')
@@ -79,3 +81,33 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_tmp2"')
+
+
+def check_cells(conn: DuckDBPyConnection, name: str) -> None:
+    """Raise if any Voronoi cell holds more than one distinct generator point."""
+    # A Voronoi cell holds exactly one generator: a cell holding several
+    # distinct points is a degenerate GEOS cell that would overlap its neighbours.
+    bad = conn.execute(f"""--sql
+        WITH multi AS (
+            SELECT cell_id FROM "{name}_04_tmp2" WHERE inside
+            GROUP BY cell_id HAVING count(*) > 1
+        )
+        SELECT t.cell_id, count(DISTINCT (ST_X(p.geom), ST_Y(p.geom))) AS n,
+            count(DISTINCT t.fid) AS fids, any_value(ST_Extent(c.geom)) AS bbox
+        FROM "{name}_04_tmp2" t
+        JOIN multi USING (cell_id)
+        JOIN "{name}_04_tmp0" p USING (point_id)
+        JOIN "{name}_04_tmp1" c USING (cell_id)
+        WHERE t.inside
+        GROUP BY t.cell_id
+        HAVING n > 1
+        ORDER BY n DESC
+    """).fetchall()
+    if bad:
+        cell_id, n, fids, bbox = bad[0]
+        msg = (
+            f"Voronoi cell check failed: {len(bad)} cell(s) hold more than one "
+            f"point, worst cell {cell_id} holds {n} points from {fids} fid(s), "
+            f"bbox {bbox}"
+        )
+        raise AssignmentError(msg)
