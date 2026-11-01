@@ -18,6 +18,7 @@ from topo_tools.core.edge_extend import _01_inputs as inputs
 from topo_tools.core.edge_extend import _02_lines as lines
 from topo_tools.core.edge_extend import _03_points as points
 from topo_tools.core.edge_extend import _04_voronoi as voronoi
+from topo_tools.core.edge_extend import attempt
 
 # fid 1/2 touch exactly (valid coverage); fid 3 sits across a deliberate gap
 # for extension to fill; fid 4 is a MULTIPOLYGON (two disjoint parts).
@@ -143,21 +144,15 @@ def test_inputs_closes_noise_scale_gap(tmp_path):
     path = tmp_path / "noise_gap.parquet"
     w = SNAP_TOLERANCE / 2
     wkt = [
-        (1, f"POLYGON((0 0, 101 0, 101 50, {50 + w} 50, 50 50, 0 50, 0 0))"),
+        (1, f"POLYGON((0 -50, 101 -50, 101 0, {50 + w} 0, 50 0, 0 0, 0 -50))"),
         (
             2,
-            (
-                f"POLYGON((0 {50 + w}, 50 {50 + w}, {50 + w} {50 + w}, "
-                f"101 {50 + w}, 101 101, 0 101, 0 {50 + w}))"
-            ),
+            (f"POLYGON((0 {w}, 50 {w}, {50 + w} {w}, 101 {w}, 101 51, 0 51, 0 {w}))"),
         ),
-        (3, f"POLYGON((0 50, 50 50, 50 {50 + w}, 0 {50 + w}, 0 50))"),
+        (3, f"POLYGON((0 0, 50 0, 50 {w}, 0 {w}, 0 0))"),
         (
             4,
-            (
-                f"POLYGON(({50 + w} 50, 101 50, 101 {50 + w}, "
-                f"{50 + w} {50 + w}, {50 + w} 50))"
-            ),
+            (f"POLYGON(({50 + w} 0, 101 0, 101 {w}, {50 + w} {w}, {50 + w} 0))"),
         ),
     ]
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt_}'))" for fid, wkt_ in wkt)
@@ -317,3 +312,58 @@ def test_points_bbox_prefilter_matches_global_union(tmp_path):
             WHERE ST_Area(ST_SymDifference(a.geom, b.geom)) > 1e-20
         """).fetchall()[0][0]
         assert mismatched == 0
+
+
+def test_extend_runs_on_input_past_antimeridian(tmp_path):
+    path = tmp_path / "antimeridian.parquet"
+    wkt = [
+        "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))",
+        "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))",
+    ]
+    values = ", ".join(f"({i}, ST_GeomFromText('{w}'))" for i, w in enumerate(wkt))
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
+    output_path = tmp_path / "out.parquet"
+    extend(path, output_path, overwrite=True)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        n, xmax = conn.execute(
+            f"SELECT count(*), max(ST_XMax(geometry)) FROM '{output_path}'"
+        ).fetchone()
+    assert (n, xmax) == (2, 180)
+
+
+def test_attempt_skips_distance_estimated_over_max_points(
+    synthetic_input, tmp_path, caplog, monkeypatch
+):
+    monkeypatch.setattr(attempt, "MAX_POINTS", 1_500)
+    output_path = tmp_path / "out.parquet"
+    with caplog.at_level("INFO"):
+        extend(synthetic_input, output_path)
+    assert "skip: synthetic_parquet distance=0.0002," in caplog.text
+    assert output_path.exists()
+
+
+def test_attempt_raises_when_every_distance_is_skipped(
+    synthetic_input, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(attempt, "MAX_POINTS", 0)
+    with pytest.raises(RuntimeError, match="every distance estimated over 0 points"):
+        extend(synthetic_input, tmp_path / "out.parquet")
+
+
+def test_attempt_raises_on_assignment_error_without_retry(
+    synthetic_input, tmp_path, monkeypatch
+):
+    calls = []
+
+    def fail(*_args, **_kwargs):
+        calls.append(1)
+        msg = "Voronoi assignment incomplete: 1/2 points assigned"
+        raise voronoi.AssignmentError(msg)
+
+    monkeypatch.setattr(voronoi, "main", fail)
+    with pytest.raises(RuntimeError, match=r"distance=.*assignment incomplete"):
+        extend(synthetic_input, tmp_path / "out.parquet")
+    assert len(calls) == 1

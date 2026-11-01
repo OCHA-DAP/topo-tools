@@ -1,6 +1,7 @@
 """Shared geodata read/write helpers."""
 
 import shutil
+import time
 from logging import getLogger
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,7 +9,13 @@ from urllib.parse import urlparse
 import duckdb
 from duckdb import DuckDBPyConnection
 
-from .constants import COPY_OPTS, CRS, GDAL_CRS, RESERVED_COLUMN_NAMES
+from .constants import (
+    COPY_OPTS,
+    CRS,
+    GDAL_CRS,
+    RESERVED_COLUMN_NAMES,
+    WORLD_BOUNDS_WKT,
+)
 from .coverage import close_notches, coverage_clean, has_valid_topology
 from .duckdb_utils import quote_identifier
 
@@ -17,6 +24,7 @@ logger = getLogger(__name__)
 # Esri FileGDB API type GUID for a feature class (spatial); stable across
 # versions, and how GDAL's own OpenFileGDB driver tells layers apart too.
 _ESRI_FEATURE_CLASS_TYPE = "{70737809-852C-4A03-9E22-2CECEA5B9BFA}"
+_OUTSIDE_WORLD = "a feature lies entirely outside world bounds (-180 -90 180 90)"
 
 
 def resolve_input_path(path: str | Path) -> Path | str:
@@ -179,11 +187,30 @@ def reproject_select_sql(
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
     return f"""
-        SELECT * EXCLUDE ({exclude_sql}){rename_sql},
-               row_number() OVER () AS fid,
-               {geom_expr} AS geom
-        FROM ({read_expr})
+        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom)
+        FROM (
+            SELECT * EXCLUDE ({exclude_sql}){rename_sql},
+                   row_number() OVER () AS fid,
+                   {geom_expr} AS geom
+            FROM ({read_expr})
+        )
     """
+
+
+def _world_clip_sql(col: str) -> str:
+    """Build SQL clipping `col` to world bounds, only where its bbox goes past them."""
+    world = f"ST_GeomFromText('{WORLD_BOUNDS_WKT}')"
+    return f"""CASE
+        WHEN ST_IsEmpty({col}) OR (
+            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
+            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
+        ) THEN {col}
+        WHEN NOT ST_Intersects({col}, {world})
+        THEN error('{_OUTSIDE_WORLD}')
+        ELSE ST_SetCRS(ST_CollectionExtract(
+            ST_Intersection(ST_MakeValid({col}), {world}), 3
+        ), '{CRS}')
+        END"""
 
 
 def sort_paths_by_column_count_desc(
@@ -206,6 +233,9 @@ def read_and_reproject(
     try:
         conn.execute(f'CREATE OR REPLACE TABLE "{name}_01" AS {select_sql}')
     except duckdb.Error as e:
+        if _OUTSIDE_WORLD in str(e):
+            msg = f"failed to read {path}: {_OUTSIDE_WORLD}"
+            raise ValueError(msg) from e
         msg = (
             f"failed to read/reproject {path}: {e}; the source file may contain "
             "invalid geometry (e.g. an unclosed ring) that ST_MakeValid cannot repair"
@@ -231,14 +261,23 @@ def read_reproject_and_clean(
     fix_notches: bool = False,
 ) -> None:
     """Read, reproject, and coverage-clean geodata into table `{name}_01`."""
+    start = time.monotonic()
     read_and_reproject(conn, name, path, layer)
+    logger.info("read %s in %.0fs", path, time.monotonic() - start)
 
     table = f"{name}_01"
     if fix_notches:
+        start = time.monotonic()
         close_notches(conn, table)
-    if not has_valid_topology(conn, table, gap_maximum_width=0):
+        logger.info("notches closed in %.0fs", time.monotonic() - start)
+    start = time.monotonic()
+    valid = has_valid_topology(conn, table, gap_maximum_width=0)
+    logger.info("coverage checked in %.0fs", time.monotonic() - start)
+    if not valid:
         logger.info("cleaning coverage: invalid edges or gaps detected")
+        start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
+        logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
 
 
 def export_geometry_table(

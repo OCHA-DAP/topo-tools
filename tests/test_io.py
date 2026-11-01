@@ -17,6 +17,7 @@ from topo_tools.core.io import (
 )
 
 _URL = "https://data.source.coop/hdx/cod-ab/lka/latest/adm2/original.parquet"
+_ANTIMERIDIAN = 180
 
 
 def test_resolve_input_path_keeps_url_unmangled():
@@ -245,3 +246,33 @@ def test_export_geometry_table_writes_standard_wgs84_prj(tmp_path):
         )
         export_geometry_table(conn, "t", dest)
     assert dest.with_suffix(".prj").read_text().startswith('GEOGCS["GCS_WGS_1984"')
+
+
+def _write_wkt(conn, path, wkts):
+    values = ", ".join(f"({i}, ST_GeomFromText('{w}'))" for i, w in enumerate(wkts))
+    conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
+
+
+def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path):
+    path = tmp_path / "antimeridian.parquet"
+    inside = "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
+    past = "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_wkt(conn, path, [inside, past])
+        read_and_reproject(conn, "out", path)
+        rows = conn.execute(
+            'SELECT ST_AsText(geom), ST_XMax(geom) FROM "out_01" ORDER BY id'
+        ).fetchall()
+    assert rows[0][0] == "POLYGON ((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
+    assert rows[1][1] == _ANTIMERIDIAN
+
+
+def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):
+    path = tmp_path / "outside.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_wkt(conn, path, ["POLYGON((181 0, 182 0, 182 1, 181 1, 181 0))"])
+        with pytest.raises(ValueError, match="outside world bounds") as e:
+            read_and_reproject(conn, "out", path)
+    assert "unclosed ring" not in str(e.value)

@@ -54,6 +54,22 @@ def build_segments(conn: DuckDBPyConnection, name: str) -> None:
     """)
 
 
+def estimate_count(conn: DuckDBPyConnection, name: str, distance: Decimal) -> int:
+    """Estimate main()'s point count from "{name}_03_tmp1", before differencing."""
+    d = float(distance)
+    return conn.execute(f"""--sql
+        SELECT (
+            count(*) FILTER (WHERE seg_len > {d * MAX_POINTS_PER_SEGMENT!r})
+                * {MAX_POINTS_PER_SEGMENT}
+            + coalesce(
+                sum(seg_len) FILTER (WHERE seg_len <= {d * MAX_POINTS_PER_SEGMENT!r}),
+                0
+            ) / {d!r}
+        )::BIGINT
+        FROM "{name}_03_tmp1"
+    """).fetchone()[0]
+
+
 def main(
     conn: DuckDBPyConnection, name: str, distance: Decimal, *, debug: bool = False
 ) -> None:
@@ -133,10 +149,15 @@ def main(
             SELECT row_number() OVER () AS rid, fid, geom, {bbox_columns_sql("geom")}
             FROM "{name}_02"
         ),
+        -- Single zone parts: a whole fid's zone per line repeats it per line.
+        zone_parts AS (
+            SELECT geom, {bbox_columns_sql("geom")}
+            FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{name}_03a")
+        ),
         lines_local AS (
             SELECT a.rid, a.fid AS afid, ST_Union_Agg(b.geom) AS geom
             FROM lines_bbox a
-            JOIN "{name}_03a" b
+            JOIN zone_parts b
               ON b.xmax >= a.xmin AND b.xmin <= a.xmax
              AND b.ymax >= a.ymin AND b.ymin <= a.ymax
              AND ST_Intersects(a.geom, b.geom)

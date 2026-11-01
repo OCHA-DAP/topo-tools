@@ -56,6 +56,7 @@ def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
     on: str,
     tol: float,
     key: str = "pid",
+    right_key: str | None = None,
 ) -> None:
     """Create `out` (pid, near_pid): left/right rows whose tol-padded bboxes overlap.
 
@@ -89,7 +90,7 @@ def grid_pairs(  # noqa: PLR0913 (each param is a distinct required input)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
-        SELECT l.{key} AS pid, r.{key} AS near_pid
+        SELECT l.{key} AS pid, r.{right_key or key} AS near_pid
         FROM {cells(left, "l")} l JOIN {cells(right, "r")} r USING (cx, cy)
         WHERE r.x0 <= l.x1 AND r.x1 >= l.x0 AND r.y0 <= l.y1 AND r.y1 >= l.y0
           AND cx = floor(greatest(l.x0, r.x0) / {cell})::BIGINT
@@ -143,22 +144,140 @@ def _near_part_pairs(  # noqa: PLR0913 (each param is a distinct required input)
         conn.execute(f'DROP TABLE IF EXISTS "{out}_{side}"')
 
 
+def _run_bounded(conn: DuckDBPyConnection, sql: str, seconds: float | None) -> bool:
+    """Run sql, interrupted after `seconds` (None waits); return False if stopped."""
+    timer = None if seconds is None else threading.Timer(seconds, conn.interrupt)
+    if timer:
+        timer.start()
+    try:
+        conn.execute(sql)
+    except InterruptException:
+        return False
+    finally:
+        if timer:
+            timer.cancel()
+    return True
+
+
+def _invalid_part_pairs(
+    conn: DuckDBPyConnection, on: str, *, seconds: float | None, first: bool = False
+) -> None:
+    """Create `_ie_edges` (pid, near_pid, geom, stopped) from `_ie_parts` pairs `on`.
+
+    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
+    with first=True, stops at the first confirmed pair.
+    """
+    _near_part_pairs(conn, "_ie_parts", "_ie_parts", "_ie_near", on=on)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_batch AS
+        SELECT pid, near_pid,
+               (sum(a.n + b.n) OVER (ORDER BY pid, near_pid)
+                // {CLIP_PAIR_VERTEX_BUDGET}) AS batch
+        FROM _ie_near
+        JOIN (SELECT pid, n FROM _ie_parts) a USING (pid)
+        JOIN (SELECT pid AS near_pid, n FROM _ie_parts) b USING (near_pid)
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_edges (
+            pid BIGINT, near_pid BIGINT, geom GEOMETRY, stopped BOOLEAN
+        )
+    """)
+    batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
+    for i, (batch,) in enumerate(batches, 1):
+        if len(batches) > 1:
+            logger.info("invalid-edge check: batch %d of %d", i, len(batches))
+        done = _run_bounded(
+            conn,
+            f"""--sql
+            INSERT INTO _ie_edges
+            WITH g AS (
+                SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                JOIN _ie_parts x ON x.pid = p.pid WHERE p.batch = {batch}
+                UNION ALL
+                SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
+                JOIN _ie_parts x ON x.pid = p.near_pid WHERE p.batch = {batch}
+            )
+            SELECT pid, near_pid, e, FALSE
+            FROM (
+                SELECT pid, near_pid,
+                       ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) AS e
+                FROM g GROUP BY pid, near_pid
+            )
+            WHERE e IS NOT NULL AND ST_Length(e) > 0
+            """,
+            seconds,
+        )
+        if not done:
+            logger.warning(
+                "invalid-edge check stopped after %ss: batch %d", seconds, batch
+            )
+            conn.execute(f"""--sql
+                INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
+                FROM _ie_batch WHERE batch = {batch}
+            """)
+    # A pair alone flags edges its other neighbours match; recheck each flagged pair
+    # with every part near either side, keeping only edges along both.
+    flagged = conn.execute(
+        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
+    ).fetchall()
+    for i, (a, b) in enumerate(flagged, 1):
+        if i % 100 == 1:
+            logger.info("invalid-edge recheck: pair %d of %d", i, len(flagged))
+        done = _run_bounded(
+            conn,
+            f"""--sql
+            UPDATE _ie_edges SET geom = (
+                WITH g AS (
+                    SELECT geom FROM _ie_parts WHERE pid IN (
+                        SELECT {a} UNION SELECT {b}
+                        UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
+                        UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
+                    )
+                ),
+                e AS (
+                    SELECT UNNEST(ST_Dump(
+                        ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
+                    )).geom AS geom
+                    FROM g
+                )
+                SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
+                FROM e
+                WHERE ST_Length(e.geom) > 0 AND (
+                    SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
+                    FROM _ie_parts x WHERE x.pid IN ({a}, {b})
+                )
+            )
+            WHERE pid = {a} AND near_pid = {b}
+            """,
+            seconds,
+        )
+        if not done:
+            conn.execute(f"""--sql
+                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
+                WHERE pid = {a} AND near_pid = {b}
+            """)
+        if (
+            first
+            and conn.execute(f"""--sql
+            SELECT geom IS NOT NULL FROM _ie_edges WHERE pid = {a} AND near_pid = {b}
+        """).fetchone()[0]
+        ):
+            break
+    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
+
+
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     """Return True if `table.geom` has any overlaps or unmatched shared edges."""
-    # A part with no other part within the gap width can't hold an invalid edge, and
-    # GEOS rebuilds a large neighbour's index per such part.
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _inv_parts AS
+        CREATE OR REPLACE TABLE _ie_parts AS
         WITH d AS (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
-        SELECT row_number() OVER () AS pid, geom, {bbox_columns_sql("geom")} FROM d
+        SELECT row_number() OVER () AS pid, geom, ST_NPoints(geom) AS n,
+               {bbox_columns_sql("geom")}
+        FROM d
     """)
-    _near_part_pairs(conn, "_inv_parts", "_inv_parts", "_inv_near", on="l.pid < r.pid")
-    invalid = conn.execute(f"""--sql
-        SELECT ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) IS NOT NULL
-        FROM _inv_parts
-        WHERE pid IN (SELECT pid FROM _inv_near UNION SELECT near_pid FROM _inv_near)
-    """).fetchall()[0][0]
-    for tmp in ("_inv_parts", "_inv_near"):
+    _invalid_part_pairs(conn, "l.pid < r.pid", seconds=None, first=True)
+    invalid = conn.execute("SELECT count(*) > 0 FROM _ie_edges").fetchone()[0]
+    for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
     return invalid
 
@@ -181,8 +300,7 @@ def invalid_edge_issues(
 ) -> int:
     """Create `out`: invalid-edge issue rows per touching row pair; return the count.
 
-    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
-    a query over `seconds` is stopped and its pairs reported unchecked.
+    A query over `seconds` is stopped and its pairs reported unchecked.
     """
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _ie_parts AS
@@ -192,100 +310,7 @@ def invalid_edge_issues(
                {bbox_columns_sql("geom")}
         FROM d
     """)
-    _near_part_pairs(
-        conn,
-        "_ie_parts",
-        "_ie_parts",
-        "_ie_near",
-        on="l.pid < r.pid AND l.rid != r.rid",
-    )
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _ie_batch AS
-        SELECT pid, near_pid,
-               (sum(a.n + b.n) OVER (ORDER BY pid, near_pid)
-                // {CLIP_PAIR_VERTEX_BUDGET}) AS batch
-        FROM _ie_near
-        JOIN (SELECT pid, n FROM _ie_parts) a USING (pid)
-        JOIN (SELECT pid AS near_pid, n FROM _ie_parts) b USING (near_pid)
-    """)
-    conn.execute("""--sql
-        CREATE OR REPLACE TABLE _ie_edges (
-            pid BIGINT, near_pid BIGINT, geom GEOMETRY, stopped BOOLEAN
-        )
-    """)
-    batches = conn.execute("SELECT DISTINCT batch FROM _ie_batch ORDER BY 1").fetchall()
-    for (batch,) in batches:
-        timer = threading.Timer(seconds, conn.interrupt)
-        timer.start()
-        try:
-            conn.execute(f"""--sql
-                INSERT INTO _ie_edges
-                WITH g AS (
-                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
-                    JOIN _ie_parts x ON x.pid = p.pid WHERE p.batch = {batch}
-                    UNION ALL
-                    SELECT p.pid, p.near_pid, x.geom FROM _ie_batch p
-                    JOIN _ie_parts x ON x.pid = p.near_pid WHERE p.batch = {batch}
-                )
-                SELECT pid, near_pid, e, FALSE
-                FROM (
-                    SELECT pid, near_pid,
-                           ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE}) AS e
-                    FROM g GROUP BY pid, near_pid
-                )
-                WHERE e IS NOT NULL AND ST_Length(e) > 0
-            """)
-        except InterruptException:
-            logger.warning(
-                "invalid-edge check stopped after %ss: batch %d", seconds, batch
-            )
-            conn.execute(f"""--sql
-                INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
-                FROM _ie_batch WHERE batch = {batch}
-            """)
-        finally:
-            timer.cancel()
-    # A pair alone flags edges its other neighbours match; recheck each flagged pair
-    # with every part near either side, keeping only edges along both.
-    flagged = conn.execute(
-        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
-    ).fetchall()
-    for a, b in flagged:
-        timer = threading.Timer(seconds, conn.interrupt)
-        timer.start()
-        try:
-            conn.execute(f"""--sql
-                UPDATE _ie_edges SET geom = (
-                    WITH g AS (
-                        SELECT geom FROM _ie_parts WHERE pid IN (
-                            SELECT {a} UNION SELECT {b}
-                            UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
-                            UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
-                        )
-                    ),
-                    e AS (
-                        SELECT UNNEST(ST_Dump(
-                            ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
-                        )).geom AS geom
-                        FROM g
-                    )
-                    SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
-                    FROM e
-                    WHERE ST_Length(e.geom) > 0 AND (
-                        SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
-                        FROM _ie_parts x WHERE x.pid IN ({a}, {b})
-                    )
-                )
-                WHERE pid = {a} AND near_pid = {b}
-            """)
-        except InterruptException:
-            conn.execute(f"""--sql
-                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
-                WHERE pid = {a} AND near_pid = {b}
-            """)
-        finally:
-            timer.cancel()
-    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
+    _invalid_part_pairs(conn, "l.pid < r.pid AND l.rid != r.rid", seconds=seconds)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{out}" AS
         WITH e AS (
@@ -1238,8 +1263,11 @@ _NOTCH_TOUCH = 1e-9
 _NOTCH_TMP = (
     "_notch_all",
     "_notch_ext",
+    "_notch_segp",
     "_notch_near",
     "_notch_ends",
+    "_notch_v",
+    "_notch_vp",
     "_notch_moves",
     "_notch_runs",
     "_notch_fseg",
@@ -1267,7 +1295,7 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         SELECT rowid AS rnid, fid, geom FROM "{table}"
     """)
     # Unshared segments only: a segment whose endpoints another unit also has is shared.
-    conn.execute(f"""--sql
+    conn.execute("""--sql
         CREATE OR REPLACE TABLE _notch_ext AS
         WITH rings AS (
             SELECT rnid, UNNEST(ST_Dump(ST_Boundary(geom))).geom AS g FROM _notch_all
@@ -1280,26 +1308,38 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
             FROM rings
         ),
         segs AS (
-            SELECT rnid, e, least(e[1], e[2]) AS k1, greatest(e[1], e[2]) AS k2
-            FROM (
-                SELECT rnid,
-                       UNNEST(list_transform(
-                           range(1, len(xy)), lambda i: [xy[i], xy[i + 1]]
-                       )) AS e
-                FROM pts
-            )
+            SELECT rnid, xy[i][1] AS x1, xy[i][2] AS y1,
+                   xy[i + 1][1] AS x2, xy[i + 1][2] AS y2,
+                   (xy[i][1], xy[i][2]) <= (xy[i + 1][1], xy[i + 1][2]) AS fw
+            FROM (SELECT rnid, xy, UNNEST(range(1, len(xy))) AS i FROM pts)
+        ),
+        keyed AS (
+            SELECT *,
+                   CASE WHEN fw THEN x1 ELSE x2 END AS kx1,
+                   CASE WHEN fw THEN y1 ELSE y2 END AS ky1,
+                   CASE WHEN fw THEN x2 ELSE x1 END AS kx2,
+                   CASE WHEN fw THEN y2 ELSE y1 END AS ky2
+            FROM segs
         ),
         shared AS (
-            SELECT k1, k2 FROM segs GROUP BY k1, k2 HAVING count(DISTINCT rnid) > 1
-        ),
-        ext AS (
-            SELECT row_number() OVER () AS sid, rnid,
-                   ST_MakeLine(ST_Point(e[1][1], e[1][2]), ST_Point(e[2][1], e[2][2]))
-                       AS geom
-            FROM segs ANTI JOIN shared USING (k1, k2)
+            SELECT kx1, ky1, kx2, ky2 FROM keyed
+            GROUP BY ALL HAVING count(DISTINCT rnid) > 1
         )
-        SELECT *, {bbox_columns_sql("geom")} FROM ext
+        SELECT row_number() OVER () AS sid, rnid,
+               ST_MakeLine(ST_Point(x1, y1), ST_Point(x2, y2)) AS geom,
+               least(x1, x2) AS xmin, greatest(x1, x2) AS xmax,
+               least(y1, y2) AS ymin, greatest(y1, y2) AS ymax
+        FROM keyed ANTI JOIN shared USING (kx1, ky1, kx2, ky2)
     """)
+    grid_pairs(
+        conn,
+        "_notch_ext",
+        "_notch_ext",
+        "_notch_segp",
+        on=f"l.rnid <> r.rnid AND ST_DWithin(l.geom, r.geom, {r})",
+        tol=r,
+        key="sid",
+    )
     # Per segment, its length within r of the other unit minus the length touching it.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _notch_near AS
@@ -1307,11 +1347,9 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
             SELECT a.sid, a.rnid AS own, b.rnid AS other,
                    any_value(a.geom) AS ag, ST_Union_Agg(b.geom) AS og,
                    list(b.sid) AS osids
-            FROM _notch_ext a JOIN _notch_ext b
-              ON a.rnid <> b.rnid
-             AND b.xmin <= a.xmax + {r} AND b.xmax >= a.xmin - {r}
-             AND b.ymin <= a.ymax + {r} AND b.ymax >= a.ymin - {r}
-             AND ST_DWithin(a.geom, b.geom, {r})
+            FROM _notch_segp p
+            JOIN _notch_ext a ON a.sid = p.pid
+            JOIN _notch_ext b ON b.sid = p.near_pid
             GROUP BY a.sid, a.rnid, b.rnid
         ),
         pieces AS (
@@ -1334,14 +1372,29 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
         WHERE n.len > 1e-12
     """)
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE _notch_moves AS
-        WITH v AS (
+        CREATE OR REPLACE TABLE _notch_v AS
+        SELECT row_number() OVER () AS vid, *,
+               x - lim AS xmin, x + lim AS xmax, y - lim AS ymin, y + lim AS ymax
+        FROM (
             SELECT own, other, x, y, any_value(p) AS p,
                    max(seglen) * {NOTCH_MAX_GAP_RATIO} AS lim
             FROM (SELECT *, ST_X(p) AS x, ST_Y(p) AS y FROM _notch_ends)
             GROUP BY own, other, x, y
-        ),
-        vd AS (
+        )
+    """)
+    grid_pairs(
+        conn,
+        "_notch_v",
+        "_notch_ext",
+        "_notch_vp",
+        on="r.rnid <> l.own",
+        tol=0,
+        key="vid",
+        right_key="sid",
+    )
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _notch_moves AS
+        WITH vd AS (
             SELECT v.own, v.other, v.x, v.y,
                    coalesce(min(ST_Distance(v.p, s.geom))
                                 FILTER (WHERE s.rnid = v.other), 'inf'::DOUBLE)
@@ -1349,10 +1402,9 @@ def _build_notch_runs(conn: DuckDBPyConnection, table: str) -> None:
                    AND NOT coalesce(bool_or(s.rnid <> v.other
                                        AND ST_DWithin(v.p, s.geom, {_NOTCH_TOUCH})),
                                FALSE) AS moves
-            FROM v JOIN _notch_ext s
-              ON s.rnid <> v.own
-             AND s.xmin <= v.x + v.lim AND s.xmax >= v.x - v.lim
-             AND s.ymin <= v.y + v.lim AND s.ymax >= v.y - v.lim
+            FROM _notch_vp vp
+            JOIN _notch_v v ON v.vid = vp.pid
+            JOIN _notch_ext s ON s.sid = vp.near_pid
             GROUP BY v.own, v.other, v.x, v.y, v.lim
         )
         SELECT e.sid, e.other, bool_or(coalesce(vd.moves, FALSE)) AS moves

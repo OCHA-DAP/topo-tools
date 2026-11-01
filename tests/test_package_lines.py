@@ -184,7 +184,7 @@ def test_multi_part_fid_touching_and_remote(tmp_path):
                 "adm1_pcode": "A",
                 "wkt": (
                     "MULTIPOLYGON(((0 0,0 10,10 10,10 0,0 0)),"
-                    "((100 100,100 110,110 110,110 100,100 100)))"
+                    "((100 70,100 80,110 80,110 70,100 70)))"
                 ),
             },
             {"adm1_pcode": "B", "wkt": "POLYGON((10 0,10 10,20 10,20 0,10 0))"},
@@ -202,7 +202,7 @@ def test_multi_part_fid_touching_and_remote(tmp_path):
     rows = _fetch_lines(output_path)
     shared = [r for r in rows if r[1] is not None]
     assert len(shared) == 1
-    remote_exterior = [r for r in rows if r[1] is None and "100 100" in r[3]]
+    remote_exterior = [r for r in rows if r[1] is None and "100 70" in r[3]]
     assert remote_exterior
 
 

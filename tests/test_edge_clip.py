@@ -163,7 +163,7 @@ def test_clip_heavy_overlay_tiling_finds_real_overlap(tmp_path):
 def test_clip_raises_when_no_input_overlaps_any_overlay(synthetic_overlays, tmp_path):
     input_path = tmp_path / "children.parquet"
     _write_inputs(
-        input_path, [(1, "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))")]
+        input_path, [(1, "POLYGON((100 80, 101 80, 101 81, 100 81, 100 80))")]
     )
 
     output_path = tmp_path / "out.parquet"

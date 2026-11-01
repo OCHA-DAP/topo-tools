@@ -1,5 +1,6 @@
 """Public API: extend polygon boundaries outward with Voronoi diagrams."""
 
+import time
 from logging import getLogger
 from pathlib import Path
 
@@ -82,8 +83,8 @@ def extend(  # noqa: PLR0913
         for s in _STEP_ORDER:
             if step and step != s:
                 continue
-            if debug:
-                logger.info("=== %s ===", s)
+            logger.info("=== %s ===", s)
+            start = time.monotonic()
             if s == "inputs":
                 inputs.main(conn, name, input_path)
             elif s == "lines":
@@ -94,6 +95,7 @@ def extend(  # noqa: PLR0913
                 merge.main(conn, name, debug=debug)
             elif s == "outputs":
                 outputs.main(conn, name, output_path, debug=debug)
+            logger.info("%s done in %.0fs", s, time.monotonic() - start)
         maybe_export_debug_tables(
             conn, tmp_dir_path, name, step, _STEP_TABLES, debug=debug
         )
