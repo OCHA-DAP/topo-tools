@@ -296,8 +296,9 @@ def pipeline_connection(
         finally:
             signal.signal(signal.SIGINT, old_handler)
             conn.close()
-            if not step and not debug:
-                cleanup_tmp(name, tmp_dir)
+        # Only on success: a failed run's tables stay for a --step resume.
+        if not step and not debug:
+            cleanup_tmp(name, tmp_dir)
 
 
 def maybe_export_debug_tables(  # noqa: PLR0913 (each param is a distinct required input)
