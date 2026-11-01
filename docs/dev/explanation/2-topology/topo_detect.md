@@ -11,11 +11,11 @@ sidebar:
 reports them, without fixing anything. Extracted out of `topo-clean`'s own
 issue-detection stage (`core/topo_clean/_02_issues.py`, moved verbatim to
 `core/topo_detect/_02_issues.py`) so it can be run standalone, the same way
-`assign` and the clip (`core.edge_clip`) were extracted as reusable primitives
+`assign` and the clip (`core.clip`) were extracted as reusable primitives
 out of `edge-match`. `topo-clean` still detects defects as its first real step, it just
 calls `core.topo_detect`'s stage function directly instead of owning the logic
 itself, the same pattern `edge-match`/`edge-mosaic` use for `core.assign`/
-`core.edge_clip`, and `edge-match`/`change` use for `core.edge_extend`'s.
+`core.clip`, and `edge-match`/`change` use for `core.edge_extend`'s.
 See `docs/adr/0028`.
 
 ## Usage

@@ -46,7 +46,7 @@ below is called directly by another tool's own `api.*()` orchestrator
 one combined query built from `core.io.reproject_select_sql()` per file
 (`UNION ALL BY NAME`, no table-per-file materialization, see
 `docs/adr/0044`); neither is coverage-checked nor -cleaned (consistent
-with the clip, `core.edge_clip`; both are purely mechanical primitives). Every
+with the clip, `core.clip`; both are purely mechanical primitives). Every
 input polygon row is tagged with a `source_file` column recording the exact path
 it came from (basename alone can't distinguish same-named files across
 directories).

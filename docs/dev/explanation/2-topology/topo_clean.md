@@ -68,7 +68,7 @@ Run `topo-tools topo-clean --help` for the full, always-current option list.
    a table `ST_CoverageClean` has already silently rewritten.
 2. **issues**: `topo-clean` calls `core.topo_detect`'s own `_02_issues.main()` stage
    function directly, writing `{name}_02`, the same pattern `edge-match`/
-   `edge-mosaic` use for `core.assign`/`core.edge_clip`'s stage
+   `edge-mosaic` use for `core.assign`/`core.clip`'s stage
    functions. See `docs/dev/explanation/2-topology/topo_detect.md` for how detection itself
    works (this used to be `topo-clean`'s own `_02_issues.py`; see `docs/adr/0028`).
 3. **`_03_clean`**: fixes gaps/overlaps via a single `ST_CoverageClean`

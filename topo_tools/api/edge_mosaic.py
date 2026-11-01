@@ -22,6 +22,12 @@ from topo_tools.core.assign import (
     union_bbox,
     validate_merge_flags,
 )
+from topo_tools.core.clip import (
+    build_tiles,
+    collect_candidates,
+    drop_points,
+    pick_points,
+)
 from topo_tools.core.constants import SNAP_TOLERANCE
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
@@ -30,12 +36,6 @@ from topo_tools.core.duckdb_utils import (
     pipeline_connection,
     resolve_tmp_dir,
     spill_table,
-)
-from topo_tools.core.edge_clip import (
-    build_tiles,
-    collect_candidates,
-    drop_points,
-    pick_points,
 )
 from topo_tools.core.edge_mosaic import _01_clip as clip
 from topo_tools.core.edge_mosaic import _02_outputs as outputs

@@ -20,6 +20,7 @@ from topo_tools.core.assign import (
     union_bbox,
     validate_merge_flags,
 )
+from topo_tools.core.clip import drop_points
 from topo_tools.core.duckdb_utils import (
     collect_spilled,
     maybe_export_debug_tables,
@@ -27,7 +28,6 @@ from topo_tools.core.duckdb_utils import (
     resolve_tmp_dir,
     spill_table,
 )
-from topo_tools.core.edge_clip import drop_points
 from topo_tools.core.edge_match import _01_inputs as inputs
 from topo_tools.core.edge_match import _02_groups as groups
 from topo_tools.core.edge_match import _03_clip as clip

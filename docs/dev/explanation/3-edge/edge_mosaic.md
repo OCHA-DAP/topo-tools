@@ -32,7 +32,7 @@ sides of every overlay border sharing border points, so no stitch is needed
    runs.
 3. **`_01_clip`**: a thin wrapper joining `overlay_fid` onto
    `{name}_input_01` from `{name}_02_assign`, then calling
-   `core.edge_clip.main()`, the same per-`overlay_fid`-subprocess, split
+   `core.clip.main()`, the same per-`overlay_fid`-subprocess, split
    clip `edge-match` uses.
    When `merge` is set (see "Overlay gap-fill and input passthrough" below),
    this stage also `UNION ALL BY NAME`s every whole unmatched input file's

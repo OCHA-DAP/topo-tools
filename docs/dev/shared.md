@@ -25,7 +25,7 @@ in sync.
 - The `topo-clean` tool MAY reuse `topo-detect`'s logic; `topo-detect` MUST NOT depend on
   `topo-clean` (see `docs/dev/explanation/2-topology/topo_detect.md`, `docs/adr/0028`).
 - The shared constants, coverage-validation, file I/O, database-connection,
-  units, assign, clip (`core.edge_clip`), and topo-detect helpers MUST NOT depend on any
+  units, assign, clip (`core.clip`), and topo-detect helpers MUST NOT depend on any
   of the five tool packages (`edge-extend`, `edge-match`, `topo-clean`, `change`,
   `edge-mosaic`); they are leaf building blocks usable by all of them.
 - The admin-column naming helpers (`core.admin_columns`) MUST NOT depend on
@@ -182,7 +182,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 - Every `coverage_clean` call merges micro-polygons before
   `ST_CoverageClean` runs, so `edge-extend`, `edge-match`, `edge-mosaic`,
   `topo-clean` and every auto-cleaned input apply this rule. The clip
-  (`core.edge_clip`) applies it to its clipped output, `topo-clean` again
+  (`core.clip`) applies it to its clipped output, `topo-clean` again
   after its fix, and `package-polygons`, `package-points` and
   `package-lines` to their input.
 - Each merged or dropped part MUST be reported as a `micro-polygon` row

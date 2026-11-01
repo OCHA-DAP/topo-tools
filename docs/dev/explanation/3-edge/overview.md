@@ -9,7 +9,7 @@ sidebar:
 ---
 
 Why edge-match and edge-mosaic are both built from the same primitives
-(edge-extend, assign, and the clip in `core.edge_clip`), and when to reach
+(edge-extend, assign, and the clip in `core.clip`), and when to reach
 for edge-extend directly instead.
 
 - [edge-extend](edge_extend.md): Voronoi extension, the standalone
