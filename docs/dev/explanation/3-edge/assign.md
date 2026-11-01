@@ -31,14 +31,14 @@ decides independently which overlay polygon it overlaps most, so one input file'
 input polygons MAY scatter across **many** different overlay polygons. Use it only when
 that's actually true of the input, e.g. a poorly-digitized admin4 layer
 whose input polygons genuinely belong to many different admin3 overlay polygons. It is
-never used for `edge-mosaic`/`edge-clip`, whose already-extended (overshoot)
+never used for `edge-mosaic`, whose already-extended (overshoot)
 geometry makes per-feature voting unsafe (see `docs/adr/0019`).
 
 ## Modules
 
 `core/assign/` has no `api.*()`/CLI pipeline of its own; every function
 below is called directly by another tool's own `api.*()` orchestrator
-(`api.edge_mosaic`, `api.edge_clip`, `api.edge_match`), never from inside
+(`api.edge_mosaic`, `api.edge_match`, `api.code_update`), never from inside
 `core.edge_mosaic`/`core.edge_match` themselves.
 
 `core/assign/_inputs.py` loads the single overlay layer raw via
@@ -46,25 +46,22 @@ below is called directly by another tool's own `api.*()` orchestrator
 one combined query built from `core.io.reproject_select_sql()` per file
 (`UNION ALL BY NAME`, no table-per-file materialization, see
 `docs/adr/0044`); neither is coverage-checked nor -cleaned (consistent
-with `edge-clip`/`edge-stitch`; these are all purely mechanical primitives). Every
+with the clip, `core.edge_clip`; both are purely mechanical primitives). Every
 input polygon row is tagged with a `source_file` column recording the exact path
 it came from (basename alone can't distinguish same-named files across
 directories).
-`api.edge_mosaic` and standalone `api.edge_clip` (its multi-file loop, see
-`docs/dev/explanation/3-edge/edge_clip.md`) both call its `load_input()`/
-`load_overlay()` directly, since ADR-0023 split those apart; `api.edge_match`
+`api.edge_mosaic` calls its `load_input()`/`load_overlay()` directly; `api.edge_match`
 loads its own input polygons via `core.edge_match._01_inputs` instead.
 
 `_many.py` / `_one.py` hold the actual assignment logic (see below):
-`api.edge_mosaic`, standalone `api.edge_clip`, and `api.edge_match` (`one`,
-or `auto`) all call `core.assign.assign_one()`; `api.edge_match` calls
+`api.edge_mosaic` and `api.edge_match` (`one`,
+or `auto`) both call `core.assign.assign_one()`; `api.edge_match` calls
 `core.assign.assign_many()` under `--assign many`, or when `auto` switches. All call
 directly on their own already-loaded tables. `edge-mosaic` calls it once
-per run; `edge-clip`'s multi-file loop calls it once per input file,
-reusing a cached overlay-tile decomposition across every call (see below and
-`docs/adr/0024`). Neither function runs a coverage hard gate: an unclipped
+per input file, reusing a cached overlay-tile decomposition across every
+call when there is more than one (see below). Neither function runs a coverage hard gate: an unclipped
 crosswalk is expected to still overlap/gap between neighboring input polygons,
-that's `edge-clip`'s and `edge-stitch`'s job downstream.
+that's the clip's job downstream.
 
 ## `assign_many`: largest-overlap assignment
 
@@ -91,10 +88,10 @@ warning, not an error.
 `assign_one` cannot use `assign_many`'s pairs join unmodified: it runs
 against already-extended (often massively overshot) geometry, and a plain
 `ST_Intersection`-based area-sum join against a huge single overlay part
-(e.g. a country-scale admin0 polygon) is exactly the failure mode `edge-clip`
+(e.g. a country-scale admin0 polygon) is exactly the failure mode the clip
 splits around. So `assign_one` builds its own pairs table (`_build_pairs`),
 splitting any overlay part of at least `SUBDIVIDE_MIN_VERTICES` vertices with
-`subdivide_sql` before intersecting, the same helper and budget `edge-clip`
+`subdivide_sql` before intersecting, the same helper and budget the clip
 uses.
 
 That tiling is split into its own function, `prepare_overlay_tiles()`, which
@@ -102,8 +99,8 @@ takes an optional `input_bbox` (`xmin, ymin, xmax, ymax`) that skips any
 overlay part whose bbox can't overlap it, so a handful of input polygons matched
 against one much larger shared overlay polygon (e.g. a global admin0 file) doesn't
 tile parts nothing will ever be assigned to (see `docs/adr/0085`). A caller
-processing one input file per run (`edge-mosaic`, single-file
-`edge-clip`) never notices: `assign_one()`'s default `use_cached_tiles=False`
+processing one input file per run (single-file `edge-mosaic`)
+never notices: `assign_one()`'s default `use_cached_tiles=False`
 calls it internally with the already-loaded input polygon's own bbox. `edge-mosaic`'s
 multi-file loop instead pre-scans every input file's bbox, unions them,
 and calls `prepare_overlay_tiles()` once before iterating with the combined
@@ -131,7 +128,7 @@ input polygons have **no** overlap with any overlay polygon at all lands in
 `_02_unassigned`. A forced-in input polygon that still doesn't physically reach its
 overlay polygon by clip time produces an empty `ST_Intersection` and is dropped
 there instead, reported as a `kind='clip-empty'` issue row rather than an
-`assign`-time one (see `docs/dev/explanation/3-edge/edge_clip.md`).
+`assign`-time one.
 
 ## Code-column join (optional)
 
@@ -204,7 +201,7 @@ BY NAME`.
 
 | | `assign-many` | `assign-one` |
 | --- | --- | --- |
-| Used by | `edge-match` (`many`, or `auto`'s switch) | `edge-mosaic`, `edge-clip`, `edge-match` (`one`, or `auto`) |
+| Used by | `edge-match` (`many`, or `auto`'s switch) | `edge-mosaic`, `edge-match` (`one`, or `auto`) |
 | Decision granularity | Per input polygon | Per source file |
 | Zero-overlap input polygon in an otherwise-matched file | Dropped, logged, `_02_unassigned` | Forced onto the file's winner; dropped later at clip time if it still doesn't reach it |
 | Vote signal | N/A (each input polygon stands alone) | Count of intersecting input polygons per file |
@@ -212,7 +209,7 @@ BY NAME`.
 
 ## Caveats
 
-**`assign-one` runs against overshoot geometry (for `edge-mosaic`/`edge-clip`).**
+**`assign-one` runs against overshoot geometry (for `edge-mosaic`).**
 It never sees an input polygon's pre-extension footprint, only the already-extended
 geometry, so the bbox prefilter is less selective than `assign-many`'s, and
 in principle the per-polygon overlap signal underlying the vote could be

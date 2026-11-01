@@ -68,7 +68,7 @@ Run `topo-tools topo-clean --help` for the full, always-current option list.
    a table `ST_CoverageClean` has already silently rewritten.
 2. **issues**: `topo-clean` calls `core.topo_detect`'s own `_02_issues.main()` stage
    function directly, writing `{name}_02`, the same pattern `edge-match`/
-   `edge-mosaic` use for `core.assign`/`core.edge_clip`/`core.edge_stitch`'s stage
+   `edge-mosaic` use for `core.assign`/`core.edge_clip`'s stage
    functions. See `docs/dev/explanation/2-topology/topo_detect.md` for how detection itself
    works (this used to be `topo-clean`'s own `_02_issues.py`; see `docs/adr/0028`).
 3. **`_03_clean`**: fixes gaps/overlaps via a single `ST_CoverageClean`
@@ -281,7 +281,7 @@ detected: `fixed BOOLEAN`, `unit_a_area_change_m2 DOUBLE`,
 is populated only for gap rows; `unit_a`/`unit_b_area_change_m2` only for
 overlap and notch rows. `overlay_fid` and `source_file` are always null for
 `topo-clean`, and `reason` is set only on `micro-polygon` rows: they exist
-so the schema matches `edge-match`/`edge-mosaic`/`edge-stitch`'s own issues
+so the schema matches `edge-match`/`edge-mosaic`'s own issues
 tables column-for-column. Each `micro-polygon` row comes from `{name}_03_micro`, the merge
 outcome (receiving fid in `unit_b`, `fixed=TRUE`), replacing
 `topo-detect`'s detection row for it.

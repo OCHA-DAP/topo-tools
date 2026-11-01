@@ -15,8 +15,6 @@ from topo_tools.core.constants import (
     NOTCH_MIN_SCORE,
     NOTCH_SPACING,
     NOTCH_WINDOW_MARGIN,
-    SNAP_ESCALATION_MAX_STEPS,
-    SNAP_ESCALATION_STEP,
     SNAP_TOLERANCE,
 )
 from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
@@ -1222,40 +1220,6 @@ def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, n
     for tmp in ("_clean_all", "_clean_in", "_clean_micro", "_clean_micro2"):
         if tmp != micro_issues_table:
             conn.execute(f"DROP TABLE IF EXISTS {tmp}")
-
-
-def coverage_clean_escalating(  # noqa: PLR0913 (mirrors coverage_clean's own inputs)
-    conn: DuckDBPyConnection,
-    table_in: str,
-    table_out: str,
-    *,
-    fids: list[int] | None,
-    gap_maximum_width: float | None = SNAP_TOLERANCE,
-    micro_issues_table: str | None = None,
-) -> None:
-    """Coverage-clean, widening snapping_distance only as far as needed."""
-    snap = SNAP_TOLERANCE
-    for step in range(SNAP_ESCALATION_MAX_STEPS + 1):
-        coverage_clean(
-            conn,
-            table_in,
-            table_out,
-            fids=fids,
-            gap_maximum_width=gap_maximum_width,
-            snapping_distance=snap,
-            micro_issues_table=micro_issues_table,
-        )
-        if not has_invalid_edges(conn, table_out):
-            if step:
-                logger.info(
-                    "coverage-clean: resolved invalid edges by escalating "
-                    "snapping_distance to %s (step %d) on %s",
-                    snap,
-                    step,
-                    table_out,
-                )
-            return
-        snap += SNAP_ESCALATION_STEP
 
 
 # Two edges this close count as touching, not as a notch.
