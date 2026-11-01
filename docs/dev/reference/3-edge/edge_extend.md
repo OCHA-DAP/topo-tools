@@ -36,9 +36,14 @@ sidebar:
   of points.
 - Generated points MUST exclude a buffered zone around every shared
   boundary endpoint.
+- Points on each line MUST start at a stable per-line offset of up to one
+  spacing.
+- `edge-extend` MUST NOT generate points on x = ±180 or y = ±90.
 - `edge-extend` MUST build a Voronoi diagram from the points, assign each cell
   to the polygon whose point generated it, and union cells by polygon into
   that polygon's extension.
+- `edge-extend` MUST raise, without retrying, if any Voronoi cell holds more
+  than one distinct point.
 - On failure, or more points than a fixed maximum, `edge-extend` MUST retry
   with the spacing doubled from the resolved default, up to 10 times, then
   raise.

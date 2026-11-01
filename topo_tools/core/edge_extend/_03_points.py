@@ -84,35 +84,23 @@ def main(
     # per-fid lines first, avoiding a floor equal to the file's raw vertex count.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_tmp2" AS
-        SELECT
-            fid,
-            ST_LineInterpolatePoints(
-                geom,
-                GREATEST(
-                    LEAST({d!r} / seg_len, 1.0),
-                    1.0 / {MAX_POINTS_PER_SEGMENT}
-                ),
-                true
-            ) AS geom
+        SELECT fid, {_shifted_points("seg_len", f"seg_len / {MAX_POINTS_PER_SEGMENT}")}
+            AS geom
         FROM "{name}_03_tmp1"
         WHERE seg_len > {cap_threshold!r}
     """)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_tmp3" AS
-        SELECT
-            fid,
-            ST_LineInterpolatePoints(
-                geom,
-                LEAST({d!r} / ST_Length(geom), 1.0),
-                true
-            ) AS geom
+        SELECT fid, {_shifted_points("len", repr(d))} AS geom
         FROM (
-            SELECT fid, UNNEST(ST_Dump(ST_LineMerge(ST_Union_Agg(geom)))).geom
-                AS geom
-            FROM "{name}_03_tmp1"
-            WHERE seg_len <= {cap_threshold!r}
-            GROUP BY fid
+            SELECT fid, geom, ST_Length(geom) AS len FROM (
+                SELECT fid, UNNEST(ST_Dump(ST_LineMerge(ST_Union_Agg(geom)))).geom
+                    AS geom
+                FROM "{name}_03_tmp1"
+                WHERE seg_len <= {cap_threshold!r}
+                GROUP BY fid
+            )
         )
     """)
 
@@ -183,6 +171,8 @@ def main(
             LEFT JOIN lines_local n ON n.rid = a.rid
         )
         WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+          -- Edges on +-180/+-90 are map cuts, not borders, so they seed no cells.
+          AND abs(ST_X(geom)) != 180 AND abs(ST_Y(geom)) != 90
     """)
 
     missing = conn.execute(f"""--sql
@@ -200,3 +190,16 @@ def main(
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp2"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp3"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp4"')
+
+
+def _shifted_points(length: str, step: str) -> str:
+    """Return SQL for points every `step` along `geom`, from a per-line offset."""
+    # Evenly spaced points lined up across lines break GEOS's Voronoi diagram;
+    # a stable per-line offset of up to one step keeps them from lining up.
+    shift = (
+        f"LEAST(({step}) * (hash(fid, ST_AsWKB(geom)) % 1000) / 1000.0, {length} / 2)"
+    )
+    return (
+        f"ST_LineInterpolatePoints(ST_LineSubstring(geom, {shift} / {length}, 1.0), "
+        f"LEAST(({step}) / ({length} - {shift}), 1.0), true)"
+    )

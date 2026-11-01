@@ -92,8 +92,10 @@ The overall processing can be broken down into 4 distinct types of geometry tran
 
 The pipeline raises rather than silently producing a wrong result: the
 point-to-Voronoi stage raises if its shared-boundary-zone difference drops
-any fid entirely, and the final merge stage raises if any fid's extended
-geometry no longer covers its own original footprint. See
+any fid entirely, the Voronoi stage raises if any cell holds more than one
+distinct point (a wrong GEOS cell, see `docs/adr/0146`), and the final merge
+stage raises if any fid's extended geometry no longer covers its own
+original footprint. See
 `docs/adr/0090-bbox-prefilter-shared-boundary-zone-difference.md` and
 `docs/dev/explanation/3-edge/voronoi-memory.md`.
 
