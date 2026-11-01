@@ -4,7 +4,7 @@ from decimal import Decimal
 
 MAX_POINTS = 10_000_000
 # Boundary plus neighbour-union vertices one batch of the lines difference may carry.
-LINES_VERTEX_BUDGET = 20_000_000
+LINES_VERTEX_BUDGET = 10_000_000
 # Not user-configurable: attempt.py derives effective_distance as
 # min(DEFAULT_DISTANCE, natural_res), so this only floors under-detailed files.
 DEFAULT_DISTANCE = Decimal("0.0002")

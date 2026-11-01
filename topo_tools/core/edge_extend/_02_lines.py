@@ -39,11 +39,14 @@ def main(conn: DuckDBPyConnection, name: str) -> None:
         GROUP BY a.fid
     """)
 
-    # Row-order batches: one 2048-row vector holds every row's difference at once.
+    # Row-order batches, each joining only its own neighbour unions: a 2048-row
+    # vector holds every row's difference, and a hash join builds all of tmp2.
     sizes = conn.execute(f"""--sql
-        SELECT a.rowid, ST_NPoints(a.geom) + coalesce(ST_NPoints(n.neighbor_union), 0)
-        FROM "{name}_02_tmp1" AS a
-        LEFT JOIN "{name}_02_tmp2" AS n ON a.fid = n.afid
+        SELECT a.rowid, a.n + coalesce(n.n, 0)
+        FROM (SELECT rowid, fid, ST_NPoints(geom) AS n FROM "{name}_02_tmp1") AS a
+        LEFT JOIN (
+            SELECT afid, ST_NPoints(neighbor_union) AS n FROM "{name}_02_tmp2"
+        ) AS n ON a.fid = n.afid
         ORDER BY a.rowid
     """).fetchall()
     batches: list[list[int]] = []
@@ -75,9 +78,14 @@ def main(conn: DuckDBPyConnection, name: str) -> None:
                         ELSE a.geom
                     END, 2
                 )))).geom AS geom
-            FROM (SELECT rowid AS rid, * FROM "{name}_02_tmp1") AS a
-            LEFT JOIN "{name}_02_tmp2" AS n ON a.fid = n.afid
-            WHERE a.rid BETWEEN {lo} AND {hi}
+            FROM (
+                SELECT * FROM "{name}_02_tmp1" WHERE rowid BETWEEN {lo} AND {hi}
+            ) AS a
+            LEFT JOIN (
+                SELECT * FROM "{name}_02_tmp2" WHERE afid IN (
+                    SELECT fid FROM "{name}_02_tmp1" WHERE rowid BETWEEN {lo} AND {hi}
+                )
+            ) AS n ON a.fid = n.afid
         """)
 
     conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp1"')
