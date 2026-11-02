@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Homebrew formula updates again with DuckDB 2.0's abi3 wheels.
 - `schema-map --csv` accepts a crosswalk that lists `OBJECTID`, `GlobalID`
   or other GIS bookkeeping columns, to drop or rename them.
-- The cod-ab skill's `metadata.py` runs on DuckDB 2.0, skips source layers
+- The cod-ab skill's `metadata.py` runs on DuckDB 2.0, accepts source layers
   with no URL, and takes a `--code-field` template.
 
 ## [0.18.0] - 2026-10-21
