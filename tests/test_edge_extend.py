@@ -18,6 +18,7 @@ from topo_tools.core.edge_extend import _01_inputs as inputs
 from topo_tools.core.edge_extend import _02_lines as lines
 from topo_tools.core.edge_extend import _03_points as points
 from topo_tools.core.edge_extend import _04_voronoi as voronoi
+from topo_tools.core.edge_extend import _05_merge as merge
 from topo_tools.core.edge_extend import attempt
 
 # fid 1/2 touch exactly (valid coverage); fid 3 sits across a deliberate gap
@@ -434,3 +435,59 @@ def test_points_skip_map_cut_edges(tmp_path):
         """).fetchone()
     assert on_cut == 0
     assert total > 0
+
+
+# fid 1 has an exclave inside fid 2's cell; fid 3 has no cell.
+_MERGE_ORIGINALS = [
+    (
+        1,
+        (
+            "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)), "
+            "((2.2 0.2, 2.6 0.2, 2.6 0.6, 2.2 0.6, 2.2 0.2)))"
+        ),
+    ),
+    (2, "POLYGON((3 0, 3.5 0, 3.5 1, 3 1, 3 0))"),
+    (3, "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))"),
+]
+_MERGE_CELLS = [
+    (1, "POLYGON((-1 -1, 1.5 -1, 1.5 2, -1 2, -1 -1))"),
+    (2, "POLYGON((1.5 -1, 4 -1, 4 2, 1.5 2, 1.5 -1))"),
+]
+
+
+def _merge_tables(conn):
+    conn.execute("INSTALL spatial; LOAD spatial;")
+    for table, rows in (("t_01", _MERGE_ORIGINALS), ("t_04", _MERGE_CELLS)):
+        values = ", ".join(f"({fid}, ST_GeomFromText('{w}'))" for fid, w in rows)
+        conn.execute(
+            f"CREATE TABLE {table} AS SELECT * FROM (VALUES {values}) v(fid, geom)"
+        )
+
+
+def test_merge_keeps_exclave_and_cellless_fid():
+    with duckdb.connect() as conn:
+        _merge_tables(conn)
+        merge.main(conn, "t")
+        areas = dict(
+            conn.execute("SELECT fid, ST_Area(geom) FROM t_05 ORDER BY fid").fetchall()
+        )
+        overlap = conn.execute(
+            "SELECT ST_Area(ST_Intersection(a.geom, b.geom)) "
+            "FROM t_05 a, t_05 b WHERE a.fid = 1 AND b.fid = 2"
+        ).fetchone()[0]
+    assert areas == pytest.approx({1: 7.5 + 0.16, 2: 7.5 - 0.16, 3: 1.0})
+    assert overlap == pytest.approx(0.0, abs=1e-12)
+
+
+def test_merge_equals_original_and_cell_minus_other_originals():
+    with duckdb.connect() as conn:
+        _merge_tables(conn)
+        merge.main(conn, "t")
+        rows = conn.execute("""
+            SELECT ST_Area(ST_SymDifference(r.geom, ST_Difference(
+                ST_Union(o.geom, c.geom),
+                (SELECT ST_Union_Agg(x.geom) FROM t_01 x WHERE x.fid <> o.fid))))
+            FROM t_05 r JOIN t_01 o USING (fid) JOIN t_04 c USING (fid)
+        """).fetchall()
+    assert len(rows) == len(_MERGE_CELLS)
+    assert all(d == pytest.approx(0.0, abs=1e-12) for (d,) in rows)
