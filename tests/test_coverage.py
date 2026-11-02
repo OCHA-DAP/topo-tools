@@ -14,6 +14,7 @@ from topo_tools.core.coverage import (
     has_gaps,
     has_invalid_edges,
     has_micro_polygons,
+    invalid_edge_issues,
     merge_detached_parts,
     merge_micro_polygons,
 )
@@ -734,3 +735,50 @@ def test_check_no_overlaps_ignores_overlap_within_one_group():
         _write_rows(conn, [(1, "a", _SQUARE), (2, "b", inner)])
         with pytest.raises(ValueError, match="a / b"):
             check_no_overlaps(conn, "synth", group_column="grp")
+
+
+def _stacked(conn, units):
+    """Write `units` (fid, WKT) pairs to table `units`."""
+    rows = " UNION ALL ".join(
+        f"SELECT {fid} AS fid, ST_GeomFromText('{wkt}') AS geom" for fid, wkt in units
+    )
+    conn.execute(f"CREATE OR REPLACE TABLE units AS {rows}")
+
+
+def test_sliver_between_two_units_is_not_an_invalid_edge():
+    d = SNAP_TOLERANCE / 2
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _stacked(
+            conn,
+            [
+                (1, f"POLYGON((0 {d}, 1 {d}, 1 1, 0 1, 0 {d}))"),
+                (2, f"POLYGON((0 0, 1 0, 1 {d}, 0 {d}, 0 0))"),
+                (3, "POLYGON((0 -1, 1 -1, 1 0, 0 0, 0 -1))"),
+            ],
+        )
+        assert not has_invalid_edges(conn, "units")
+        assert invalid_edge_issues(conn, "units", "issues") == 0
+
+
+def test_overlap_beside_a_matched_unit_is_an_invalid_edge():
+    d = SNAP_TOLERANCE / 2
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _stacked(
+            conn,
+            [
+                (1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
+                (2, f"POLYGON((0 -1, 1 -1, 1 {d}, 0 {d}, 0 -1))"),
+                (3, "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"),
+            ],
+        )
+        assert has_invalid_edges(conn, "units")
+        pairs = [(1, 2), (2, 3)]
+        assert invalid_edge_issues(conn, "units", "issues") == len(pairs)
+        rows = conn.execute(
+            "SELECT unit_a, unit_b, ST_Length(geom) FROM issues ORDER BY 1, 2"
+        ).fetchall()
+        assert [(a, b) for a, b, _ in rows] == pairs
+        # Each row holds only its own pair's edges: 1's edge shared with 3 is left out.
+        assert [n for _, _, n in rows] == pytest.approx([5, 3])
