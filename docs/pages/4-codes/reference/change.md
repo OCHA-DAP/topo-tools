@@ -25,10 +25,14 @@ Each unit is classed as unchanged, renamed, modified, relocated, split, merged, 
 - `--link-by-code`: Also match units that have the same code in both versions, when that code is unique.
 - `--link-by-name`: Also match units that have the same name in both versions, when that name is unique.
 - `--link-mode [either|both]`: With both `--link-by-code` and `--link-by-name`, match on either one or only on both. [default: either]
-- `--code-column-a TEXT`: Code column in OLD_FILE. Detected from the data if omitted.
-- `--code-column-b TEXT`: Code column in NEW_FILE. Detected from the data if omitted.
-- `--name-column-a TEXT`: Name column in OLD_FILE. Detected from the data if omitted.
-- `--name-column-b TEXT`: Name column in NEW_FILE. Detected from the data if omitted.
+- `--name-field-a TEXT`: Name column of each level in OLD_FILE, with {n} for the level number, e.g. 'adm{n}_name'. Give it with `--code-field-a`. Without both, levels are detected from the data.
+- `--code-field-a TEXT`: Code column of each level in OLD_FILE, with {n} for the level number, e.g. 'adm{n}_pcode'. Give it with `--name-field-a`. Without both, levels are detected from the data.
+- `--name-field-b TEXT`: Name column of each level in NEW_FILE, with {n} for the level number. Give it with `--code-field-b`. Without both, levels are detected from the data.
+- `--code-field-b TEXT`: Code column of each level in NEW_FILE, with {n} for the level number. Give it with `--name-field-b`. Without both, levels are detected from the data.
+- `--code-column-a TEXT`: Code column in OLD_FILE. Defaults to the finest level's code column.
+- `--code-column-b TEXT`: Code column in NEW_FILE. Defaults to the finest level's code column.
+- `--name-column-a TEXT`: Name column in OLD_FILE. Defaults to the finest level's name column.
+- `--name-column-b TEXT`: Name column in NEW_FILE. Defaults to the finest level's name column.
 - `--overwrite BOOLEAN`: Replace output files that already exist. Pass `--overwrite=false` to stop with an error instead. [default: True]
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).
 - `--debug`: Keep intermediate tables, export them to Parquet, and log the time and memory each query takes.
@@ -46,8 +50,7 @@ topo-tools change admin2_2020.geojson admin2_2024.geojson
 Also match units that keep the same p-code:
 
 ```sh
-topo-tools change old.gpkg new.gpkg --link-by-code \
-  --code-column-a adm2_pcode --code-column-b adm2_pcode
+topo-tools change old.gpkg new.gpkg --link-by-code
 ```
 
 Accept less overlap, for heavily redrawn boundaries:

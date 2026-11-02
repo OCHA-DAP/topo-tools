@@ -40,8 +40,9 @@ written alongside it.
 | `--link-by-code` | Also link units sharing a unique code value across versions. |
 | `--link-by-name` | Also link units sharing a unique name value across versions. |
 | `--link-mode` | How code/name identity matches combine (`either`/`both`, default `either`; only matters if both link flags are set). |
-| `--code-column-a` / `--code-column-b` | Old/new-side code column; auto-detected if omitted. |
-| `--name-column-a` / `--name-column-b` | Old/new-side name column; auto-detected if omitted. |
+| `--name-field-a`/`--code-field-a`, `--name-field-b`/`--code-field-b` | Old/new-side level column templates (`adm{n}_name`, `adm{n}_pcode`); levels detected from the data if omitted. |
+| `--code-column-a` / `--code-column-b` | Old/new-side code column; auto-detected (finest level) if omitted. |
+| `--name-column-a` / `--name-column-b` | Old/new-side name column; auto-detected (finest level) if omitted. |
 | `--overwrite` | Overwrite an existing output file. |
 | `--threads` | DuckDB thread count. |
 | `--debug` | Keep intermediate tables, export to Parquet, log timing/memory per query. |
@@ -195,9 +196,7 @@ both:
   feature worth preserving for a batch tool where the invocation's flags
   aren't otherwise recorded alongside the output. `code_a`/`code_b`/
   `name_a`/`name_b` are `NULL` unless the corresponding `--code-column-*`/
-  `--name-column-*` was resolved (explicitly or via auto-detection under a
-  `--link-by-*` flag): a pure spatial run with no linking and no explicit
-  column has no identity columns to report.
+  `--name-column-*` was given or detected.
 - **Spatial overlay layer** (`overlay_path`, defaults to `old_path`'s own
   format): every new-version unit tagged with its `relationship_class`,
   plus every old-version unit classed `removed` (gone in the new version, so
@@ -209,14 +208,13 @@ both:
 
 ## Column auto-detection
 
-`core/change/_columns.py` ports JS's `src/lib/db/columns.ts` regex
-patterns verbatim, same priority order, same first-match-wins logic. Only
-consulted when a `--link-by-code`/`--link-by-name` flag is set and its
-column isn't explicitly named; an explicit `--code-column-*`/
-`--name-column-*` always overrides. If linking is requested and no column
-can be found or was given, `change()` raises `ValueError` rather than
-silently falling back to geometry-only: an explicit ask deserves an
-explicit failure, not silent divergence from what the user asked for.
+`core/change/_columns.py` takes the finest level's code column and
+primary name column from `core.schema_map`'s `resolve_levels`, the level
+detection every other level-aware tool uses, so the changelog's
+`code_*`/`name_*` columns fill whether or not linking is on (see
+`docs/adr/0148`). A side with no detectable level (an admin0 layer, or
+one with codes but no names) logs a warning; under `--link-by-*` it
+raises instead, since an explicit ask deserves an explicit failure.
 
 ## Thresholds
 

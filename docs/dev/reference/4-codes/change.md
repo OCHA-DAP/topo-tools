@@ -63,13 +63,14 @@ sidebar:
 
 ## Column auto-detection
 
-- A code/name column MUST be auto-detected only when the corresponding
-  `--link-by-code`/`--link-by-name` flag is set and no explicit
-  `--code-column-*`/`--name-column-*` was given for that side; an
-  explicit column argument MUST always override auto-detection.
-- If linking is requested for a side and no column was given or
-  auto-detected on that side, `change` MUST raise `ValueError` rather
-  than silently falling back to geometry-only comparison.
+- Each side's code/name column MUST default to the finest detected admin
+  level's code column and its primary name column (`core.schema_map`'s
+  structural level detection, or the side's `--name-field-*`/
+  `--code-field-*` pair, given together or not at all); an explicit
+  `--code-column-*`/`--name-column-*` MUST always override it.
+- If no column was given or detected on a side, `change` MUST log a
+  warning, or raise `ValueError` when the matching `--link-by-code`/
+  `--link-by-name` is set.
 
 ## Outputs
 
@@ -85,8 +86,7 @@ sidebar:
   `link_by_code`, `link_by_name`, and `link_mode` values, regardless of
   that row's own classification.
 - `code_a`/`code_b`/`name_a`/`name_b` MUST be null on every row unless
-  the corresponding column was resolved (explicitly or via
-  auto-detection) for that side.
+  the corresponding column was given or detected for that side.
 - The spatial overlay layer MUST contain every new-version unit tagged
   with its `relationship_class`, plus every old-version unit classed
   `removed`; together these MUST tile the comparison area exactly once.
