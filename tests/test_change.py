@@ -12,7 +12,6 @@ from topo_tools.api.change import change
 from topo_tools.cli.main import cli
 
 # Nine spatially-separated regions, one relationship class (or pair) each.
-# pcode is the sole attribute column (matches _columns.py's "*code$" pattern).
 _OLD_WKT = [
     ("U1", "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
     # unchanged; code -> N1B, renamed under --link-by-code
@@ -224,19 +223,66 @@ def test_change_identity_claim_guard(old_layer, new_layer, tmp_path):
     assert _class_of(rows, code_a="GD1", code_b="GD2") == "split"
 
 
-def test_change_column_auto_detection(old_layer, new_layer, tmp_path):
-    """--link-by-code without an explicit column still finds pcode via regex."""
+def _write_hierarchy(path, wkt_rows):
+    """Two-level COD-AB layer: each unit's code under an adm1 parent, plus names."""
+    values = ", ".join(
+        f"('P{pcode[0]}', 'Region {pcode[0]}', '{pcode}', 'Town {pcode}', "
+        f"ST_GeomFromText('{wkt}'))"
+        for pcode, wkt in wkt_rows
+    )
+    columns = "adm1_pcode, adm1_name, adm2_pcode, adm2_name, geom"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) AS t({columns})) TO '{path}'"
+        )
+
+
+@pytest.mark.parametrize("link_by_code", [False, True])
+def test_change_detects_finest_level_columns(tmp_path, link_by_code):
+    """Without explicit columns, the finest level's code and name fill the changelog."""
+    old, new = tmp_path / "old.parquet", tmp_path / "new.parquet"
+    _write_hierarchy(old, _OLD_WKT)
+    _write_hierarchy(new, _NEW_WKT)
     output_path = tmp_path / "auto.csv"
     change(
-        old_layer,
-        new_layer,
+        old,
+        new,
         output_path,
         tmp_path / "auto_overlay.parquet",
-        link_by_code=True,
+        link_by_code=link_by_code,
         overwrite=True,
     )
     rows = _read_changelog(output_path)
-    assert _class_of(rows, code_a="N1", code_b="N1B") == "renamed"
+    unchanged = next(row for row in rows if row[0] == "U1")
+    assert unchanged[:4] == ("U1", "Town U1", "U1", "Town U1")
+    renamed = "renamed" if link_by_code else "unchanged"
+    assert _class_of(rows, code_a="N1", code_b="N1B") == renamed
+
+
+def test_change_field_templates(tmp_path):
+    """--name-field-*/--code-field-* pick the levels; only one of a pair raises."""
+    old, new = tmp_path / "old.parquet", tmp_path / "new.parquet"
+    _write_hierarchy(old, _OLD_WKT)
+    _write_hierarchy(new, _NEW_WKT)
+    fields = {"name_field_a": "adm{n}_name", "code_field_a": "adm{n}_pcode"}
+    output_path = tmp_path / "fields.csv"
+    change(old, new, output_path, tmp_path / "fields.parquet", **fields)
+    assert ("U1", "Town U1") in {row[:2] for row in _read_changelog(output_path)}
+    with pytest.raises(ValueError, match="must be given together"):
+        change(old, new, output_path, code_field_b="adm{n}_pcode")
+
+
+def test_change_link_by_code_without_detected_column(old_layer, new_layer, tmp_path):
+    with pytest.raises(ValueError, match="--link-by-code needs a code column"):
+        change(
+            old_layer,
+            new_layer,
+            tmp_path / "out.csv",
+            tmp_path / "out_overlay.parquet",
+            link_by_code=True,
+            overwrite=True,
+        )
 
 
 def test_change_invalid_output_format(old_layer, new_layer, tmp_path):

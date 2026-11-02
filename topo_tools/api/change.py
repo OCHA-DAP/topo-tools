@@ -9,7 +9,7 @@ from topo_tools.core.change import _01_inputs as inputs
 from topo_tools.core.change import _02_overlap as overlap
 from topo_tools.core.change import _03_classify as classify
 from topo_tools.core.change import _04_outputs as outputs
-from topo_tools.core.change._columns import detect_code_column, detect_name_column
+from topo_tools.core.change._columns import detect_unit_columns
 from topo_tools.core.change._constants import (
     TABLE_COPY_OPTS,
     TAU_MATCH_DEFAULT,
@@ -39,20 +39,30 @@ _STEP_TABLES = {
 }
 
 
-def _resolve_column(
-    conn: DuckDBPyConnection, table: str, explicit: str | None, *, kind: str, side: str
-) -> str | None:
-    if explicit is not None:
+def _resolve_columns(  # noqa: PLR0913, PLR0917
+    conn: DuckDBPyConnection,
+    table: str,
+    side: str,
+    explicit: dict[str, str | None],
+    fields: tuple[str | None, str | None],
+    linked: dict[str, bool],
+) -> dict[str, str | None]:
+    """Return {kind: column} for one side, detecting any column not given."""
+    if all(explicit.values()):
         return explicit
-    detector = detect_code_column if kind == "code" else detect_name_column
-    column = detector(conn, table)
-    if column is None:
-        msg = (
-            f"--link-by-{kind} was requested but no {kind} column could be "
-            f"auto-detected on the {side} side; pass --{kind}-column-{side} explicitly"
-        )
-        raise ValueError(msg)
-    return column
+    detected = dict(
+        zip(("code", "name"), detect_unit_columns(conn, table, *fields), strict=True)
+    )
+    resolved = {kind: explicit[kind] or detected[kind] for kind in explicit}
+    for kind, column in resolved.items():
+        if column is not None:
+            continue
+        hint = f"pass --{kind}-column-{side} explicitly"
+        if linked[kind]:
+            msg = f"--link-by-{kind} needs a {kind} column on the {side} side; {hint}"
+            raise ValueError(msg)
+        logger.warning("no %s column detected on the %s side; %s", kind, side, hint)
+    return resolved
 
 
 def change(  # noqa: C901, PLR0912, PLR0913
@@ -70,6 +80,10 @@ def change(  # noqa: C901, PLR0912, PLR0913
     code_column_b: str | None = None,
     name_column_a: str | None = None,
     name_column_b: str | None = None,
+    name_field_a: str | None = None,
+    code_field_a: str | None = None,
+    name_field_b: str | None = None,
+    code_field_b: str | None = None,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
     overwrite: bool = True,
@@ -140,33 +154,22 @@ def change(  # noqa: C901, PLR0912, PLR0913
             elif s == "overlap":
                 overlap.main(conn, name)
             elif s == "classify":
-                resolved_code_a = (
-                    _resolve_column(
-                        conn, f"{name}_a_01", code_column_a, kind="code", side="a"
-                    )
-                    if link_by_code
-                    else code_column_a
+                linked = {"code": link_by_code, "name": link_by_name}
+                a = _resolve_columns(
+                    conn,
+                    f"{name}_a_01",
+                    "a",
+                    {"code": code_column_a, "name": name_column_a},
+                    (name_field_a, code_field_a),
+                    linked,
                 )
-                resolved_code_b = (
-                    _resolve_column(
-                        conn, f"{name}_b_01", code_column_b, kind="code", side="b"
-                    )
-                    if link_by_code
-                    else code_column_b
-                )
-                resolved_name_a = (
-                    _resolve_column(
-                        conn, f"{name}_a_01", name_column_a, kind="name", side="a"
-                    )
-                    if link_by_name
-                    else name_column_a
-                )
-                resolved_name_b = (
-                    _resolve_column(
-                        conn, f"{name}_b_01", name_column_b, kind="name", side="b"
-                    )
-                    if link_by_name
-                    else name_column_b
+                b = _resolve_columns(
+                    conn,
+                    f"{name}_b_01",
+                    "b",
+                    {"code": code_column_b, "name": name_column_b},
+                    (name_field_b, code_field_b),
+                    linked,
                 )
                 classify.main(
                     conn,
@@ -176,10 +179,10 @@ def change(  # noqa: C901, PLR0912, PLR0913
                     link_by_code=link_by_code,
                     link_by_name=link_by_name,
                     link_mode=link_mode,
-                    code_col_a=resolved_code_a,
-                    code_col_b=resolved_code_b,
-                    name_col_a=resolved_name_a,
-                    name_col_b=resolved_name_b,
+                    code_col_a=a["code"],
+                    code_col_b=b["code"],
+                    name_col_a=a["name"],
+                    name_col_b=b["name"],
                 )
             elif s == "outputs":
                 outputs.main(conn, name, output_path, overlay_path, debug=debug)

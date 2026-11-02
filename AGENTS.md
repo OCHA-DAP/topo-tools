@@ -74,7 +74,7 @@ split):
   `core.duckdb_utils`/`core.units`/`core.admin_columns`; every tool package
   may import any of these eleven, none of them may import back, except `core.dissolve`'s one
   narrow, explicit carve-out below. `core.schema_map` is not a neutral leaf
-  but MAY be imported by `core.code_detect`, `core.schema_detect`, `core.schema_fill`, `core.schema_join`,
+  but MAY be imported by `core.change`, `core.code_detect`, `core.schema_detect`, `core.schema_fill`, `core.schema_join`,
   `core.dissolve`, `core.package_polygons`, `core.package_points`,
   `core.package_lines`,
   `core.code_create`, `core.code_update`, and `core.name_detect` specifically (the

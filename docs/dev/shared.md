@@ -53,9 +53,9 @@ in sync.
   or `core.schema_map` (see `docs/adr/0095`).
 - `core.code` (the shared code-format/cascade/rewrite primitive) MUST NOT
   depend on `code-create` or `code-update`.
-- `code-detect`, `code-create` and `code-update` MAY depend on `schema_map`'s
-  `name_field`/`code_field`/level-detection helpers; `schema_map` MUST NOT
-  depend on either.
+- `change`, `code-detect`, `code-create` and `code-update` MAY depend on
+  `schema_map`'s `name_field`/`code_field`/level-detection helpers;
+  `schema_map` MUST NOT depend on any of them.
 - `code-update` MAY depend on `core.dissolve`'s stage function directly;
   `core.dissolve` MUST NOT depend on `code-update`.
 - `code-update` MAY depend on `core.change`'s overlap and classify stage

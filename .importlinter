@@ -300,6 +300,14 @@ forbidden_modules =
     topo_tools.core.code_create
     topo_tools.core.code_update
 
+[importlinter:contract:change-may-use-schema_map-not-reverse]
+name = change may depend on schema_map; schema_map must not depend on change
+type = forbidden
+source_modules =
+    topo_tools.core.schema_map
+forbidden_modules =
+    topo_tools.core.change
+
 [importlinter:contract:name_detect-may-use-schema_map-not-reverse]
 name = name_detect may depend on schema_map; schema_map must not depend on name_detect
 type = forbidden

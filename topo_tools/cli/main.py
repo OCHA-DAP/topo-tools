@@ -1295,28 +1295,60 @@ def topo_clean(  # noqa: PLR0913, PLR0917
     "or only on both.",
 )
 @click.option(
+    "--name-field-a",
+    envvar="NAME_FIELD_A",
+    default=None,
+    help="Name column of each level in OLD_FILE, with {n} for the level "
+    "number, e.g. 'adm{n}_name'. Give it with --code-field-a. Without both, "
+    "levels are detected from the data.",
+)
+@click.option(
+    "--code-field-a",
+    envvar="CODE_FIELD_A",
+    default=None,
+    help="Code column of each level in OLD_FILE, with {n} for the level "
+    "number, e.g. 'adm{n}_pcode'. Give it with --name-field-a. Without both, "
+    "levels are detected from the data.",
+)
+@click.option(
+    "--name-field-b",
+    envvar="NAME_FIELD_B",
+    default=None,
+    help="Name column of each level in NEW_FILE, with {n} for the level "
+    "number. Give it with --code-field-b. Without both, levels are detected "
+    "from the data.",
+)
+@click.option(
+    "--code-field-b",
+    envvar="CODE_FIELD_B",
+    default=None,
+    help="Code column of each level in NEW_FILE, with {n} for the level "
+    "number. Give it with --name-field-b. Without both, levels are detected "
+    "from the data.",
+)
+@click.option(
     "--code-column-a",
     envvar="CODE_COLUMN_A",
     default=None,
-    help="Code column in OLD_FILE. Detected from the data if omitted.",
+    help="Code column in OLD_FILE. Defaults to the finest level's code column.",
 )
 @click.option(
     "--code-column-b",
     envvar="CODE_COLUMN_B",
     default=None,
-    help="Code column in NEW_FILE. Detected from the data if omitted.",
+    help="Code column in NEW_FILE. Defaults to the finest level's code column.",
 )
 @click.option(
     "--name-column-a",
     envvar="NAME_COLUMN_A",
     default=None,
-    help="Name column in OLD_FILE. Detected from the data if omitted.",
+    help="Name column in OLD_FILE. Defaults to the finest level's name column.",
 )
 @click.option(
     "--name-column-b",
     envvar="NAME_COLUMN_B",
     default=None,
-    help="Name column in NEW_FILE. Detected from the data if omitted.",
+    help="Name column in NEW_FILE. Defaults to the finest level's name column.",
 )
 @click.option(
     "--overwrite",
@@ -1369,6 +1401,10 @@ def change(  # noqa: PLR0913, PLR0917
     code_column_b: str | None,
     name_column_a: str | None,
     name_column_b: str | None,
+    name_field_a: str | None,
+    code_field_a: str | None,
+    name_field_b: str | None,
+    code_field_b: str | None,
     overwrite: bool,  # noqa: FBT001
     threads: int | None,
     debug: bool,  # noqa: FBT001
@@ -1390,8 +1426,7 @@ def change(  # noqa: PLR0913, PLR0917
 
     \b
       # Also match units that keep the same p-code
-      topo-tools change old.gpkg new.gpkg --link-by-code \\
-        --code-column-a adm2_pcode --code-column-b adm2_pcode
+      topo-tools change old.gpkg new.gpkg --link-by-code
 
     \b
       # Accept less overlap, for heavily redrawn boundaries
@@ -1417,6 +1452,10 @@ def change(  # noqa: PLR0913, PLR0917
             code_column_b=code_column_b,
             name_column_a=name_column_a,
             name_column_b=name_column_b,
+            name_field_a=name_field_a,
+            code_field_a=code_field_a,
+            name_field_b=name_field_b,
+            code_field_b=code_field_b,
             threads=threads,
             tmp_dir=tmp_dir,
             overwrite=overwrite,
