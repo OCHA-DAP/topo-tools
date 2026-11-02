@@ -7,10 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-02
+
+### Removed
+
+- `edge-clip` and `edge-stitch`. Use `edge-mosaic` with one input file
+  instead of `edge-clip`, and `topo-clean` on the combined file instead of
+  `edge-stitch`.
+
 ### Changed
 
+- `edge-mosaic` and `edge-match` snap both sides of every overlay border to
+  shared border points before clipping, and run no final stitch. They report
+  invalid edges as `invalid-edge` issue rows instead of raising.
+- `edge-extend` starts each line's boundary points at a stable per-line
+  offset and skips points on ±180 and ±90, so extended edges can move by up
+  to one point spacing.
+- `edge-extend`'s merge stage is about 30 times faster on world adm0 layers.
+  Output matches to float level, with a few extra collinear vertices where
+  extended edges cross a border.
+- All geometry is tagged `OGC:CRS84`. GeoParquet outputs are GeoParquet 2.0;
+  other formats are stamped `EPSG:4326`.
 - The repository is OCHA-DAP/topo-tools, and the docs are at
   https://ocha-dap.github.io/cod-site/tools/docs/.
+
+### Fixed
+
+- Straight strips in `edge-extend` output, from wrong Voronoi cells near the
+  antimeridian or along aligned straight edges. `edge-extend` also raises if
+  a Voronoi cell holds more than one point.
+- `edge-extend` finishes on world adm0 layers on a 16 GB machine, and clips
+  input geometry past world bounds on read.
+- `edge-mosaic` and `edge-match` multi-file runs at global scale fit in
+  16 GB of memory.
+- The Homebrew formula updates again with DuckDB 2.0's abi3 wheels.
+- `schema-map --csv` accepts a crosswalk that lists `OBJECTID`, `GlobalID`
+  or other GIS bookkeeping columns, to drop or rename them.
+- The cod-ab skill's `metadata.py` runs on DuckDB 2.0, accepts source layers
+  with no URL, and takes a `--code-field` template.
 
 ## [0.18.0] - 2026-10-21
 
@@ -902,7 +936,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.16.0...v0.17.0
