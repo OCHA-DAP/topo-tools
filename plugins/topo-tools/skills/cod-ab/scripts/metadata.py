@@ -6,7 +6,9 @@
 # ///
 """Write 06_packaging/{iso3}_metadata.csv and .parquet in COD-AB metadata order.
 
-Run from the workspace root: uv run <skill-dir>/scripts/metadata.py <iso3> <version>
+Run from the workspace root:
+
+    uv run <skill-dir>/scripts/metadata.py <iso3> <version> [--code-field adm{n}_code]
 """
 
 import argparse
@@ -50,7 +52,7 @@ _COLUMNS = [
     "caveats",
 ]
 _INTEGERS = {"admin_level_full", "admin_level_max", "update_frequency"}
-_REQUIRED = ["source", "source_url", "contributor", "methodology_dataset"]
+_REQUIRED = ["source", "contributor", "methodology_dataset"]
 
 
 def _type(column: str) -> str:
@@ -67,25 +69,28 @@ def level_counts(packaging: Path, iso3: str) -> dict[int, int]:
     for n in range(1, _MAX_LEVEL + 1):
         path = packaging / f"{iso3}_admin{n}.parquet"
         if path.exists():
-            counts[n] = duckdb.sql(f"SELECT count(*) FROM '{path}'").fetchone()[0]
+            sql = f"SELECT count(*) FROM '{path}'"
+            counts[n] = duckdb.execute(sql).fetchall()[0][0]
     return counts
 
 
-def full_level(packaging: Path, iso3: str, max_level: int) -> int:
+def full_level(packaging: Path, iso3: str, max_level: int, code_field: str) -> int:
     """Return the deepest level whose code is set on every unit of the finest layer."""
     path = packaging / f"{iso3}_admin{max_level}.parquet"
     columns = {r[0] for r in duckdb.sql(f"DESCRIBE SELECT * FROM '{path}'").fetchall()}
     for n in range(max_level, 1, -1):
-        code = f"adm{n}_pcode"
+        code = code_field.format(n=n)
         if code not in columns:
             return max_level
         blank = f"SELECT count(*) FROM '{path}' WHERE coalesce(trim({code}), '') = ''"
-        if duckdb.sql(blank).fetchone()[0] == 0:
+        if duckdb.execute(blank).fetchall()[0][0] == 0:
             return n
     return 1
 
 
-def build_record(iso3: str, version: str, record: dict, settings: dict) -> dict:
+def build_record(
+    iso3: str, version: str, record: dict, settings: dict, code_field: str
+) -> dict:
     """Merge the working record, workspace settings and packaged layers into one row."""
     packaging = Path("02_working") / iso3 / version / "06_packaging"
     counts = level_counts(packaging, iso3)
@@ -102,7 +107,7 @@ def build_record(iso3: str, version: str, record: dict, settings: dict) -> dict:
         "country_iso2": record.get("country_iso2", "").upper(),
         "country_iso3": iso3.upper(),
         "version": version,
-        "admin_level_full": full_level(packaging, iso3, max_level),
+        "admin_level_full": full_level(packaging, iso3, max_level, code_field),
         "admin_level_max": max_level,
         "admin_notes": " ".join(record.get("admin_notes", [])),
         "date_source": max(source_dates, default=""),
@@ -114,7 +119,7 @@ def build_record(iso3: str, version: str, record: dict, settings: dict) -> dict:
         "update_frequency": settings.get("update_frequency", 1),
         "update_type": record.get("update_type", "major"),
         "source": record.get("source", ""),
-        "source_url": "; ".join(layer["url"] for layer in layers),
+        "source_url": "; ".join(layer["url"] for layer in layers if layer.get("url")),
         "contributor": settings.get("contributor", ""),
         "methodology_dataset": record.get("methodology_dataset", ""),
         "methodology_pcodes": record.get("methodology_pcodes", ""),
@@ -131,6 +136,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Write the COD-AB metadata CSV.")
     parser.add_argument("iso3", help="Country ISO3 code (e.g. syr)")
     parser.add_argument("version", help="Dataset version (e.g. v01)")
+    parser.add_argument("--code-field", default="adm{n}_code")
     args = parser.parse_args()
     iso3 = args.iso3.lower()
 
@@ -138,7 +144,7 @@ def main() -> None:
     record = json.loads((working / "metadata.json").read_text(encoding="utf-8"))
     with Path("pyproject.toml").open("rb") as f:
         settings = tomllib.load(f).get("tool", {}).get("topo-tools-cod-ab", {})
-    row = build_record(iso3, args.version, record, settings)
+    row = build_record(iso3, args.version, record, settings, args.code_field)
 
     out = working / "06_packaging" / f"{iso3}_metadata.csv"
     with out.open("w", newline="", encoding="utf-8") as f:
