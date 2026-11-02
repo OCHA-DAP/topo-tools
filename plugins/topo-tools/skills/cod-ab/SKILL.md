@@ -70,7 +70,8 @@ https://astral.sh/uv/install.ps1 | iex"` on Windows).
      there's none). Then write `02_working/{iso3}/{version}/metadata.json`
      with `country_name`, `country_iso2`, `source` (the organisation) and
      `source_layers`, one entry per layer used: `level`, `url` (the layer's
-     own endpoint or file link, never a query URL or viewer page), `request`
+     own endpoint or file link, never a query URL or viewer page, null for
+     data handed over directly without a download URL), `request`
      (the exact download request), `date_fetched`, and `date_updated` from
      the layer's own metadata (an ArcGIS layer's
      `editingInfo.lastEditDate`, else the latest value of a per-feature
@@ -321,8 +322,8 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    [COD-AB metadata](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/6-packaging/metadata.md)
    columns, from `metadata.json`, the
    `[tool.topo-tools-cod-ab]` table and the packaged layers, and exits
-   non-zero when `source`, `source_url`, `contributor` or
-   `methodology_dataset` is empty: ask for each, then rerun. Show the user
+   non-zero when `source`, `contributor` or `methodology_dataset` is
+   empty: ask for each, then rerun. Show the user
    the printed record and any open licence condition.
 
 ## Candidates

@@ -29,7 +29,7 @@ means unknown. All COD-AB data is published under CC BY-IGO.
 | `update_frequency` | integer | yes | Years between source updates, 1 or 2 |
 | `update_type` | text | yes | `major`, or `minor` when no boundary changed |
 | `source` | text | yes | Organisation(s) that produced the data |
-| `source_url` | text | yes | URL of each source layer, `; `-separated, coarsest level first |
+| `source_url` | text | no | URL of each source layer, `; `-separated, coarsest level first, empty for data handed over without a download URL |
 | `contributor` | text | yes | OCHA office or team that processed the data |
 | `methodology_dataset` | text | yes | How the data was obtained and processed, including licence attribution conditions |
 | `methodology_pcodes` | text | no | How codes were assigned |

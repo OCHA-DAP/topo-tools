@@ -52,7 +52,7 @@ _COLUMNS = [
     "caveats",
 ]
 _INTEGERS = {"admin_level_full", "admin_level_max", "update_frequency"}
-_REQUIRED = ["source", "source_url", "contributor", "methodology_dataset"]
+_REQUIRED = ["source", "contributor", "methodology_dataset"]
 
 
 def _type(column: str) -> str:
