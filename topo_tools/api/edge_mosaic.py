@@ -21,6 +21,7 @@ from topo_tools.core.assign import (
     prepare_overlay_tiles,
     resolve_merge_columns,
     union_bbox,
+    union_input_schema,
     validate_merge_flags,
 )
 from topo_tools.core.clip import build_tiles
@@ -407,28 +408,28 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     paths = sort_paths_by_column_count_desc(conn, paths)
 
     combined_bbox: tuple[float, float, float, float] | None = None
-    resolved_overlay_columns: list[str] | None = None
-    resolved_input_columns: list[str] | None = None
     for i, file_path in enumerate(paths):
         load_input(conn, name, [file_path])
         check_input(conn, name, file_path)
-        if i == 0:
-            resolved_overlay_columns, resolved_input_columns = resolve_merge_columns(
-                conn,
-                name,
-                merge=merge,
-                overlay_include=overlay_include,
-                overlay_exclude=overlay_exclude,
-                input_include=input_include,
-                input_exclude=input_exclude,
-                prefer=prefer,
-            )
+        union_input_schema(conn, name, first=i == 0)
         bbox = input_bbox_extent(conn, name)
         if bbox is not None:
             combined_bbox = (
                 bbox if combined_bbox is None else union_bbox(combined_bbox, bbox)
             )
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
+    resolved_overlay_columns, resolved_input_columns = resolve_merge_columns(
+        conn,
+        name,
+        merge=merge,
+        overlay_include=overlay_include,
+        overlay_exclude=overlay_exclude,
+        input_include=input_include,
+        input_exclude=input_exclude,
+        prefer=prefer,
+        input_table=f"{name}_input_schema",
+    )
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_input_schema"')
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge

@@ -87,6 +87,7 @@ def resolve_merge_columns(  # noqa: PLR0913
     input_include: list[str] | None,
     input_exclude: list[str] | None,
     prefer: str | None,
+    input_table: str | None = None,
 ) -> tuple[list[str] | None, list[str] | None]:
     """Resolve merge settings into concrete (overlay_columns, input_columns) lists."""
     if not merge:
@@ -100,7 +101,7 @@ def resolve_merge_columns(  # noqa: PLR0913
     )
     input_columns = resolve_column_selection(
         conn,
-        f"{name}_input_01",
+        input_table or f"{name}_input_01",
         include=input_include,
         exclude=input_exclude,
         always_include=("fid", "geom", "source_file"),
@@ -110,3 +111,12 @@ def resolve_merge_columns(  # noqa: PLR0913
     elif prefer == "input":
         overlay_columns = [c for c in overlay_columns if c not in set(input_columns)]
     return overlay_columns, input_columns
+
+
+def union_input_schema(conn: DuckDBPyConnection, name: str, *, first: bool) -> None:
+    """Add `{name}_input_01`'s columns to the empty `{name}_input_schema` table."""
+    union = "" if first else f'SELECT * FROM "{name}_input_schema" UNION ALL BY NAME '
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_input_schema" AS
+        {union}SELECT * FROM "{name}_input_01" LIMIT 0
+    """)

@@ -1298,3 +1298,41 @@ def test_match_merge_orphan_leaves_matched_row_whole(tmp_path, clean):
         kinds = conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
     assert area == pytest.approx(16.0)
     assert ("invalid-edge",) not in kinds
+
+
+def _write_columns(path, columns, values):
+    """Write one row of `values` (WKT last) under `columns` (geom last) to path."""
+    sql = ", ".join(
+        [*(repr(v) for v in values[:-1]), f"ST_GeomFromText('{values[-1]}')"]
+    )
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"""--sql
+            CREATE TABLE t AS SELECT * FROM (VALUES ({sql})) AS t({", ".join(columns)})
+        """)
+        conn.execute(f"COPY t TO '{path}'")
+
+
+def test_match_merge_multi_file_columns_follow_every_file(tmp_path):
+    overlays_path = tmp_path / "parents.parquet"
+    _write_overlay_pcode_only(
+        overlays_path, [(1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))", "P1")]
+    )
+    deep, shallow = tmp_path / "deep.parquet", tmp_path / "shallow.parquet"
+    _write_columns(
+        deep, ["id", "adm1_name", "adm2_name", "geom"], [1, "A", "A1", _INPUT_WKT[0][1]]
+    )
+    _write_columns(
+        shallow, ["id", "adm1_name", "note", "geom"], [2, "B", "x", _INPUT_WKT[1][1]]
+    )
+
+    output_path = tmp_path / "out.parquet"
+    match([deep, shallow], overlays_path, output_path, merge=True, overwrite=True)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(f"""--sql
+            SELECT adm1_name, adm2_name, note FROM '{output_path}'
+            WHERE adm1_name IS NOT NULL ORDER BY 1
+        """).fetchall()
+    assert rows == [("A", "A1", None), ("B", None, "x")]

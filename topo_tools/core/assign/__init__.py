@@ -3,6 +3,7 @@
 from ._column_selection import (
     resolve_column_selection,
     resolve_merge_columns,
+    union_input_schema,
     validate_merge_flags,
 )
 from ._gap_fill import fill_unmatched_overlays
@@ -34,5 +35,6 @@ __all__ = [
     "resolve_column_selection",
     "resolve_merge_columns",
     "union_bbox",
+    "union_input_schema",
     "validate_merge_flags",
 ]
