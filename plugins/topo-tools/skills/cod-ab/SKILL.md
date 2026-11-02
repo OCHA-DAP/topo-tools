@@ -315,8 +315,9 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    the stage 3 output, and package that.
 
    After packaging, run `uv run <skill-dir>/scripts/metadata.py {iso3} {version}`
-   from the workspace root. It writes `06_packaging/{iso3}_metadata.csv`
-   and `{iso3}_metadata.parquet` with the
+   with the stage 4 `--code-field` template, from the workspace root. It
+   writes `06_packaging/{iso3}_metadata.csv` and `{iso3}_metadata.parquet`
+   with the
    [COD-AB metadata](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/docs/pages/6-packaging/metadata.md)
    columns, from `metadata.json`, the
    `[tool.topo-tools-cod-ab]` table and the packaged layers, and exits
