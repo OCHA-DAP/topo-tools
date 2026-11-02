@@ -40,5 +40,6 @@ keeps its original.
   symmetric difference per row is 3e-15 square degrees on the world layer
   and 4e-14 on the West Africa adm2 cluster.
 - Rows gain collinear vertices where a cell edge crosses a border: 0.04%
-  more vertices on the world layer, 0.1 to 0.7% per West Africa country.
+  more vertices on the world layer and a median of 0.27% across 42 portolan
+  admin1/admin2 files, up to 4.6% on a 963-vertex file.
 - A cell is snapped to other fids' originals only, not its own.
