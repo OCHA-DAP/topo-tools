@@ -76,12 +76,13 @@ def validate_and_materialize_crosswalk(
     path: Path | str,
 ) -> None:
     """Validate crosswalk rows against table's columns, writing `{name}_crosswalk`."""
+    crosswalk_columns = {row["source_column"] for row in crosswalk}
     actual_columns = {
         r[0]
         for r in conn.execute(f'DESCRIBE "{table}"').fetchall()
-        if r[0] not in {"fid", "geom"} and not is_noise_column(r[0])
+        if r[0] not in {"fid", "geom"}
+        and (not is_noise_column(r[0]) or r[0] in crosswalk_columns)
     }
-    crosswalk_columns = {row["source_column"] for row in crosswalk}
     _validate_columns_match(crosswalk_columns, actual_columns, path)
     _validate_targets(crosswalk)
 

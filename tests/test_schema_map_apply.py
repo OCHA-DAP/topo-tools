@@ -402,3 +402,33 @@ def test_warns_when_numbered_sibling_precedes_its_base(apply_input, tmp_path, ca
         columns = [d[0] for d in conn.execute(f"SELECT * FROM '{out}'").description]
     assert columns == ["geometry", "adm1_name1", "adm1_name"]
     assert "numbered siblings of ['adm1_name'] are out of order" in caplog.text
+
+
+def test_noise_columns_listed_in_crosswalk_accepted(tmp_path):
+    """A crosswalk naming OBJECTID/GlobalID (as schema-map writes it) still applies."""
+    path = tmp_path / "noisy_input.parquet"
+    _write_table(
+        path,
+        ["geom", "Name_Old", "OBJECTID", "GlobalID"],
+        [
+            (_unit_square(0), "Alpha", "1", "a"),
+            (_unit_square(1), "Beta", "2", "b"),
+        ],
+    )
+    crosswalk = _write_crosswalk(
+        tmp_path / "crosswalk.csv",
+        [
+            {"source_column": "Name_Old", "target_column": "adm1_name"},
+            {"source_column": "OBJECTID", "target_column": None},
+            {"source_column": "GlobalID", "target_column": "global_id"},
+        ],
+    )
+    out = tmp_path / "out.parquet"
+    apply_crosswalk(path, crosswalk, out, overwrite=True)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        columns = {
+            r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM '{out}'").fetchall()
+        }
+    assert columns == {"adm1_name", "global_id", "geometry"}
