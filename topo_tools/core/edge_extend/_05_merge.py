@@ -52,8 +52,11 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
         total += n
 
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_05_tmp2" AS SELECT fid, geom FROM "{name}_01"
+        CREATE OR REPLACE TABLE "{name}_05_tmp2" AS
+        SELECT fid, geom FROM "{name}_01" WHERE false
     """)
+    # Each fid is (cell minus other fids) plus (its original outside the cell),
+    # so its own coastline is never noded only to be dissolved away again.
     # Bbox-prefiltered self-join per fid against nearby _01 parts only, never
     # one global ST_Union_Agg(_01) blob as the per-fid ST_Difference operand.
     for i, (lo, hi) in enumerate(batches, 1):
@@ -70,7 +73,8 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
                 SELECT v.fid AS vfid, ST_Union_Agg(p.part_geom) AS geom
                 FROM v
                 JOIN "{name}_05_tmp1" p
-                  ON p.xmax >= v.xmin AND p.xmin <= v.xmax
+                  ON p.fid <> v.fid
+                 AND p.xmax >= v.xmin AND p.xmin <= v.xmax
                  AND p.ymax >= v.ymin AND p.ymin <= v.ymax
                  AND ST_Intersects(p.part_geom, v.geom)
                 GROUP BY v.fid
@@ -85,31 +89,41 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
                 FROM v
                 LEFT JOIN neighbor_union n ON v.fid = n.vfid
             ),
-            remainder AS (
-                SELECT fid,
+            pieces AS (
+                SELECT s.fid,
                     ST_MakeValid(ST_CollectionExtract(
-                        CASE WHEN neighbor_geom IS NOT NULL
-                            THEN ST_Difference(geom, neighbor_geom)
-                            ELSE geom
+                        CASE WHEN s.neighbor_geom IS NOT NULL
+                            THEN ST_Difference(s.geom, s.neighbor_geom)
+                            ELSE s.geom
                         END, 3
-                    )) AS geom
-                FROM snapped
+                    )) AS extension,
+                    ST_CollectionExtract(ST_Difference(o.geom, s.geom), 3) AS outside
+                FROM snapped s
+                JOIN "{name}_01" o USING (fid)
             )
-            SELECT fid, geom FROM remainder WHERE NOT ST_IsEmpty(geom)
+            SELECT fid,
+                CASE
+                    WHEN ST_IsEmpty(outside) THEN extension
+                    WHEN ST_IsEmpty(extension) THEN outside
+                    ELSE ST_Union(extension, outside)
+                END AS geom
+            FROM pieces
         """)
+    # A fid with no Voronoi cell keeps its original geometry.
+    conn.execute(f"""--sql
+        INSERT INTO "{name}_05_tmp2"
+        SELECT fid, geom FROM "{name}_01"
+        WHERE fid NOT IN (SELECT fid FROM "{name}_05_tmp2")
+    """)
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_05_tmp1"')
 
-    # Dissolve to one row per fid, reattach original attribute columns.
+    # Reattach original attribute columns.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_05_tmp3" AS
         SELECT o.* EXCLUDE (geom), d.geom
-        FROM (
-            SELECT fid, ST_Union_Agg(geom) AS geom
-            FROM "{name}_05_tmp2"
-            GROUP BY fid
-        ) d
+        FROM "{name}_05_tmp2" d
         JOIN "{name}_01" o USING (fid)
     """)
 

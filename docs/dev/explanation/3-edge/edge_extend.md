@@ -82,7 +82,7 @@ The overall processing can be broken down into 4 distinct types of geometry tran
 | :--------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------: |
 | ![](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/img/tza_05.png) | ![](https://raw.githubusercontent.com/OCHA-DAP/topo-tools/main/img/tza_06.png) |
 
-**Polygon-Voronoi Merge:** The original polygon is overlayed in a union with the voronoi. Boundaries from the inner area are kept from the original, dissolved with polygons containing matching attributes from the outside area. The dissolved layer is the final output of the tool.
+**Polygon-Voronoi Merge:** Each polygon's Voronoi area, minus every other original polygon, is joined with any part of the original that falls outside that area. A polygon's own coastline is never overlaid, since the join would only remove it again (see `docs/adr/0147`). The result is the final output of the tool.
 
 |                               Original over Voronoi                                |                                    Final Output                                    |
 | :--------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------: |
