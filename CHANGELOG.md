@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-02
+
+### Fixed
+
+- `change` fills the changelog's `code_*`/`name_*` columns from the finest
+  detected admin level, and takes `--name-field-a/-b` and
+  `--code-field-a/-b`.
+
 ## [0.19.0] - 2026-11-02
 
 ### Removed
@@ -936,7 +944,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.17.0...v0.17.1
