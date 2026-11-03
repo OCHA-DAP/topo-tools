@@ -18,9 +18,10 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 - The input role MAY span multiple files (e.g. one raw admin boundary file
   per country), combined internally. The overlay layer MUST remain a
   single file.
-- The main output MUST NOT carry a `source_file` column; it is an
-  internal working column only, used by `assign-one`'s per-file grouping
-  (see `docs/dev/explanation/3-edge/assign.md`), not exported. The issues report MAY
+- The main output MUST NOT carry a `source_file` or `overlay_fid` column.
+  `source_file` is used by `assign-one`'s per-file grouping (see
+  `docs/dev/explanation/3-edge/assign.md`) and `overlay_fid` marks gap-fill
+  rows; both are internal working columns only. The issues report MAY
   carry `source_file`, shortened to its parent directory plus filename
   (e.g. `sen/adm2.parquet`), never the full input path (see
   `docs/adr/0087`).

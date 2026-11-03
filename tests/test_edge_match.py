@@ -722,12 +722,12 @@ def test_match_gap_fill_keeps_unmatched_overlay(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         rows = conn.execute(
-            f"SELECT overlay_fid, pcode FROM '{output_path}' WHERE overlay_fid = 2"
+            f"SELECT pcode FROM '{output_path}' WHERE pcode = 'P2'"
         ).fetchall()
         issue_rows = conn.execute(
             f"SELECT kind, overlay_fid FROM '{issues_path}' WHERE kind = 'gap-fill'"
         ).fetchall()
-    assert rows == [(2, "P2")]
+    assert rows == [("P2",)]
     assert issue_rows == [("gap-fill", 2)]
 
 

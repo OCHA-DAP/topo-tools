@@ -821,12 +821,12 @@ def test_mosaic_gap_fill_keeps_unmatched_overlay(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         rows = conn.execute(
-            f"SELECT overlay_fid, pcode FROM '{output_path}' WHERE overlay_fid = 2"
+            f"SELECT pcode FROM '{output_path}' WHERE pcode = 'P2'"
         ).fetchall()
         issue_rows = conn.execute(
             f"SELECT kind, overlay_fid FROM '{issues_path}' WHERE kind = 'gap-fill'"
         ).fetchall()
-    assert rows == [(2, "P2")]
+    assert rows == [("P2",)]
     assert issue_rows == [("gap-fill", 2)]
 
 
@@ -891,10 +891,10 @@ def test_mosaic_gap_fill_merged_columns_populated(tmp_path):
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        pcode = conn.execute(
-            f"SELECT pcode FROM '{output_path}' WHERE overlay_fid = 2"
-        ).fetchone()[0]
-    assert pcode == "P2"
+        pcodes = conn.execute(
+            f"SELECT pcode FROM '{output_path}' ORDER BY pcode"
+        ).fetchall()
+    assert ("P2",) in pcodes
 
 
 def test_cli_merge_gap_fill(tmp_path):
@@ -922,14 +922,12 @@ def test_cli_merge_gap_fill(tmp_path):
     assert result.exit_code == 0, result.output
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        overlay_fids = {
-            row[0]
-            for row in conn.execute(
-                f"SELECT overlay_fid FROM '{output_path}'"
-            ).fetchall()
-        }
-    gap_filled_overlay_fid = 2
-    assert gap_filled_overlay_fid in overlay_fids
+        columns = [
+            d[0] for d in conn.execute(f"SELECT * FROM '{output_path}'").description
+        ]
+        pcodes = conn.execute(f"SELECT pcode FROM '{output_path}'").fetchall()
+    assert "overlay_fid" not in columns
+    assert ("P2",) in pcodes
 
 
 def test_cli_merge_help():

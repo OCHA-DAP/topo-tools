@@ -157,7 +157,8 @@ def main(  # noqa: PLR0913
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_04_export" AS
-        SELECT * EXCLUDE (source_file) FROM "{name}_04"
+        SELECT COLUMNS(lambda c: c NOT IN ('source_file', 'overlay_fid'))
+        FROM "{name}_04"
     """)
     export_geometry_table(conn, f"{name}_04_export", dest)
     export_issues_table(conn, f"{name}_05", issues_dest)
