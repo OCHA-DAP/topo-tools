@@ -1491,3 +1491,37 @@ def test_mosaic_multi_file_issue_rows_share_one_fid_space(synthetic_overlays, tm
             """).fetchall()
         )
     assert rows == {"invalid-edge": [1, 3], "clip-empty": [2]}
+
+
+def test_mosaic_leaves_passthrough_rows_out_of_the_invalid_edge_check(
+    synthetic_overlays, tmp_path
+):
+    matched = tmp_path / "matched.parquet"
+    far_a, far_b = tmp_path / "far_a.parquet", tmp_path / "far_b.parquet"
+    _write_synthetic(matched, [(1, "POLYGON((-1 -1, 4 -1, 4 4, -1 4, -1 -1))")])
+    _write_synthetic(far_a, [(2, "POLYGON((100 80, 102 80, 102 82, 100 82, 100 80))")])
+    _write_synthetic(far_b, [(3, "POLYGON((101 80, 103 80, 103 82, 101 82, 101 80))")])
+    output_path = tmp_path / "out.parquet"
+    issues_path = tmp_path / "issues.parquet"
+    mosaic(
+        [matched, far_a, far_b],
+        synthetic_overlays,
+        output_path,
+        issues_path,
+        merge=True,
+        prefer="input",
+        clean=False,
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(f"""
+            CREATE TABLE far AS SELECT geometry AS geom FROM '{output_path}'
+            WHERE id IN (2, 3)
+        """)
+        kinds = conn.execute(
+            f"SELECT kind, count(*) FROM '{issues_path}' GROUP BY 1 ORDER BY 1"
+        ).fetchall()
+        assert has_invalid_edges(conn, "far")
+    assert kinds == [("gap-fill", 1), ("passthrough", 2)]
