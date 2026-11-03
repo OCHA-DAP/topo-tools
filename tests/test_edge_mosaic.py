@@ -1463,3 +1463,31 @@ def test_mosaic_merge_multi_file_columns_follow_every_file(tmp_path, input_exclu
             WHERE adm1_name IS NOT NULL ORDER BY 1
         """).fetchall()
     assert rows == [("A", "A1", None), ("B", None, "x")]
+
+
+def test_mosaic_multi_file_issue_rows_share_one_fid_space(synthetic_overlays, tmp_path):
+    path_a, path_b = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(path_a, [(1, "POLYGON((-1 -1, 4 -1, 4 1.5, -1 1.5, -1 -1))")])
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        # The extra column sorts b first, so its fids come before a's.
+        conn.execute(f"""
+            COPY (SELECT * FROM (VALUES
+                (2, 'x', ST_GeomFromText('POLYGON((-1 1, 4 1, 4 4, -1 4, -1 1))')),
+                (3, 'x', ST_GeomFromText('POLYGON((20 20, 21 20, 21 21, 20 20))'))
+            ) AS t(id, extra, geom)) TO '{path_b}'
+        """)
+    output_path = tmp_path / "out.parquet"
+    issues_path = tmp_path / "issues.parquet"
+    mosaic([path_a, path_b], synthetic_overlays, output_path, issues_path)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = dict(
+            conn.execute(f"""
+                SELECT kind, list(DISTINCT u ORDER BY u) FROM (
+                    SELECT kind, unnest([unit_a, unit_b]) AS u FROM '{issues_path}'
+                ) WHERE u IS NOT NULL GROUP BY kind
+            """).fetchall()
+        )
+    assert rows == {"invalid-edge": [1, 3], "clip-empty": [2]}

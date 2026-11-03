@@ -548,16 +548,9 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         msg = f"mosaic: no input polygon got an overlay for {name}"
         raise RuntimeError(msg)
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_03" AS
-        SELECT * EXCLUDE (fid), ROW_NUMBER() OVER () AS fid, fid AS input_fid
-        FROM "{name}_03"
-    """)
-    conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_passthrough" AS
-        SELECT fid FROM "{name}_03"
-        WHERE input_fid IN (SELECT input_fid FROM "{name}_02_unassigned")
+        SELECT input_fid AS fid FROM "{name}_02_unassigned"
     """)
-    conn.execute(f'ALTER TABLE "{name}_03" DROP COLUMN input_fid')
 
     if clean:
         clean_stage.main(
