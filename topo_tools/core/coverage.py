@@ -16,6 +16,7 @@ from topo_tools.core.constants import (
     NOTCH_SPACING,
     NOTCH_WINDOW_MARGIN,
     SNAP_TOLERANCE,
+    UNCOVERED_AREA_RATIO,
 )
 from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 from topo_tools.core.units import METERS_PER_DEGREE, m2_per_deg2_factor
@@ -490,13 +491,9 @@ def gap_issues_sql(
     table: str,
     *,
     min_width: float = SNAP_TOLERANCE,
-    within: str | None = None,
     coverage: bool = False,
 ) -> str:
-    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema.
-
-    `within` (a query yielding `geom`) keeps only gaps whose interior point it covers.
-    """
+    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema."""
     m2_per_deg2 = m2_per_deg2_factor(conn, table)
     width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
     thinness_ratio = "4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)"
@@ -513,22 +510,59 @@ def gap_issues_sql(
                NULL::VARCHAR AS source_file, geom
         FROM {gap_geometries_sql(table, coverage=coverage)} g
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
-        {"" if within is None else _point_within_sql("g.geom", within)}
     """
 
 
-def _point_within_sql(geom: str, within: str) -> str:
-    """Build an AND clause: `geom`'s interior point lies in a `within` geometry."""
-    return f"""AND EXISTS (
-            SELECT 1 FROM (
-                SELECT geom, ST_XMin(geom) AS xmin, ST_XMax(geom) AS xmax,
-                       ST_YMin(geom) AS ymin, ST_YMax(geom) AS ymax
-                FROM ({within})
-            ) w, (SELECT ST_PointOnSurface({geom}) AS pt) q
-            WHERE ST_X(q.pt) BETWEEN w.xmin AND w.xmax
-              AND ST_Y(q.pt) BETWEEN w.ymin AND w.ymax
-              AND ST_Intersects(w.geom, q.pt)
-        )"""
+def uncovered_overlay_issues_sql(
+    conn: DuckDBPyConnection,
+    table: str,
+    overlay_table: str,
+    cover_table: str,
+    *,
+    min_width: float = SNAP_TOLERANCE,
+) -> str:
+    """Build SQL for gap rows: overlay area no `table` row covers, per overlay fid.
+
+    Only an overlay whose `cover_table` (overlay_fid, area) sum falls short is unioned.
+    """
+    m2_per_deg2 = m2_per_deg2_factor(conn, table)
+    width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
+    return f"""SELECT * FROM (
+        WITH short AS (
+            SELECT o.fid, o.geom, {bbox_columns_sql("o.geom")}
+            FROM "{overlay_table}" o
+            JOIN (
+                SELECT overlay_fid, sum(area) AS area FROM "{cover_table}" GROUP BY 1
+            ) c ON c.overlay_fid = o.fid
+            WHERE c.area < ST_Area(o.geom) * (1 - {UNCOVERED_AREA_RATIO})
+        ),
+        rows AS (SELECT geom, {bbox_columns_sql("geom")} FROM "{table}"),
+        gaps AS (
+            SELECT fid, UNNEST(ST_Dump(ST_Difference(
+                any_value(s.geom), ST_Union_Agg(ST_Intersection(r.geom, s.geom))
+            ))).geom AS geom
+            FROM short s
+            JOIN rows r ON r.xmax >= s.xmin AND r.xmin <= s.xmax
+             AND r.ymax >= s.ymin AND r.ymin <= s.ymax
+            GROUP BY fid
+        )
+        SELECT 'gap-' || fid || '-' || row_number() OVER (
+                   PARTITION BY fid ORDER BY hash(geom)
+               ) AS key, 'gap' AS kind,
+               NULL::BIGINT AS unit_a, NULL::BIGINT AS unit_b, fid AS overlay_fid,
+               'overlay area no output row covers' AS reason,
+               ST_Area(geom) * {m2_per_deg2} AS area_m2, {width_m} AS max_width_m,
+               4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)
+                   AS thinness_ratio,
+               NULL::DOUBLE AS near_length_m,
+               NULL::DOUBLE AS unit_a_area_change_m2,
+               NULL::DOUBLE AS unit_b_area_change_m2,
+               NULL::DOUBLE AS filled_area_m2, FALSE AS fixed,
+               NULL::VARCHAR AS source_file, geom
+        FROM gaps
+        WHERE ST_Dimension(geom) = 2
+          AND (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
+    )"""
 
 
 def short_source_file_sql(column: str) -> str:

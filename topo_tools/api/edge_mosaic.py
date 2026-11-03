@@ -54,7 +54,13 @@ _STEP_ORDER = ["inputs", "assign", "clip", "clean", "outputs"]
 _STEP_TABLES = {
     "inputs": ["{n}_input_01", "{n}_overlay_01", "{n}_overlay_full", "{n}_original_01"],
     "assign": ["{n}_02_pairs", "{n}_02_assign", "{n}_02_unassigned"],
-    "clip": ["{n}_03", "{n}_03_dropped", "{n}_03_detached", "{n}_02_gap_fill"],
+    "clip": [
+        "{n}_03",
+        "{n}_03_dropped",
+        "{n}_03_detached",
+        "{n}_03_cover",
+        "{n}_02_gap_fill",
+    ],
     "clean": ["{n}_03", "{n}_03_micro"],
     "outputs": [],
 }
@@ -443,6 +449,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         f"{name}_02_unassigned": f"{name}_02_unassigned",
         f"{name}_03_iter_dropped": f"{name}_03_dropped",
         f"{name}_03_iter_detached": f"{name}_03_detached",
+        f"{name}_03_iter_cover": f"{name}_03_cover",
     }
     spill_dir = tmp_dir_path / f"{name}_spill"
     shutil.rmtree(spill_dir, ignore_errors=True)
@@ -515,6 +522,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
     if not debug:
         shutil.rmtree(assigned_dir, ignore_errors=True)
 

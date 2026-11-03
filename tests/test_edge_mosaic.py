@@ -710,7 +710,7 @@ def test_match_overrides_spatial_and_reports_mismatch(tmp_path):
         ]
     # Clipped to overlay B's sliver (x:10-10.5), not overlay A's larger x:1-3.
     assert area == pytest.approx(0.5, abs=1e-6)
-    assert kinds == ["code-mismatch"]
+    assert sorted(kinds) == ["code-mismatch", "gap"]
 
 
 def test_match_falls_back_when_code_unmatched(tmp_path):
@@ -743,7 +743,7 @@ def test_match_falls_back_when_code_unmatched(tmp_path):
             row[0]
             for row in conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
         ]
-    assert kinds == ["code-fallback"]
+    assert sorted(kinds) == ["code-fallback", "gap"]
 
 
 def test_cli_match_help():
@@ -1084,7 +1084,7 @@ def test_mosaic_multi_file_zero_overlap_file_does_not_abort_batch(tmp_path):
             for row in conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
         ]
     assert ids == [1, 2]
-    assert kinds == ["unassigned"]
+    assert sorted(kinds) == ["gap", "gap", "unassigned"]
 
 
 def test_mosaic_multi_file_code_join_fid_stays_unique(tmp_path):
@@ -1473,13 +1473,15 @@ def test_mosaic_multi_file_issue_rows_share_one_fid_space(synthetic_overlays, tm
         # The extra column sorts b first, so its fids come before a's.
         conn.execute(f"""
             COPY (SELECT * FROM (VALUES
-                (2, 'x', ST_GeomFromText('POLYGON((-1 1, 4 1, 4 4, -1 4, -1 1))')),
+                (2, 'x', ST_GeomFromText(
+                    'POLYGON((-1 1.5, 1 1.5, 4 1.5, 4 4, -1 4, -1 1.5))'
+                )),
                 (3, 'x', ST_GeomFromText('POLYGON((20 20, 21 20, 21 21, 20 20))'))
             ) AS t(id, extra, geom)) TO '{path_b}'
         """)
     output_path = tmp_path / "out.parquet"
     issues_path = tmp_path / "issues.parquet"
-    mosaic([path_a, path_b], synthetic_overlays, output_path, issues_path)
+    mosaic([path_a, path_b], synthetic_overlays, output_path, issues_path, clean=False)
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
@@ -1525,3 +1527,37 @@ def test_mosaic_leaves_passthrough_rows_out_of_the_invalid_edge_check(
         ).fetchall()
         assert has_invalid_edges(conn, "far")
     assert kinds == [("gap-fill", 1), ("passthrough", 2)]
+
+
+@pytest.mark.parametrize("clean", [True, False])
+def test_mosaic_reports_overlay_area_no_input_covers(tmp_path, clean):
+    overlays_path = tmp_path / "parents.parquet"
+    _write_synthetic(
+        overlays_path,
+        [
+            (
+                1,
+                "MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)), ((5 0, 6 0, 6 1, 5 0)))",
+            ),
+            (2, "POLYGON((3 0, 4 0, 4 3, 3 3, 3 0))"),
+        ],
+    )
+    input_path = tmp_path / "children.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            (1, "POLYGON((-1 -1, 1.5 -1, 1.5 4, -1 4, -1 -1))"),
+            (2, "POLYGON((1.5 -1, 4.5 -1, 4.5 4, 1.5 4, 1.5 -1))"),
+        ],
+    )
+    output_path = tmp_path / "out.parquet"
+    issues_path = tmp_path / "issues.parquet"
+    mosaic(input_path, overlays_path, output_path, issues_path, clean=clean)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(f"""
+            SELECT overlay_fid, ST_Area(geometry), reason FROM '{issues_path}'
+            WHERE kind = 'gap'
+        """).fetchall()
+    assert rows == [(1, pytest.approx(0.5), "overlay area no output row covers")]

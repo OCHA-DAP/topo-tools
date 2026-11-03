@@ -50,6 +50,9 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
         CREATE OR REPLACE TABLE "{table_out}_dropped" AS
         SELECT * FROM "{table_in}" WHERE FALSE
     """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{table_out}_cover" (overlay_fid BIGINT, area DOUBLE)
+    """)
     overlay_fids = [
         row[0]
         for row in conn.execute(
@@ -79,6 +82,11 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
         conn.execute(f"""--sql
             INSERT INTO "{table_out}" BY NAME
             SELECT * FROM read_parquet('{output_path}')
+        """)
+        conn.execute(f"""--sql
+            INSERT INTO "{table_out}_cover"
+            SELECT {overlay_fid}, coalesce(sum(ST_Area(geom)), 0)
+            FROM read_parquet('{output_path}')
         """)
         conn.execute(f"""--sql
             INSERT INTO "{table_out}_dropped" BY NAME

@@ -276,10 +276,9 @@ def test_match_issues_file_records_unassigned_input(
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        rows = conn.execute(f"SELECT * FROM '{issues_path}'").fetchall()
-        cols = [
-            d[0] for d in conn.execute(f"SELECT * FROM '{issues_path}'").description
-        ]
+        query = f"SELECT * FROM '{issues_path}' WHERE kind != 'gap'"
+        rows = conn.execute(query).fetchall()
+        cols = [d[0] for d in conn.execute(query).description]
 
     unassigned_input_fid = 4
     assert len(rows) == 1
@@ -691,7 +690,7 @@ def test_match_no_merge_still_drops_orphan(tmp_path):
         ]
 
     assert ids == [1, 2, 3]
-    assert kinds == ["unassigned"]
+    assert sorted(kinds) == ["gap", "unassigned"]
 
 
 def test_match_gap_fill_keeps_unmatched_overlay(tmp_path):
@@ -1336,3 +1335,29 @@ def test_match_merge_multi_file_columns_follow_every_file(tmp_path):
             WHERE adm1_name IS NOT NULL ORDER BY 1
         """).fetchall()
     assert rows == [("A", "A1", None), ("B", None, "x")]
+
+
+@pytest.mark.parametrize("clean", [True, False])
+def test_match_reports_overlay_area_no_input_covers(tmp_path, clean):
+    overlays_path = tmp_path / "parents.parquet"
+    _write_overlay_pcode_only(
+        overlays_path,
+        [
+            (
+                1,
+                "MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)), ((9 0, 10 0, 10 1, 9 0)))",
+                "P",
+            )
+        ],
+    )
+    input_path = tmp_path / "children.parquet"
+    _write_synthetic(input_path, [(1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))")])
+    issues_path = tmp_path / "issues.parquet"
+    match(input_path, overlays_path, tmp_path / "out.parquet", issues_path, clean=clean)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(f"""
+            SELECT overlay_fid, reason FROM '{issues_path}' WHERE kind = 'gap'
+        """).fetchall()
+    assert rows == [(1, "overlay area no output row covers")]

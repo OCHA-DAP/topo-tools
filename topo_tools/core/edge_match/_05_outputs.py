@@ -8,14 +8,13 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
     check_valid_topology,
-    gap_issues_sql,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
+    uncovered_overlay_issues_sql,
 )
 from topo_tools.core.edge_match._04_clean import coverage_rows_sql
-from topo_tools.core.edge_match._constants import PASSTHROUGH_OVERLAY_FID
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 logger = getLogger(__name__)
@@ -27,16 +26,6 @@ _ISSUE_COLUMNS = """
     NULL::DOUBLE AS unit_a_area_change_m2, NULL::DOUBLE AS unit_b_area_change_m2,
     NULL::DOUBLE AS filled_area_m2, FALSE AS fixed
 """
-
-
-def _clip_targets_sql(name: str) -> str:
-    """Build SQL for the overlay polygons the output was clipped to."""
-    return f"""
-        SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-            SELECT overlay_fid FROM "{name}_02_assign"
-            WHERE overlay_fid != {PASSTHROUGH_OVERLAY_FID}
-        )
-    """
 
 
 def _build_issues(  # noqa: PLR0913
@@ -80,12 +69,12 @@ def _build_issues(  # noqa: PLR0913
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_04_detached"
         """,
-        gap_issues_sql(
-            conn, f"{table}_coverage", within=_clip_targets_sql(name), coverage=True
-        )
-        if clean
-        else f'SELECT * FROM "{name}_04_invalid"',
+        uncovered_overlay_issues_sql(
+            conn, table, f"{name}_overlay_01", f"{name}_04_cover"
+        ),
     ]
+    if not clean:
+        parts.append(f'SELECT * FROM "{name}_04_invalid"')
     if passthrough:
         parts.append(f"""
         SELECT 'passthrough-' || input_fid AS key, 'passthrough' AS kind,
@@ -174,6 +163,7 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03b"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_detached"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_04_cover"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_invalid"')
