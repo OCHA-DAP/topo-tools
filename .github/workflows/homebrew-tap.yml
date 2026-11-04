@@ -38,7 +38,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Tap OCHA-DAP/homebrew-topo-tools
-        run: brew tap OCHA-DAP/topo-tools
+        run: |
+          brew tap OCHA-DAP/topo-tools
+          brew trust OCHA-DAP/topo-tools
 
       - name: Current tap version
         id: tap
@@ -131,6 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           brew tap OCHA-DAP/topo-tools
+          brew trust OCHA-DAP/topo-tools
           tap="$(brew --repository OCHA-DAP/topo-tools)"
           git -C "$tap" fetch origin "${{ needs.update-homebrew-tap.outputs.branch }}"
           git -C "$tap" checkout -f -B "${{ needs.update-homebrew-tap.outputs.branch }}" FETCH_HEAD
