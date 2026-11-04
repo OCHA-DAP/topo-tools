@@ -1,6 +1,6 @@
 [project]
 name = "topo-tools"
-version = "0.19.1"
+version = "0.20.0"
 description = "DuckDB-powered geospatial topology utilities (edge-matching, topology cleaning, more)"
 readme = "README.md"
 license = "MIT"
