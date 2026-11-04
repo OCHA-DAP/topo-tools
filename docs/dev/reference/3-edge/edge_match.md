@@ -18,9 +18,10 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 - The input role MAY span multiple files (e.g. one raw admin boundary file
   per country), combined internally. The overlay layer MUST remain a
   single file.
-- The main output MUST NOT carry a `source_file` column; it is an
-  internal working column only, used by `assign-one`'s per-file grouping
-  (see `docs/dev/explanation/3-edge/assign.md`), not exported. The issues report MAY
+- The main output MUST NOT carry a `source_file` or `overlay_fid` column.
+  `source_file` is used by `assign-one`'s per-file grouping (see
+  `docs/dev/explanation/3-edge/assign.md`) and `overlay_fid` marks gap-fill
+  rows; both are internal working columns only. The issues report MAY
   carry `source_file`, shortened to its parent directory plus filename
   (e.g. `sen/adm2.parquet`), never the full input path (see
   `docs/adr/0087`).
@@ -105,9 +106,9 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 ## Outputs
 
 - `edge-match` MUST run `check_valid_topology` on the cleaned output, passthrough rows
-  excluded, raising on what remains, and MUST report leftover gaps within the clip targets as `kind='gap'`
-  rows. With `clean` False it MUST run neither, and MUST log a warning that the
-  output is not coverage-cleaned.
+  excluded, raising on what remains. With `clean` False it MUST NOT run it, and
+  MUST log a warning that the output is not coverage-cleaned. In both cases it
+  MUST report overlay area no output row covers as `kind='gap'` rows.
 - `edge-match` MUST export the final merged layer.
 - `edge-match` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every dropped input polygon, every
   input polygon belonging to a dropped group, every input polygon dropped for an empty
@@ -152,8 +153,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   MUST be `None` whenever more than one input file is given; any other
   value MUST raise `ValueError` (see `docs/adr/0084`).
 - `clean` (CLI `--no-clean`, env `NO_CLEAN`) defaults to True. Setting it False
-  skips the coverage clean, the topology check and the gap rows, and leaves seams
-  in the output.
+  skips the coverage clean and the topology check, and leaves seams in the output.
 - `edge-match` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - With more than one input file, `auto` MUST run `one`, and `many` MUST

@@ -123,6 +123,9 @@ def is_noise_column(name: str) -> bool:
 SUBDIVIDE_MIN_VERTICES = 5000
 # Most vertices any split piece may have.
 SUBDIVIDE_MAX_VERTICES = 1350
+# An overlay polygon whose clipped rows' area falls short by more than this
+# share of its own area is checked for uncovered (gap) area.
+UNCOVERED_AREA_RATIO = 1e-9
 # Input vertices one batch of clip input/tile pairs may carry.
 CLIP_PAIR_VERTEX_BUDGET = 20_000_000
 # core.coverage.invalid_edge_issues stops a batch of part pairs after this long.

@@ -20,9 +20,10 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 - Unlike every other tool here, the input role MAY span multiple files
   (e.g. one `edge_extend()` output per country), combined internally. The
   overlay layer MUST remain a single file.
-- The main output MUST NOT carry a `source_file` column; it is an
-  internal working column only, used by `assign-one`'s per-file grouping
-  (see `docs/dev/explanation/3-edge/assign.md`), not exported. The issues report MAY
+- The main output MUST NOT carry a `source_file` or `overlay_fid` column.
+  `source_file` is used by `assign-one`'s per-file grouping (see
+  `docs/dev/explanation/3-edge/assign.md`) and `overlay_fid` marks gap-fill
+  rows; both are internal working columns only. The issues report MAY
   carry `source_file`, shortened to its parent directory plus filename
   (e.g. `sen/adm2.parquet`), never the full input path (see
   `docs/adr/0087`).
@@ -86,9 +87,9 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 ## Outputs
 
 - `edge-mosaic` MUST run `check_valid_topology` on the cleaned output, passthrough rows
-  excluded, raising on what remains, and MUST report leftover gaps within the clip targets as `kind='gap'`
-  rows. With `clean` False it MUST run neither, and MUST log a warning that the
-  output is not coverage-cleaned.
+  excluded, raising on what remains. With `clean` False it MUST NOT run it, and
+  MUST log a warning that the output is not coverage-cleaned. In both cases it
+  MUST report overlay area no output row covers as `kind='gap'` rows.
 - `edge-mosaic` MUST export the final merged layer.
 - `edge-mosaic` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every input polygon dropped
   for an empty clip intersection, every clip-detached piece with an edge neighbour, every
@@ -111,7 +112,9 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   overlay polygon had no matched input polygons and was kept unclipped in the output;
   `unit_a` and `source_file` MUST be null, since the row is the overlay polygon
   itself, not an input polygon. A field that doesn't apply to a row's kind
-  MUST be null.
+  MUST be null. Every row kind, `invalid-edge` and `micro-polygon` included,
+  MUST use the same input polygon fids: with multiple input files, each
+  file's own row numbers offset by the rows of the files processed before it.
 - `edge-mosaic` MUST produce the issues report only when it has at least one
   row; when it would be empty, no file MUST be written (and a stale file
   from a previous run at that path MUST be removed).
@@ -133,8 +136,7 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   one `input_paths` file is given; any other value MUST raise `ValueError` (see
   `docs/adr/0079`).
 - `clean` (CLI `--no-clean`, env `NO_CLEAN`) defaults to True. Setting it False
-  skips the coverage clean, the topology check and the gap rows, and leaves seams
-  in the output.
+  skips the coverage clean and the topology check, and leaves seams in the output.
 - `edge-mosaic` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - `edge-mosaic` MAY accept `merge: bool = False` (CLI: `--merge`, a plain

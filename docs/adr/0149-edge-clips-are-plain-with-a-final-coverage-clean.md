@@ -4,7 +4,8 @@
 
 Accepted. For `edge-mosaic` and `edge-match`, supersedes the shared border
 points and the removal of the final clean in `docs/adr/0144`. Its bounded
-invalid-edge check stays, for `--no-clean` runs.
+invalid-edge check stays, for `--no-clean` runs. Superseded in part by
+`docs/adr/0150`.
 
 ## Context
 

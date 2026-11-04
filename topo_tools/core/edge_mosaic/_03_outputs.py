@@ -8,11 +8,11 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
     check_valid_topology,
-    gap_issues_sql,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
+    uncovered_overlay_issues_sql,
 )
 from topo_tools.core.edge_mosaic._02_clean import coverage_rows_sql
 from topo_tools.core.io import export_geometry_table, export_issues_table
@@ -51,16 +51,9 @@ def _build_issues(  # noqa: PLR0913
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"
         """,
-        gap_issues_sql(
-            conn,
-            f"{table}_coverage",
-            within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
-                SELECT overlay_fid FROM "{name}_02_assign")""",
-            coverage=True,
-        )
-        if clean
-        else f'SELECT * FROM "{name}_03_invalid"',
     ]
+    if not clean:
+        parts.append(f'SELECT * FROM "{name}_03_invalid"')
     if passthrough:
         parts.append(f"""
         SELECT 'passthrough-' || fid AS key, 'passthrough' AS kind,
@@ -88,6 +81,11 @@ def _build_issues(  # noqa: PLR0913
         FROM "{table}"
         WHERE overlay_fid IS NOT NULL
         """)
+    parts.append(
+        uncovered_overlay_issues_sql(
+            conn, table, f"{name}_overlay_01", f"{name}_03_cover"
+        )
+    )
     if micro := micro_issues_sql(conn, table, source_file_expr=short_source_file):
         parts.append(micro)
     if code_join:
@@ -145,7 +143,8 @@ def main(  # noqa: PLR0913
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_03_export" AS
-        SELECT * EXCLUDE (source_file) FROM "{name}_03"
+        SELECT COLUMNS(lambda c: c NOT IN ('source_file', 'overlay_fid'))
+        FROM "{name}_03"
     """)
     export_geometry_table(conn, f"{name}_03_export", dest)
     export_issues_table(conn, f"{name}_04", issues_dest)
@@ -160,6 +159,7 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_unassigned"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_detached"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_cover"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_invalid"')

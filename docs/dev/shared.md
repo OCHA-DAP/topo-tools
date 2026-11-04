@@ -74,6 +74,8 @@ in sync.
   by column count descending (ties by filename) before unioning/folding
   them. Output column order MUST NOT depend on caller-supplied file order
   (see `docs/adr/0094`).
+- Their merge column lists MUST resolve against every input file's columns
+  combined; a column a file lacks MUST read NULL on that file's rows.
 
 ## Output column and row order
 

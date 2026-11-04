@@ -16,6 +16,7 @@ from topo_tools.core.constants import (
     NOTCH_SPACING,
     NOTCH_WINDOW_MARGIN,
     SNAP_TOLERANCE,
+    UNCOVERED_AREA_RATIO,
 )
 from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 from topo_tools.core.units import METERS_PER_DEGREE, m2_per_deg2_factor
@@ -157,13 +158,127 @@ def _run_bounded(conn: DuckDBPyConnection, sql: str, seconds: float | None) -> b
     return True
 
 
+_XY_SQL = (
+    "list_transform(ST_Dump(ST_Points({g})), lambda x: [ST_X(x.geom), ST_Y(x.geom)])"
+)
+
+
+def _segments_sql(rings: str) -> str:
+    """Segments of `rings` (pid, ..., xy, inside_right), keyed by sorted ends k1/k2.
+
+    fw is True if the ring's interior is on the right walking from k1 to k2.
+    """
+    return f"""(
+        WITH s AS (
+            SELECT * EXCLUDE (xy, i), xy[i] AS p, xy[i + 1] AS q
+            FROM (SELECT *, UNNEST(range(1, len(xy))) AS i FROM {rings})
+        )
+        SELECT * EXCLUDE (p, q, inside_right), least(p, q) AS k1, greatest(p, q) AS k2,
+               (p < q) = inside_right AS fw
+        FROM s WHERE p != q
+    )"""
+
+
+def _drop_shared_segments(conn: DuckDBPyConnection) -> None:
+    """Drop `_ie_edges` segments a third part matches with its interior opposite.
+
+    GEOS skips such a segment, so only a pair checked without that part flags it.
+    """
+    before = conn.execute(
+        "SELECT count(*) FROM _ie_edges WHERE NOT stopped"
+    ).fetchone()[0]
+    if not before:
+        return
+    flagged = f"""(
+        SELECT pid, near_pid, {_XY_SQL.format(g="g")} AS xy, TRUE AS inside_right
+        FROM (
+            SELECT pid, near_pid, UNNEST(ST_Dump(geom)).geom AS g
+            FROM _ie_edges WHERE NOT stopped
+        )
+    )"""
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_fseg AS
+        SELECT DISTINCT pid, near_pid, k1, k2 FROM {_segments_sql(flagged)}
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_scope AS
+        WITH f AS (SELECT DISTINCT pid, near_pid FROM _ie_fseg),
+        ids AS (SELECT pid FROM f UNION SELECT near_pid FROM f),
+        s AS (
+            SELECT pid FROM ids
+            UNION SELECT n.near_pid FROM _ie_near n SEMI JOIN ids USING (pid)
+            UNION SELECT n.pid FROM _ie_near n JOIN ids i ON i.pid = n.near_pid
+        )
+        SELECT pid, sum(n) OVER (ORDER BY pid) // {CLIP_PAIR_VERTEX_BUDGET} AS batch
+        FROM _ie_parts SEMI JOIN s USING (pid)
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_pseg (
+            pid BIGINT, k1 DOUBLE[], k2 DOUBLE[], fw BOOLEAN
+        )
+    """)
+    batches = conn.execute("SELECT DISTINCT batch FROM _ie_scope ORDER BY 1").fetchall()
+    for (batch,) in batches:
+        # Interior is on the right of a clockwise (positive shoelace) exterior ring
+        # and of a counter-clockwise hole.
+        rings = f"""(
+            SELECT pid, xy, (len(path) = 0 OR path[1] = 1) = (list_sum(list_transform(
+                       range(1, len(xy)),
+                       lambda i: (xy[i + 1][1] - xy[i][1]) * (xy[i + 1][2] + xy[i][2])
+                   )) > 0) AS inside_right
+            FROM (
+                SELECT pid, d.path, {_XY_SQL.format(g="d.geom")} AS xy
+                FROM (
+                    SELECT pid, UNNEST(ST_Dump(ST_Boundary(geom))) AS d
+                    FROM _ie_parts
+                    WHERE pid IN (SELECT pid FROM _ie_scope WHERE batch = {batch})
+                )
+            )
+        )"""
+        conn.execute(f"""--sql
+            INSERT INTO _ie_pseg BY NAME
+            SELECT pid, k1, k2, fw FROM {_segments_sql(rings)}
+            SEMI JOIN (SELECT DISTINCT k1, k2 FROM _ie_fseg) USING (k1, k2)
+        """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_edges AS
+        WITH o AS (
+            SELECT f.pid, f.near_pid, f.k1, f.k2, o.fw,
+                   o.pid IN (f.pid, f.near_pid) AS own
+            FROM _ie_fseg f LEFT JOIN _ie_pseg o ON o.k1 = f.k1 AND o.k2 = f.k2
+        ),
+        m AS (
+            SELECT pid, near_pid, k1, k2,
+                   count(*) FILTER (WHERE own) AS n_own,
+                   count(*) FILTER (WHERE NOT own) AS n_other,
+                   bool_or(fw) FILTER (WHERE own) AS own_fw,
+                   bool_or(fw) FILTER (WHERE NOT own) AS other_fw
+            FROM o GROUP BY ALL
+        )
+        SELECT pid, near_pid, geom, stopped FROM _ie_edges WHERE stopped
+        UNION ALL
+        SELECT pid, near_pid,
+               ST_LineMerge(ST_Collect(list(
+                   ST_MakeLine(ST_Point(k1[1], k1[2]), ST_Point(k2[1], k2[2]))
+               ))) AS geom,
+               FALSE AS stopped
+        FROM m WHERE NOT (n_own = 1 AND n_other = 1 AND own_fw != other_fw)
+        GROUP BY pid, near_pid
+    """)
+    for tmp in ("_ie_fseg", "_ie_scope", "_ie_pseg"):
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+    after = conn.execute("SELECT count(*) FROM _ie_edges WHERE NOT stopped").fetchone()[
+        0
+    ]
+    logger.info("invalid-edge check: %d of %d flagged pair(s) kept", after, before)
+
+
 def _invalid_part_pairs(
-    conn: DuckDBPyConnection, on: str, *, seconds: float | None, first: bool = False
+    conn: DuckDBPyConnection, on: str, *, seconds: float | None
 ) -> None:
     """Create `_ie_edges` (pid, near_pid, geom, stopped) from `_ie_parts` pairs `on`.
 
-    Part pairs run in vertex-bounded batches, then flagged ones with their neighbours;
-    with first=True, stops at the first confirmed pair.
+    Part pairs run in vertex-bounded batches, then segments other parts match drop.
     """
     _near_part_pairs(conn, "_ie_parts", "_ie_parts", "_ie_near", on=on)
     conn.execute(f"""--sql
@@ -213,55 +328,7 @@ def _invalid_part_pairs(
                 INSERT INTO _ie_edges SELECT pid, near_pid, NULL, TRUE
                 FROM _ie_batch WHERE batch = {batch}
             """)
-    # A pair alone flags edges its other neighbours match; recheck each flagged pair
-    # with every part near either side, keeping only edges along both.
-    flagged = conn.execute(
-        "SELECT pid, near_pid FROM _ie_edges WHERE NOT stopped ORDER BY 1, 2"
-    ).fetchall()
-    for i, (a, b) in enumerate(flagged, 1):
-        if i % 100 == 1:
-            logger.info("invalid-edge recheck: pair %d of %d", i, len(flagged))
-        done = _run_bounded(
-            conn,
-            f"""--sql
-            UPDATE _ie_edges SET geom = (
-                WITH g AS (
-                    SELECT geom FROM _ie_parts WHERE pid IN (
-                        SELECT {a} UNION SELECT {b}
-                        UNION SELECT near_pid FROM _ie_near WHERE pid IN ({a}, {b})
-                        UNION SELECT pid FROM _ie_near WHERE near_pid IN ({a}, {b})
-                    )
-                ),
-                e AS (
-                    SELECT UNNEST(ST_Dump(
-                        ST_CoverageInvalidEdges_Agg(geom, {SNAP_TOLERANCE})
-                    )).geom AS geom
-                    FROM g
-                )
-                SELECT CASE WHEN count(*) > 0 THEN ST_Collect(list(e.geom)) END
-                FROM e
-                WHERE ST_Length(e.geom) > 0 AND (
-                    SELECT bool_and(ST_DWithin(e.geom, x.geom, {SNAP_TOLERANCE}))
-                    FROM _ie_parts x WHERE x.pid IN ({a}, {b})
-                )
-            )
-            WHERE pid = {a} AND near_pid = {b}
-            """,
-            seconds,
-        )
-        if not done:
-            conn.execute(f"""--sql
-                UPDATE _ie_edges SET geom = NULL, stopped = TRUE
-                WHERE pid = {a} AND near_pid = {b}
-            """)
-        if (
-            first
-            and conn.execute(f"""--sql
-            SELECT geom IS NOT NULL FROM _ie_edges WHERE pid = {a} AND near_pid = {b}
-        """).fetchone()[0]
-        ):
-            break
-    conn.execute("DELETE FROM _ie_edges WHERE NOT stopped AND geom IS NULL")
+    _drop_shared_segments(conn)
 
 
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
@@ -273,7 +340,7 @@ def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
                {bbox_columns_sql("geom")}
         FROM d
     """)
-    _invalid_part_pairs(conn, "l.pid < r.pid", seconds=None, first=True)
+    _invalid_part_pairs(conn, "l.pid < r.pid", seconds=None)
     invalid = conn.execute("SELECT count(*) > 0 FROM _ie_edges").fetchone()[0]
     for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
@@ -424,13 +491,9 @@ def gap_issues_sql(
     table: str,
     *,
     min_width: float = SNAP_TOLERANCE,
-    within: str | None = None,
     coverage: bool = False,
 ) -> str:
-    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema.
-
-    `within` (a query yielding `geom`) keeps only gaps whose interior point it covers.
-    """
+    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema."""
     m2_per_deg2 = m2_per_deg2_factor(conn, table)
     width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
     thinness_ratio = "4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)"
@@ -447,22 +510,59 @@ def gap_issues_sql(
                NULL::VARCHAR AS source_file, geom
         FROM {gap_geometries_sql(table, coverage=coverage)} g
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
-        {"" if within is None else _point_within_sql("g.geom", within)}
     """
 
 
-def _point_within_sql(geom: str, within: str) -> str:
-    """Build an AND clause: `geom`'s interior point lies in a `within` geometry."""
-    return f"""AND EXISTS (
-            SELECT 1 FROM (
-                SELECT geom, ST_XMin(geom) AS xmin, ST_XMax(geom) AS xmax,
-                       ST_YMin(geom) AS ymin, ST_YMax(geom) AS ymax
-                FROM ({within})
-            ) w, (SELECT ST_PointOnSurface({geom}) AS pt) q
-            WHERE ST_X(q.pt) BETWEEN w.xmin AND w.xmax
-              AND ST_Y(q.pt) BETWEEN w.ymin AND w.ymax
-              AND ST_Intersects(w.geom, q.pt)
-        )"""
+def uncovered_overlay_issues_sql(
+    conn: DuckDBPyConnection,
+    table: str,
+    overlay_table: str,
+    cover_table: str,
+    *,
+    min_width: float = SNAP_TOLERANCE,
+) -> str:
+    """Build SQL for gap rows: overlay area no `table` row covers, per overlay fid.
+
+    Only an overlay whose `cover_table` (overlay_fid, area) sum falls short is unioned.
+    """
+    m2_per_deg2 = m2_per_deg2_factor(conn, table)
+    width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
+    return f"""SELECT * FROM (
+        WITH short AS (
+            SELECT o.fid, o.geom, {bbox_columns_sql("o.geom")}
+            FROM "{overlay_table}" o
+            JOIN (
+                SELECT overlay_fid, sum(area) AS area FROM "{cover_table}" GROUP BY 1
+            ) c ON c.overlay_fid = o.fid
+            WHERE c.area < ST_Area(o.geom) * (1 - {UNCOVERED_AREA_RATIO})
+        ),
+        rows AS (SELECT geom, {bbox_columns_sql("geom")} FROM "{table}"),
+        gaps AS (
+            SELECT fid, UNNEST(ST_Dump(ST_Difference(
+                any_value(s.geom), ST_Union_Agg(ST_Intersection(r.geom, s.geom))
+            ))).geom AS geom
+            FROM short s
+            JOIN rows r ON r.xmax >= s.xmin AND r.xmin <= s.xmax
+             AND r.ymax >= s.ymin AND r.ymin <= s.ymax
+            GROUP BY fid
+        )
+        SELECT 'gap-' || fid || '-' || row_number() OVER (
+                   PARTITION BY fid ORDER BY hash(geom)
+               ) AS key, 'gap' AS kind,
+               NULL::BIGINT AS unit_a, NULL::BIGINT AS unit_b, fid AS overlay_fid,
+               'overlay area no output row covers' AS reason,
+               ST_Area(geom) * {m2_per_deg2} AS area_m2, {width_m} AS max_width_m,
+               4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)
+                   AS thinness_ratio,
+               NULL::DOUBLE AS near_length_m,
+               NULL::DOUBLE AS unit_a_area_change_m2,
+               NULL::DOUBLE AS unit_b_area_change_m2,
+               NULL::DOUBLE AS filled_area_m2, FALSE AS fixed,
+               NULL::VARCHAR AS source_file, geom
+        FROM gaps
+        WHERE ST_Dimension(geom) = 2
+          AND (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
+    )"""
 
 
 def short_source_file_sql(column: str) -> str:

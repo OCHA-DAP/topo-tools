@@ -180,7 +180,8 @@ Checking against the resolved `input_columns` rather than the raw schema
 means a column narrowed away by `--input-exclude` no longer false-positives
 this collision check.
 
-Both lists are resolved once per call by `core.assign.resolve_merge_columns()`
+Both lists are resolved once per call, against every input file's columns
+combined, by `core.assign.resolve_merge_columns()`
 (itself built on `resolve_column_selection()`, and gated by
 `validate_merge_flags()`'s mutual-exclusion/require-`merge` checks), shared
 by `edge-mosaic`'s and `edge-match`'s api layers: `overlay_include`/

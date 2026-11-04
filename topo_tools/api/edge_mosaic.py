@@ -21,6 +21,7 @@ from topo_tools.core.assign import (
     prepare_overlay_tiles,
     resolve_merge_columns,
     union_bbox,
+    union_input_schema,
     validate_merge_flags,
 )
 from topo_tools.core.clip import build_tiles
@@ -53,7 +54,13 @@ _STEP_ORDER = ["inputs", "assign", "clip", "clean", "outputs"]
 _STEP_TABLES = {
     "inputs": ["{n}_input_01", "{n}_overlay_01", "{n}_overlay_full", "{n}_original_01"],
     "assign": ["{n}_02_pairs", "{n}_02_assign", "{n}_02_unassigned"],
-    "clip": ["{n}_03", "{n}_03_dropped", "{n}_03_detached", "{n}_02_gap_fill"],
+    "clip": [
+        "{n}_03",
+        "{n}_03_dropped",
+        "{n}_03_detached",
+        "{n}_03_cover",
+        "{n}_02_gap_fill",
+    ],
     "clean": ["{n}_03", "{n}_03_micro"],
     "outputs": [],
 }
@@ -407,28 +414,28 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     paths = sort_paths_by_column_count_desc(conn, paths)
 
     combined_bbox: tuple[float, float, float, float] | None = None
-    resolved_overlay_columns: list[str] | None = None
-    resolved_input_columns: list[str] | None = None
     for i, file_path in enumerate(paths):
         load_input(conn, name, [file_path])
         check_input(conn, name, file_path)
-        if i == 0:
-            resolved_overlay_columns, resolved_input_columns = resolve_merge_columns(
-                conn,
-                name,
-                merge=merge,
-                overlay_include=overlay_include,
-                overlay_exclude=overlay_exclude,
-                input_include=input_include,
-                input_exclude=input_exclude,
-                prefer=prefer,
-            )
+        union_input_schema(conn, name, first=i == 0)
         bbox = input_bbox_extent(conn, name)
         if bbox is not None:
             combined_bbox = (
                 bbox if combined_bbox is None else union_bbox(combined_bbox, bbox)
             )
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
+    resolved_overlay_columns, resolved_input_columns = resolve_merge_columns(
+        conn,
+        name,
+        merge=merge,
+        overlay_include=overlay_include,
+        overlay_exclude=overlay_exclude,
+        input_include=input_include,
+        input_exclude=input_exclude,
+        prefer=prefer,
+        input_table=f"{name}_input_schema",
+    )
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_input_schema"')
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge
@@ -442,6 +449,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         f"{name}_02_unassigned": f"{name}_02_unassigned",
         f"{name}_03_iter_dropped": f"{name}_03_dropped",
         f"{name}_03_iter_detached": f"{name}_03_detached",
+        f"{name}_03_iter_cover": f"{name}_03_cover",
     }
     spill_dir = tmp_dir_path / f"{name}_spill"
     shutil.rmtree(spill_dir, ignore_errors=True)
@@ -514,6 +522,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
     if not debug:
         shutil.rmtree(assigned_dir, ignore_errors=True)
 
@@ -547,16 +556,9 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         msg = f"mosaic: no input polygon got an overlay for {name}"
         raise RuntimeError(msg)
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_03" AS
-        SELECT * EXCLUDE (fid), ROW_NUMBER() OVER () AS fid, fid AS input_fid
-        FROM "{name}_03"
-    """)
-    conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_passthrough" AS
-        SELECT fid FROM "{name}_03"
-        WHERE input_fid IN (SELECT input_fid FROM "{name}_02_unassigned")
+        SELECT input_fid AS fid FROM "{name}_02_unassigned"
     """)
-    conn.execute(f'ALTER TABLE "{name}_03" DROP COLUMN input_fid')
 
     if clean:
         clean_stage.main(

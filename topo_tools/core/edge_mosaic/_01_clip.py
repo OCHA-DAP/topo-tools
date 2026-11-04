@@ -29,8 +29,10 @@ def main(  # noqa: PLR0913
     """
     result_table = result_table or f"{name}_03"
     carry_sql = "".join(f', a."{c}" AS "{c}"' for c in (carry_columns or []))
+    # A column only other input files have comes back NULL when results combine.
+    present = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
     input_select_sql = (
-        ", ".join(f'c."{c}"' for c in input_columns)
+        ", ".join(f'c."{c}"' for c in input_columns if c in present)
         if input_columns is not None
         else "c.*"
     )
