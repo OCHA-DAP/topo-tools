@@ -83,17 +83,20 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
    group runs afterward (see "Overlay gap-fill and input passthrough").
 4. **`_03_clip`**: one batched call into `core.clip.main()` over every
    real group's rows at once, clipping each to its own `overlay_fid`'s
-   geometry. Before the clip, `prepare_points` builds shared border points over
-   the whole clip input (see `docs/adr/0144`). The
+   geometry. The
    orphan group's rows (when present) are split out first and unioned back
    in afterward, unclipped. When `merge` is set, the api layer then calls
    the shared `core.assign.fill_unmatched_overlays()` to append every
    unmatched overlay polygon's own geometry, before the outputs stage.
-5. **`_04_outputs`**: runs the bounded invalid-edge check (orphan group
-   excluded), with no coverage gate or gap check (see `docs/adr/0144`), then
+5. **`_04_clean`**: runs `coverage_clean()` in place over the clipped result,
+   orphan group excluded, closing the seams that two clips of one border leave. `--no-clean` skips this
+   stage (see `docs/adr/0149`).
+6. **`_05_outputs`**: runs `check_valid_topology` and adds `kind='gap'` rows
+   limited to the clip targets, or with `--no-clean` merges micro-polygons and
+   runs the bounded invalid-edge check (orphan group excluded), then
    builds the issues report from the dropped input polygons collected in
    stages 2/3 (or the passthrough input polygons and gap-filled overlay
-   polygons, when `merge` is set) and their `invalid-edge` rows, and exports
+   polygons, when `merge` is set) and any `gap` or `invalid-edge` rows, and exports
    both the final layer and the issues report (only when it has rows).
 
 ## Multi-file input
@@ -317,8 +320,8 @@ never came from overlay polygon vertex identity in the first place (see
 
 ## Overlay-layer gaps
 
-`_04_outputs.py` runs no `check_valid_topology` and no gap check (see
-`docs/adr/0144`), so a gap in the output is neither raised on nor reported. A
+`_05_outputs.py` runs `check_valid_topology` at its default `gap_maximum_width`
+and reports a wider gap as a `kind='gap'` row. A
 zero-tolerance gate would fail on a real case: matching South Africa's admin4
 into its own admin0 reproduces the interior hole for Lesotho, which is the
 overlay layer's own shape, not a defect. See `docs/adr/0035`.

@@ -5,6 +5,7 @@ import pytest
 
 from topo_tools.core.constants import SNAP_TOLERANCE
 from topo_tools.core.coverage import (
+    check_no_overlaps,
     check_valid_topology,
     close_notches,
     count_gaps,
@@ -666,3 +667,70 @@ def test_wide_wedge_and_t_junction_are_not_notches():
         """)
         assert detect_notches(conn, "units", "notches") == 0
         assert close_notches(conn, "units") == 0
+
+
+def _write_rows(conn, rows):
+    """Table synth (fid, grp, geom) from (fid, grp, wkt) rows."""
+    values = ", ".join(f"({f}, '{g}', ST_GeomFromText('{w}'))" for f, g, w in rows)
+    conn.execute(
+        "CREATE OR REPLACE TABLE synth AS "
+        f"SELECT * FROM (VALUES {values}) t(fid, grp, geom)"
+    )
+
+
+_SQUARE = "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))"
+_X = 2 - SNAP_TOLERANCE / 2
+_SLIVER = f"POLYGON(({_X} 0, 4 0, 4 2, {_X} 2, {_X} 0))"
+_X = 2 - SNAP_TOLERANCE / 2
+_SLIVER = f"POLYGON(({_X} 0, 4 0, 4 2, {_X} 2, {_X} 0))"
+
+
+@pytest.mark.parametrize(
+    ("other", "overlaps"),
+    [
+        ("POLYGON((1 0, 3 0, 3 2, 1 2, 1 0))", True),
+        ("POLYGON((0.5 0.5, 1 0.5, 1 1, 0.5 1, 0.5 0.5))", True),
+        ("POLYGON((2 0, 4 0, 4 2, 2 2, 2 0))", False),
+        (_SLIVER, False),
+    ],
+    ids=["partial", "contained", "touching", "sub-tolerance-sliver"],
+)
+def test_check_no_overlaps(other, overlaps):
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_rows(conn, [(1, "a", _SQUARE), (2, "b", other)])
+        if overlaps:
+            with pytest.raises(ValueError, match="1 fid pair"):
+                check_no_overlaps(conn, "synth")
+        else:
+            check_no_overlaps(conn, "synth")
+        assert not conn.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'synth_tmp1'"
+        ).fetchone()[0]
+
+
+def test_check_no_overlaps_ignores_an_empty_intersection():
+    # GEOS calls these interiors intersecting, yet their intersection has no polygon.
+    left = (
+        "POLYGON((1.5741966 9.1399968, 1.5629185 9.1723015, "
+        "1.5825720526271088 9.1289799834375, 1.5741966 9.1399968))"
+    )
+    right = (
+        "POLYGON((1.598633 9.1078539, 1.5214677 9.1953353, "
+        "1.5741966 9.1399968, 1.598633 9.1078539))"
+    )
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_rows(conn, [(1, "a", left), (2, "b", right)])
+        check_no_overlaps(conn, "synth")
+
+
+def test_check_no_overlaps_ignores_overlap_within_one_group():
+    inner = "POLYGON((1 0, 3 0, 3 2, 1 2, 1 0))"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_rows(conn, [(1, "a", _SQUARE), (2, "a", inner)])
+        check_no_overlaps(conn, "synth", group_column="grp")
+        _write_rows(conn, [(1, "a", _SQUARE), (2, "b", inner)])
+        with pytest.raises(ValueError, match="a / b"):
+            check_no_overlaps(conn, "synth", group_column="grp")

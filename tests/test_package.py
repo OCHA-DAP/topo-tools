@@ -182,3 +182,11 @@ def test_cli_output_template(admin2_input, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert (tmp_path / "web_points.parquet").exists()
+
+
+@pytest.mark.parametrize("tool", [package_polygons, package_points, package_lines])
+def test_raises_on_overlapping_input(tool, tmp_path):
+    path = tmp_path / "admin2.parquet"
+    _write_synthetic(path, [*_ROWS, {**_ROWS[0], "adm2_pcode": "A9"}])
+    with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
+        tool(path, tmp_path / "out.parquet")

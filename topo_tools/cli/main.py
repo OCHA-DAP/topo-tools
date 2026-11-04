@@ -2023,7 +2023,7 @@ def code_update(  # noqa: PLR0913, PLR0917
 @click.option(
     "--step",
     envvar="STEP",
-    type=click.Choice(["inputs", "assign", "groups", "clip", "outputs"]),
+    type=click.Choice(["inputs", "assign", "groups", "clip", "clean", "outputs"]),
     default=None,
     help="Run only this step of the tool, for debugging.",
 )
@@ -2069,6 +2069,13 @@ def code_update(  # noqa: PLR0913, PLR0917
         "used is always logged. many only works with a single input file."
     ),
 )
+@click.option(
+    "--no-clean",
+    envvar="NO_CLEAN",
+    is_flag=True,
+    help="Skip the final coverage clean, for runs too large for it. Seams between "
+    "overlay polygons stay in the output, reported as invalid-edge issue rows.",
+)
 @_add_fill_options
 def edge_match(  # noqa: PLR0913, PLR0917
     input_file: str,
@@ -2091,6 +2098,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
     input_exclude: str | None,
     prefer: str | None,
     assign: str,
+    no_clean: bool,  # noqa: FBT001
     fill_schema: bool,  # noqa: FBT001
     name_field: str | None,
     code_field: str | None,
@@ -2100,7 +2108,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
 
     Each input file (or, with --assign many, each input polygon) is
     matched to the overlay polygon it overlaps most, extended to fill gaps,
-    clipped to that polygon, with shared border points so the edges line up.
+    clipped to that polygon, then coverage-cleaned so the edges line up.
     OUTPUT_FILE defaults to INPUT_FILE with a "_matched" suffix. It's
     required when INPUT_FILE is a pattern matching more than one file, or
     when --input is given.
@@ -2179,6 +2187,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
             input_exclude=_split_columns(input_exclude),
             prefer=prefer,
             assign=assign,
+            clean=not no_clean,
             fill_schema=fill_schema,
             name_field=name_field,
             code_field=code_field,
@@ -2253,7 +2262,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
 @click.option(
     "--step",
     envvar="STEP",
-    type=click.Choice(["inputs", "assign", "clip", "outputs"]),
+    type=click.Choice(["inputs", "assign", "clip", "clean", "outputs"]),
     default=None,
     help="Run only this step of the tool, for debugging.",
 )
@@ -2283,6 +2292,13 @@ def edge_match(  # noqa: PLR0913, PLR0917
     "overlay's. Give it with --overlay-match-column.",
 )
 @_add_merge_options
+@click.option(
+    "--no-clean",
+    envvar="NO_CLEAN",
+    is_flag=True,
+    help="Skip the final coverage clean, for runs too large for it. Seams between "
+    "overlay polygons stay in the output, reported as invalid-edge issue rows.",
+)
 @_add_fill_options
 def edge_mosaic(  # noqa: PLR0913, PLR0917
     input_file: str,
@@ -2305,6 +2321,7 @@ def edge_mosaic(  # noqa: PLR0913, PLR0917
     input_include: str | None,
     input_exclude: str | None,
     prefer: str | None,
+    no_clean: bool,  # noqa: FBT001
     fill_schema: bool,  # noqa: FBT001
     name_field: str | None,
     code_field: str | None,
@@ -2384,6 +2401,7 @@ def edge_mosaic(  # noqa: PLR0913, PLR0917
             input_include=_split_columns(input_include),
             input_exclude=_split_columns(input_exclude),
             prefer=prefer,
+            clean=not no_clean,
             fill_schema=fill_schema,
             name_field=name_field,
             code_field=code_field,

@@ -288,6 +288,44 @@ def check_invalid_edges(conn: DuckDBPyConnection, table: str) -> None:
         raise RuntimeError(error)
 
 
+def check_no_overlaps(
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    group_column: str = "fid",
+    min_width: float = SNAP_TOLERANCE,
+) -> None:
+    """Raise ValueError if rows of two `group_column` values overlap past min_width."""
+    tmp = f"{table}_tmp1"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{tmp}" AS
+        SELECT g, geom, {bbox_columns_sql("geom")} FROM (
+            SELECT "{group_column}" AS g, UNNEST({subdivide_sql("geom")}) AS geom
+            FROM "{table}"
+        )
+    """)
+    rows = conn.execute(f"""--sql
+        WITH pairs AS (
+            SELECT a.g AS g_a, b.g AS g_b,
+                   ST_CollectionExtract(ST_Intersection(a.geom, b.geom), 3) AS geom
+            FROM "{tmp}" a JOIN "{tmp}" b
+              ON a.g < b.g AND a.xmin <= b.xmax AND a.xmax >= b.xmin
+             AND a.ymin <= b.ymax AND a.ymax >= b.ymin
+            WHERE ST_Intersects(a.geom, b.geom) AND NOT ST_Touches(a.geom, b.geom)
+        ), parts AS (
+            SELECT g_a, g_b, UNNEST(ST_Dump(geom)).geom AS geom FROM pairs
+        )
+        SELECT g_a, g_b, sum(ST_Area(geom)) AS area FROM parts
+        WHERE NOT ST_IsEmpty(geom) AND NOT {is_micro_sql("geom", min_width)}
+        GROUP BY ALL ORDER BY area DESC
+    """).fetchall()
+    conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+    if rows:
+        listed = ", ".join(f"{a} / {b} ({area:.3g} deg2)" for a, b, area in rows[:10])
+        msg = f"{table}: {len(rows)} {group_column} pair(s) overlap, e.g. {listed}"
+        raise ValueError(msg)
+
+
 def invalid_edge_issues(
     conn: DuckDBPyConnection,
     table: str,
@@ -386,9 +424,13 @@ def gap_issues_sql(
     table: str,
     *,
     min_width: float = SNAP_TOLERANCE,
+    within: str | None = None,
     coverage: bool = False,
 ) -> str:
-    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema."""
+    """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema.
+
+    `within` (a query yielding `geom`) keeps only gaps whose interior point it covers.
+    """
     m2_per_deg2 = m2_per_deg2_factor(conn, table)
     width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
     thinness_ratio = "4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)"
@@ -405,7 +447,22 @@ def gap_issues_sql(
                NULL::VARCHAR AS source_file, geom
         FROM {gap_geometries_sql(table, coverage=coverage)} g
         WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
+        {"" if within is None else _point_within_sql("g.geom", within)}
     """
+
+
+def _point_within_sql(geom: str, within: str) -> str:
+    """Build an AND clause: `geom`'s interior point lies in a `within` geometry."""
+    return f"""AND EXISTS (
+            SELECT 1 FROM (
+                SELECT geom, ST_XMin(geom) AS xmin, ST_XMax(geom) AS xmax,
+                       ST_YMin(geom) AS ymin, ST_YMax(geom) AS ymax
+                FROM ({within})
+            ) w, (SELECT ST_PointOnSurface({geom}) AS pt) q
+            WHERE ST_X(q.pt) BETWEEN w.xmin AND w.xmax
+              AND ST_Y(q.pt) BETWEEN w.ymin AND w.ymax
+              AND ST_Intersects(w.geom, q.pt)
+        )"""
 
 
 def short_source_file_sql(column: str) -> str:
@@ -1220,6 +1277,21 @@ def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, n
     for tmp in ("_clean_all", "_clean_in", "_clean_micro", "_clean_micro2"):
         if tmp != micro_issues_table:
             conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+
+
+def coverage_clean_rows(
+    conn: DuckDBPyConnection, table: str, where: str, *, micro_issues_table: str
+) -> None:
+    """Coverage-clean `table` in place, leaving rows failing `where` untouched."""
+    held = f"{table}_held"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{held}" AS
+        SELECT * FROM "{table}" WHERE NOT ({where})
+    """)
+    conn.execute(f'DELETE FROM "{table}" WHERE NOT ({where})')
+    coverage_clean(conn, table, table, fids=None, micro_issues_table=micro_issues_table)
+    conn.execute(f'INSERT INTO "{table}" BY NAME SELECT * FROM "{held}"')
+    conn.execute(f'DROP TABLE "{held}"')
 
 
 # Two edges this close count as touching, not as a notch.

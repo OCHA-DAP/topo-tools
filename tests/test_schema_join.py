@@ -460,3 +460,14 @@ def test_added_columns_go_within_their_level(join_path, tmp_path):
             "adm1_name",
             "adm1_code",
         ]
+
+
+@pytest.mark.parametrize("layer", ["input", "join"])
+def test_raises_on_overlapping_layer(layer, tmp_path):
+    rows = {"input": _input_rows(), "join": _join_rows()}
+    rows[layer] = [*rows[layer], dict(rows[layer][0])]
+    paths = {k: tmp_path / f"{k}.parquet" for k in rows}
+    for k, path in paths.items():
+        _write(path, rows[k])
+    with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
+        join(paths["input"], paths["join"], tmp_path / "out.parquet")

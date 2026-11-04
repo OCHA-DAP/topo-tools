@@ -4,8 +4,8 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.clip import build_tiles
 from topo_tools.core.clip import main as clip_main
-from topo_tools.core.clip import prepare_points
 
 
 def main(  # noqa: PLR0913
@@ -21,11 +21,11 @@ def main(  # noqa: PLR0913
     result_table: str | None = None,
     raise_if_empty: bool = True,
     original_table: str | None = None,
-    points: str | None = None,
+    tiles: str | None = None,
 ) -> None:
     """Clip each assigned input polygon to its overlay, isolated per overlay fid.
 
-    Without `points`, `{name}_02_pt_*` is built from this call's input and kept.
+    Without `tiles`, `{name}_02_tiles` is built from this call's input and dropped.
     """
     result_table = result_table or f"{name}_03"
     carry_sql = "".join(f', a."{c}" AS "{c}"' for c in (carry_columns or []))
@@ -40,9 +40,16 @@ def main(  # noqa: PLR0913
         FROM "{name}_input_01" c
         JOIN "{name}_02_assign" a ON a.input_fid = c.fid
     """)
-    if points is None:
-        points = f"{name}_02_pt"
-        prepare_points(conn, f"{name}_02_clip_in", f'"{name}_overlay_01"', points)
+    own_tiles = tiles is None
+    if own_tiles:
+        tiles = f"{name}_02_tiles"
+        conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
+        build_tiles(
+            conn,
+            f'"{name}_overlay_01"',
+            f'SELECT overlay_fid FROM "{name}_02_clip_in"',
+            tiles,
+        )
     clip_main(
         conn,
         f"{name}_02_clip_in",
@@ -52,10 +59,12 @@ def main(  # noqa: PLR0913
         threads=threads,
         debug=debug,
         original_table=original_table,
-        points=points,
+        tiles=tiles,
     )
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_clip_in"')
+        if own_tiles:
+            conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
 
     if passthrough:
         conn.execute(f"""--sql

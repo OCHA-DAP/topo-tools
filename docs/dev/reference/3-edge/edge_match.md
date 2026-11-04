@@ -77,26 +77,25 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Clipping
 
-- Before clipping, `edge-match` MUST collect shared border points from every
-  extended group and the overlay tiles, then snap both the tiles and the extended
-  polygons to them (see `docs/adr/0144`).
 - `edge-match` MUST clip every real group's reassembled, extended output to its
   own `overlay_fid`'s geometry, one distinct
   `overlay_fid` at a time, each in its own spawned OS subprocess. The orphan
   group (`merge` set only) MUST NOT be clipped; it has no overlay polygon to clip
   against. An overlay polygon matched by zero input polygons (`merge` set only) MUST be
   appended to the clipped result afterward, via its own unclipped
-  geometry, before the invalid-edge check.
+  geometry, before the coverage clean.
 - Unlike a failed group's extension, `edge-match` MUST raise immediately if any
   real `overlay_fid`'s clip subprocess fails, aborting the whole run rather than
   dropping just that group.
 - `edge-match` MUST merge or keep every clip-detached piece in the clipped result, recording each one with an edge
   neighbour as a `kind='detached-part'` row.
 
-## Invalid-edge check
+## Coverage clean
 
-- `edge-match` MUST NOT run a coverage-clean pass over the clipped output.
-- `edge-match` MUST check every pair of touching parts from different output rows,
+- `edge-match` MUST run `coverage_clean()` once over the clipped output, passthrough
+  rows excluded, with no retry at a wider snap distance, unless `clean` is False
+  (see `docs/adr/0149`).
+- With `clean` False, `edge-match` MUST merge micro-polygons, then check every pair of touching parts from different output rows,
   rows of the orphan group (`PASSTHROUGH_OVERLAY_FID`) excluded, for invalid edges.
   It MUST report each row pair with invalid edges as a `kind='invalid-edge'` row,
   and MUST NOT raise on or fix them.
@@ -105,7 +104,10 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Outputs
 
-- `edge-match` MUST NOT run the coverage check or a gap check on its output.
+- `edge-match` MUST run `check_valid_topology` on the cleaned output, passthrough rows
+  excluded, raising on what remains, and MUST report leftover gaps within the clip targets as `kind='gap'`
+  rows. With `clean` False it MUST run neither, and MUST log a warning that the
+  output is not coverage-cleaned.
 - `edge-match` MUST export the final merged layer.
 - `edge-match` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every dropped input polygon, every
   input polygon belonging to a dropped group, every input polygon dropped for an empty
@@ -146,9 +148,12 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 - `edge-match` MUST raise `FileExistsError` if either output path already
   exists and overwriting wasn't requested.
 - `step`, if given, MUST be one of `inputs`, `assign`, `groups`, `clip`,
-  `outputs`; any other value MUST raise `ValueError`. `step`
+  `clean`, `outputs`; any other value MUST raise `ValueError`. `step`
   MUST be `None` whenever more than one input file is given; any other
   value MUST raise `ValueError` (see `docs/adr/0084`).
+- `clean` (CLI `--no-clean`, env `NO_CLEAN`) defaults to True. Setting it False
+  skips the coverage clean, the topology check and the gap rows, and leaves seams
+  in the output.
 - `edge-match` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - With more than one input file, `auto` MUST run `one`, and `many` MUST

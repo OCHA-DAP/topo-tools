@@ -12,10 +12,11 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 ## Inputs
 
 - `edge-mosaic` MUST load the input layer and the overlay layer raw,
-  unlike `edge-extend`'s own inputs stage: neither is coverage-checked or
-  -cleaned before assign/clip. The input layer is expected to already be a
-  finished `edge_extend()` output, but `edge-mosaic` does not verify this (see
-  `docs/dev/explanation/3-edge/edge_mosaic.md`).
+  unlike `edge-extend`'s own inputs stage: neither is cleaned before assign/clip.
+  The input layer is expected to already be a finished `edge_extend()` output.
+  `edge-mosaic` MUST run `check_valid_topology` with `gap_maximum_width=0` on every
+  input file, whatever `clean` is set to, and MUST raise naming the file on a
+  failure (see `docs/dev/explanation/3-edge/edge_mosaic.md`, `docs/adr/0149`).
 - Unlike every other tool here, the input role MAY span multiple files
   (e.g. one `edge_extend()` output per country), combined internally. The
   overlay layer MUST remain a single file.
@@ -53,11 +54,8 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 
 ## Clipping
 
-- Before clipping any file, `edge-mosaic` MUST collect shared border points from
-  every input file and the overlay tiles, then snap both the tiles and the input
-  polygons to them (see `docs/adr/0144`).
 - `edge-mosaic` MUST NOT re-run Voronoi extension on any input polygon; the input polygon
-  layer is assumed already extended.
+  layer is expected to be already extended.
 - `edge-mosaic` MUST clip each assigned input polygon to its own assigned overlay polygon's
   geometry via `ST_Intersection`, one distinct assigned overlay fid at a
   time, each in its own spawned OS subprocess (see
@@ -74,10 +72,12 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   unless `merge` gap-filled at least one overlay polygon or kept at least one
   unmatched input file as passthrough (see Configuration).
 
-## Invalid-edge check
+## Coverage clean
 
-- `edge-mosaic` MUST NOT run a coverage-clean pass over the clipped output.
-- `edge-mosaic` MUST check every pair of touching parts from different output rows,
+- `edge-mosaic` MUST run `coverage_clean()` once over the clipped output, passthrough
+  rows excluded, with no retry at a wider snap distance, unless `clean` is False
+  (see `docs/adr/0149`).
+- With `clean` False, `edge-mosaic` MUST merge micro-polygons, then check every pair of touching parts from different output rows,
   passthrough rows excluded, for invalid edges. It MUST report each row pair with
   invalid edges as a `kind='invalid-edge'` row, and MUST NOT raise on or fix them.
 - A check query MUST stop after `INVALID_EDGE_BATCH_SECONDS`, and its pairs MUST be
@@ -85,7 +85,10 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 
 ## Outputs
 
-- `edge-mosaic` MUST NOT run the coverage check or a gap check on its output.
+- `edge-mosaic` MUST run `check_valid_topology` on the cleaned output, passthrough rows
+  excluded, raising on what remains, and MUST report leftover gaps within the clip targets as `kind='gap'`
+  rows. With `clean` False it MUST run neither, and MUST log a warning that the
+  output is not coverage-cleaned.
 - `edge-mosaic` MUST export the final merged layer.
 - `edge-mosaic` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every input polygon dropped
   for an empty clip intersection, every clip-detached piece with an edge neighbour, every
@@ -125,10 +128,13 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   output path with an `_issues` suffix.
 - `edge-mosaic` MUST raise `FileExistsError` if either output path already
   exists and overwriting wasn't requested.
-- `step`, if given, MUST be one of `inputs`, `assign`, `clip`, `outputs`; any
+- `step`, if given, MUST be one of `inputs`, `assign`, `clip`, `clean`, `outputs`; any
   other value MUST raise `ValueError`. `step` MUST be `None` whenever more than
   one `input_paths` file is given; any other value MUST raise `ValueError` (see
   `docs/adr/0079`).
+- `clean` (CLI `--no-clean`, env `NO_CLEAN`) defaults to True. Setting it False
+  skips the coverage clean, the topology check and the gap rows, and leaves seams
+  in the output.
 - `edge-mosaic` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - `edge-mosaic` MAY accept `merge: bool = False` (CLI: `--merge`, a plain

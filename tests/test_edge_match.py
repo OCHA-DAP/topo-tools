@@ -33,7 +33,7 @@ _OVERLAY_WKT = [
     (2, "POLYGON((10 0, 13 0, 13 3, 10 3, 10 0))"),
 ]
 
-_STEPS = ["inputs", "assign", "groups", "clip", "outputs"]
+_STEPS = ["inputs", "assign", "groups", "clip", "clean", "outputs"]
 
 
 def _write_synthetic(path, wkt_rows):
@@ -1251,3 +1251,50 @@ def test_fill_schema_multi_file(synthetic_overlays, tmp_path):
     assert "adm_lvl" in cols
     lvl = cols.index("adm_lvl")
     assert {r[lvl] for r in rows} == {_LEVEL_1, _LEVEL_2}
+
+
+def test_match_raises_on_overlapping_overlay(synthetic_inputs, tmp_path):
+    overlay_path = tmp_path / "overlay.parquet"
+    _write_synthetic(
+        overlay_path, [*_OVERLAY_WKT, (3, "POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))")]
+    )
+    with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
+        match(synthetic_inputs, overlay_path, tmp_path / "out.parquet")
+
+
+@pytest.mark.parametrize("clean", [True, False])
+def test_match_merge_orphan_leaves_matched_row_whole(tmp_path, clean):
+    """An extended orphan overlapping a matched row takes no area from it."""
+    overlays_path = tmp_path / "parents.parquet"
+    _write_overlay_pcode_only(
+        overlays_path, [(1, "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))", "P1")]
+    )
+    input_path = tmp_path / "children.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            (1, "POLYGON((0.5 0.5, 3.5 0.5, 3.5 3.5, 0.5 3.5, 0.5 0.5))"),
+            (2, "POLYGON((4.5 0.5, 7 0.5, 7 3.5, 4.5 3.5, 4.5 0.5))"),
+        ],
+    )
+    output_path = tmp_path / "out.parquet"
+    issues_path = tmp_path / "issues.parquet"
+    match(
+        input_path,
+        overlays_path,
+        output_path,
+        issues_path,
+        merge=True,
+        assign="many",
+        clean=clean,
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        area = conn.execute(
+            f"SELECT ST_Area(geometry) FROM '{output_path}' WHERE id = 1"
+        ).fetchall()[0][0]
+        kinds = conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
+    assert area == pytest.approx(16.0)
+    assert ("invalid-edge",) not in kinds

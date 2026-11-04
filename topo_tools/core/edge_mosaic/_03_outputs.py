@@ -1,17 +1,23 @@
-"""Merges micro-polygons, checks invalid edges and exports the mosaicked output."""
+"""Validates topology, or reports invalid edges, and exports the mosaicked output."""
 
+from logging import getLogger
 from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
+    check_valid_topology,
+    gap_issues_sql,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
 )
+from topo_tools.core.edge_mosaic._02_clean import coverage_rows_sql
 from topo_tools.core.io import export_geometry_table, export_issues_table
+
+logger = getLogger(__name__)
 
 _ISSUE_COLUMNS = """
     NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
@@ -22,15 +28,16 @@ _ISSUE_COLUMNS = """
 """
 
 
-def _build_issues(
+def _build_issues(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     *,
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
+    clean: bool = True,
 ) -> None:
-    """Build `{name}_04`: every unassigned input polygon, gap-fill rows, and gaps."""
+    """Build `{name}_04`: unassigned inputs, gap-fill rows, gaps or invalid edges."""
     table = f"{name}_03"
     short_source_file = short_source_file_sql("source_file")
     parts = [
@@ -44,7 +51,15 @@ def _build_issues(
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_03_detached"
         """,
-        f'SELECT * FROM "{name}_03_invalid"',
+        gap_issues_sql(
+            conn,
+            f"{table}_coverage",
+            within=f"""SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
+                SELECT overlay_fid FROM "{name}_02_assign")""",
+            coverage=True,
+        )
+        if clean
+        else f'SELECT * FROM "{name}_03_invalid"',
     ]
     if passthrough:
         parts.append(f"""
@@ -97,6 +112,7 @@ def main(  # noqa: PLR0913
     passthrough: bool = False,
     fill_gaps: bool = False,
     passthrough_fids: str | None = None,
+    clean: bool = True,
     debug: bool = False,
 ) -> None:
     """Output the mosaicked layer + issues report to dest/issues_dest.
@@ -104,18 +120,27 @@ def main(  # noqa: PLR0913
     `passthrough_fids` selects passthrough rows' fids, default the unassigned inputs.
     """
     table = f"{name}_03"
-    merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
-    # Passthrough input polygons are kept unclipped, overlapping neighbours by design.
-    passthrough_fids = (
-        passthrough_fids or f'SELECT input_fid FROM "{name}_02_unassigned"'
+    where = coverage_rows_sql(
+        name, passthrough=passthrough, passthrough_fids=passthrough_fids
     )
-    where = (
-        f"NOT coalesce(fid IN ({passthrough_fids}), FALSE)" if passthrough else "TRUE"
-    )
-    invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
+    if clean:
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TEMP VIEW "{table}_coverage" AS
+            SELECT * FROM "{table}" WHERE {where}
+        """)
+        check_valid_topology(conn, f"{table}_coverage")
+    else:
+        logger.warning("mosaic: output is not coverage-cleaned, seams may remain")
+        merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
+        invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
 
     _build_issues(
-        conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
+        conn,
+        name,
+        code_join=code_join,
+        passthrough=passthrough,
+        fill_gaps=fill_gaps,
+        clean=clean,
     )
 
     conn.execute(f"""--sql
@@ -127,6 +152,7 @@ def main(  # noqa: PLR0913
 
     if not debug:
         conn.execute(f'DROP VIEW IF EXISTS "{name}_03_export"')
+        conn.execute(f'DROP VIEW IF EXISTS "{table}_coverage"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_overlay_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_pairs"')

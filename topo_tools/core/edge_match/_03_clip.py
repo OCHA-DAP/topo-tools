@@ -4,8 +4,8 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.clip import build_tiles
 from topo_tools.core.clip import main as clip_main
-from topo_tools.core.clip import prepare_points
 from topo_tools.core.edge_match._constants import PASSTHROUGH_OVERLAY_FID
 
 
@@ -21,8 +21,7 @@ def main(  # noqa: PLR0913
     """Clip every real group's rows to its own overlay_fid's geometry.
 
     With passthrough=True, the orphan group's rows (PASSTHROUGH_OVERLAY_FID)
-    are split out first and unioned back in afterward, unclipped. The shared
-    points are kept in `{name}_03_pt_*` for the gap fill.
+    are split out first and unioned back in afterward, unclipped.
     """
     clip_in = f"{name}_03a"
     if passthrough:
@@ -32,7 +31,11 @@ def main(  # noqa: PLR0913
             SELECT * FROM "{name}_03a" WHERE overlay_fid != {PASSTHROUGH_OVERLAY_FID}
         """)
 
-    prepare_points(conn, clip_in, f'"{name}_overlay_01"', f"{name}_03_pt")
+    tiles = f"{name}_03_tiles"
+    conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
+    build_tiles(
+        conn, f'"{name}_overlay_01"', f'SELECT overlay_fid FROM "{clip_in}"', tiles
+    )
     clip_main(
         conn,
         clip_in,
@@ -42,7 +45,7 @@ def main(  # noqa: PLR0913
         threads=threads,
         debug=debug,
         original_table=f"{name}_input_01",
-        points=f"{name}_03_pt",
+        tiles=tiles,
     )
 
     if passthrough:
@@ -58,3 +61,4 @@ def main(  # noqa: PLR0913
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03a"')
+        conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
