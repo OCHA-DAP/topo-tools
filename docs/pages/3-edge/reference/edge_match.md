@@ -15,7 +15,7 @@ topo-tools edge-match [OPTIONS] INPUT_FILE OVERLAY_FILE [OUTPUT_FILE]
 
 ## Description
 
-Each input file (or, with `--assign` many, each input polygon) is matched to the overlay polygon it overlaps most, extended to fill gaps, clipped to that polygon, with shared border points so the edges line up. OUTPUT_FILE defaults to INPUT_FILE with a "_matched" suffix. It's required when INPUT_FILE is a pattern matching more than one file, or when `--input` is given.
+Each input file (or, with `--assign` many, each input polygon) is matched to the overlay polygon it overlaps most, extended to fill gaps, clipped to that polygon, then coverage-cleaned so the edges line up. OUTPUT_FILE defaults to INPUT_FILE with a "_matched" suffix. It's required when INPUT_FILE is a pattern matching more than one file, or when `--input` is given.
 
 ## Options
 
@@ -25,7 +25,7 @@ Each input file (or, with `--assign` many, each input polygon) is matched to the
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).
 - `--debug`: Keep intermediate tables, export them to Parquet, and log the time and memory each query takes.
 - `--tmp-dir TEXT`: Folder for the working DuckDB database and intermediate files (default: a new temporary folder, deleted afterwards unless `--debug` is set).
-- `--step [inputs|assign|groups|clip|outputs]`: Run only this step of the tool, for debugging.
+- `--step [inputs|assign|groups|clip|clean|outputs]`: Run only this step of the tool, for debugging.
 - `--match-column TEXT`: Column in both layers, such as a p-code, used to match input polygons to overlay polygons. It wins over overlap where the two disagree. Can't be combined with `--overlay-match-column` or `--input-match-column`.
 - `--overlay-match-column TEXT`: Matching column in the overlay, when its name differs from the input's. Give it with `--input-match-column`.
 - `--input-match-column TEXT`: Matching column in the input, when its name differs from the overlay's. Give it with `--overlay-match-column`.
@@ -36,6 +36,7 @@ Each input file (or, with `--assign` many, each input polygon) is matched to the
 - `--input-exclude TEXT`: Input columns to drop, comma-separated. Needs `--merge`.
 - `--prefer [overlay|input]`: When the overlay and input both have a column with the same name, keep this layer's column. Needs `--merge`. Can't be combined with `--overlay-include`, `--overlay-exclude`, `--input-include` or `--input-exclude`.
 - `--assign [auto|one|many]`: How input polygons are assigned to overlay polygons. one: the whole input file goes to the overlay polygon most of its polygons overlap. many: each input polygon goes to the overlay polygon it overlaps most, for an input file spanning many overlay polygons, e.g. an admin4 layer fitted into many admin3 units. auto: one, switching to many when fewer than half the input polygons overlap the winner. The mode used is always logged. many only works with a single input file. [default: auto]
+- `--no-clean`: Skip the final coverage clean, for runs too large for it. Seams between overlay polygons stay in the output, reported as invalid-edge issue rows.
 - `--fill-schema`: Before writing the output, fill each row's empty finer admin columns from its coarser ones and add a column with the row's own admin level. Set the columns with `--name-field` and `--code-field`, and the level column's name with `--depth-column`.
 - `--name-field TEXT`: Name column of each level, with {n} for the level number, e.g. 'adm{n}_name'. Needs `--fill-schema` and `--code-field`. Without both, levels are detected from the data.
 - `--code-field TEXT`: Code column of each level, with {n} for the level number, e.g. 'adm{n}_code'. Needs `--fill-schema` and `--name-field`. Without both, levels are detected from the data.

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.coverage import check_no_overlaps, check_valid_topology
 from topo_tools.core.io import read_and_reproject, reproject_select_sql
 
 
@@ -26,9 +27,26 @@ def load_input(
     """)
 
 
-def load_overlay(conn: DuckDBPyConnection, name: str, overlay_path: Path | str) -> None:
-    """Load the overlay layer, uncleaned."""
+def check_input(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:
+    """Raise RuntimeError naming path unless `{name}_input_01` is a clean coverage."""
+    try:
+        check_valid_topology(conn, f"{name}_input_01", gap_maximum_width=0)
+    except RuntimeError as e:
+        msg = f"input {path} is not a clean coverage: {e}"
+        raise RuntimeError(msg) from e
+
+
+def load_overlay(
+    conn: DuckDBPyConnection,
+    name: str,
+    overlay_path: Path | str,
+    *,
+    require_coverage: bool = False,
+) -> None:
+    """Load the overlay layer, uncleaned; with require_coverage, raise on overlaps."""
     read_and_reproject(conn, f"{name}_overlay", overlay_path)
+    if require_coverage:
+        check_no_overlaps(conn, f"{name}_overlay_01")
 
 
 def load_original(

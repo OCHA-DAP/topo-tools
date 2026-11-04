@@ -20,7 +20,7 @@ _LEVEL_1, _LEVEL_2 = 1, 2
 _INPUT_WKT = [
     (1, "POLYGON((-5 -5, 1.5 -5, 1.5 5, -5 5, -5 -5))"),
     (2, "POLYGON((1.5 -5, 8 -5, 8 5, 1.5 5, 1.5 -5))"),
-    (3, "POLYGON((8 -5, 20 -5, 20 20, 8 20, 8 -5))"),
+    (3, "POLYGON((8 -5, 20 -5, 20 20, 8 20, 8 5, 8 -5))"),
     (4, "POLYGON((100 80, 101 80, 101 81, 100 81, 100 80))"),
 ]
 _OVERLAY_WKT = [
@@ -30,7 +30,7 @@ _OVERLAY_WKT = [
 
 _OVERLAY_A_AREA = 9.0
 
-_STEPS = ["inputs", "assign", "clip", "outputs"]
+_STEPS = ["inputs", "assign", "clip", "clean", "outputs"]
 
 
 def _write_synthetic(path, wkt_rows):
@@ -346,7 +346,7 @@ def test_mosaic_multi_file_api(synthetic_inputs_split, synthetic_overlays, tmp_p
 
 
 # Two overlays share a slanted border, file a voting overlay 1 and file b overlay 2;
-# their input borders cross it at different heights, needing shared border points.
+# their input borders cross it at different heights, leaving a seam the clean closes.
 _SLANT_OVERLAYS = [
     (1, "POLYGON((0 0, 3 0, 3.3 3, 0 3, 0 0))"),
     (2, "POLYGON((3 0, 6 0, 6 3, 3.3 3, 3 0))"),
@@ -383,6 +383,59 @@ def test_mosaic_cross_border_inputs_have_no_invalid_edges(tmp_path):
         if issues_path.exists():
             kinds = conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
             assert ("invalid-edge",) not in kinds
+
+
+def test_mosaic_no_clean_reports_seams_as_invalid_edges(tmp_path):
+    overlay_path = tmp_path / "overlay.parquet"
+    path_a, path_b = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(overlay_path, _SLANT_OVERLAYS)
+    _write_synthetic(path_a, _SLANT_INPUTS_A)
+    _write_synthetic(path_b, _SLANT_INPUTS_B)
+    output_path = tmp_path / "out.parquet"
+    mosaic([path_a, path_b], overlay_path, output_path, overwrite=True, clean=False)
+
+    issues_path = output_path.with_stem(output_path.stem + "_issues")
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        kinds = conn.execute(f"SELECT kind FROM '{issues_path}'").fetchall()
+    assert ("invalid-edge",) in kinds
+
+
+_CLEAN_SQUARE = (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))")
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            [_CLEAN_SQUARE, (2, "POLYGON((2 0, 5 0, 5 3, 2 3, 2 0))")], id="overlap"
+        ),
+        pytest.param(
+            [(1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0),(1 1, 2 1, 2 2, 1 2, 1 1))")],
+            id="gap",
+        ),
+        pytest.param(
+            [
+                _CLEAN_SQUARE,
+                (2, "POLYGON((3 0, 3.000000001 0, 3.000000001 3, 3 3, 3 0))"),
+            ],
+            id="micro-polygon",
+        ),
+    ],
+)
+@pytest.mark.parametrize("multi_file", [False, True])
+def test_mosaic_raises_on_unclean_input_naming_the_file(tmp_path, rows, multi_file):
+    bad_path = tmp_path / "bad.parquet"
+    overlay_path = tmp_path / "overlay.parquet"
+    _write_synthetic(bad_path, rows)
+    _write_synthetic(overlay_path, [(1, "POLYGON((0 0, 5 0, 5 3, 0 3, 0 0))")])
+    paths = bad_path
+    if multi_file:
+        good_path = tmp_path / "good.parquet"
+        _write_synthetic(good_path, [(9, "POLYGON((9 0, 10 0, 10 1, 9 1, 9 0))")])
+        paths = [good_path, bad_path]
+    with pytest.raises(RuntimeError, match=r"bad\.parquet is not a clean coverage"):
+        mosaic(paths, overlay_path, tmp_path / "out.parquet", overwrite=True)
 
 
 def test_mosaic_multi_file_merge_untagged_inputs_tagged_overlay(
@@ -1318,3 +1371,51 @@ def test_fill_schema_multi_file(synthetic_overlays, tmp_path):
     assert "adm_lvl" in cols
     lvl = cols.index("adm_lvl")
     assert {r[lvl] for r in rows} == {_LEVEL_1, _LEVEL_2}
+
+
+def test_mosaic_raises_on_overlapping_overlay(synthetic_inputs, tmp_path):
+    overlay_path = tmp_path / "overlay.parquet"
+    _write_synthetic(
+        overlay_path,
+        [
+            (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))"),
+            (2, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        ],
+    )
+    with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
+        mosaic(synthetic_inputs, overlay_path, tmp_path / "out.parquet")
+
+
+def test_mosaic_raises_on_overlapping_files_with_one_overlay_polygon(tmp_path):
+    overlay_path = tmp_path / "overlay.parquet"
+    path_a, path_b = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(overlay_path, [(1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))")])
+    _write_synthetic(path_a, [(1, "POLYGON((-1 -1, 4 -1, 4 4, -1 4, -1 -1))")])
+    _write_synthetic(path_b, [(2, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")])
+    with pytest.raises(ValueError, match="assigned to overlay fid 1 overlap"):
+        mosaic([path_a, path_b], overlay_path, tmp_path / "out.parquet")
+
+
+def test_mosaic_merge_keeps_overlapping_passthrough_files_whole(tmp_path):
+    """Two unmatched files that overlap each other both stay unclipped and uncleaned."""
+    overlays_path = tmp_path / "parents.parquet"
+    _write_overlay_pcode_only(
+        overlays_path, [(1, "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))", "P1")]
+    )
+    paths = []
+    for fid, wkt in [
+        (1, "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))"),
+        (2, "POLYGON((10 0, 14 0, 14 4, 10 4, 10 0))"),
+        (3, "POLYGON((12 0, 16 0, 16 4, 12 4, 12 0))"),
+    ]:
+        paths.append(tmp_path / f"in{fid}.parquet")
+        _write_synthetic(paths[-1], [(fid, wkt)])
+    output_path = tmp_path / "out.parquet"
+    mosaic(paths, overlays_path, output_path, merge=True, overwrite=True)
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        areas = conn.execute(
+            f"SELECT id, ST_Area(geometry) FROM '{output_path}' ORDER BY id"
+        ).fetchall()
+    assert areas == [(1, 16.0), (2, 16.0), (3, 16.0)]

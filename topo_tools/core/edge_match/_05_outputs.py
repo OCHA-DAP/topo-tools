@@ -1,18 +1,24 @@
-"""Merges micro-polygons, checks invalid edges and exports the matched output."""
+"""Validates topology, or reports invalid edges, and exports the matched output."""
 
+from logging import getLogger
 from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
+    check_valid_topology,
+    gap_issues_sql,
     invalid_edge_issues,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
 )
+from topo_tools.core.edge_match._04_clean import coverage_rows_sql
 from topo_tools.core.edge_match._constants import PASSTHROUGH_OVERLAY_FID
 from topo_tools.core.io import export_geometry_table, export_issues_table
+
+logger = getLogger(__name__)
 
 _ISSUE_COLUMNS = """
     NULL::DOUBLE AS area_m2, NULL::DOUBLE AS max_width_m,
@@ -23,15 +29,26 @@ _ISSUE_COLUMNS = """
 """
 
 
-def _build_issues(
+def _clip_targets_sql(name: str) -> str:
+    """Build SQL for the overlay polygons the output was clipped to."""
+    return f"""
+        SELECT geom FROM "{name}_overlay_01" WHERE fid IN (
+            SELECT overlay_fid FROM "{name}_02_assign"
+            WHERE overlay_fid != {PASSTHROUGH_OVERLAY_FID}
+        )
+    """
+
+
+def _build_issues(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     *,
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
+    clean: bool = True,
 ) -> None:
-    """Build `{name}_05`: unassigned/dropped-group input polygons, plus non-noise gaps.
+    """Build `{name}_05`: unassigned/dropped input polygons, gaps or invalid edges.
 
     passthrough=True omits 'unassigned' (superseded by 'passthrough'/'dropped_group').
     """
@@ -63,7 +80,11 @@ def _build_issues(
         f"""SELECT * REPLACE ({short_source_file} AS source_file)
         FROM "{name}_04_detached"
         """,
-        f'SELECT * FROM "{name}_04_invalid"',
+        gap_issues_sql(
+            conn, f"{table}_coverage", within=_clip_targets_sql(name), coverage=True
+        )
+        if clean
+        else f'SELECT * FROM "{name}_04_invalid"',
     ]
     if passthrough:
         parts.append(f"""
@@ -108,21 +129,30 @@ def main(  # noqa: PLR0913
     code_join: bool = False,
     passthrough: bool = False,
     fill_gaps: bool = False,
+    clean: bool = True,
     debug: bool = False,
 ) -> None:
     """Output the matched layer + issues report to dest/issues_dest."""
     table = f"{name}_04"
-    merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
-    # The orphan group is kept unclipped, overlapping neighbours by design.
-    where = (
-        f"overlay_fid IS DISTINCT FROM {PASSTHROUGH_OVERLAY_FID}"
-        if passthrough
-        else "TRUE"
-    )
-    invalid_edge_issues(conn, table, f"{name}_04_invalid", where=where)
+    where = coverage_rows_sql(name, passthrough=passthrough)
+    if clean:
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TEMP VIEW "{table}_coverage" AS
+            SELECT * FROM "{table}" WHERE {where}
+        """)
+        check_valid_topology(conn, f"{table}_coverage")
+    else:
+        logger.warning("match: output is not coverage-cleaned, seams may remain")
+        merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
+        invalid_edge_issues(conn, table, f"{name}_04_invalid", where=where)
 
     _build_issues(
-        conn, name, code_join=code_join, passthrough=passthrough, fill_gaps=fill_gaps
+        conn,
+        name,
+        code_join=code_join,
+        passthrough=passthrough,
+        fill_gaps=fill_gaps,
+        clean=clean,
     )
 
     conn.execute(f"""--sql
@@ -134,6 +164,7 @@ def main(  # noqa: PLR0913
 
     if not debug:
         conn.execute(f'DROP VIEW IF EXISTS "{name}_04_export"')
+        conn.execute(f'DROP VIEW IF EXISTS "{table}_coverage"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_input_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_overlay_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_pairs"')

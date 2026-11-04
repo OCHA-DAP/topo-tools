@@ -28,4 +28,4 @@ def main(
 ) -> None:
     """Coverage-clean the input layer; load the overlay layer raw."""
     load_and_clean_input(conn, name, input_path)
-    load_overlay(conn, name, overlay_path)
+    load_overlay(conn, name, overlay_path, require_coverage=True)

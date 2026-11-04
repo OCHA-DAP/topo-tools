@@ -15,16 +15,16 @@ run: `edge-match`'s own Colombia-scale profiling (see `docs/dev/explanation/3-ed
 shows the `groups` stage (where per-overlay-polygon extension happens) at ~85% of
 total wall time. If the geometry is already extended, only assignment and clipping need to happen: the same two primitives
 `edge-match` uses, `assign` and the clip (see their own explanation docs);
-`edge-mosaic` is a thin wrapper chaining `assign-one` → clip, with both
-sides of every overlay border sharing border points, so no stitch is needed
-(see `docs/adr/0144`).
+`edge-mosaic` is a thin wrapper chaining `assign-one` → clip → coverage clean
+(see `docs/adr/0149`).
 
 ## Pipeline
 
 1. **`_01_inputs`**: loads both layers raw via `core.io.read_and_reproject`,
    once per input file plus once for the overlay polygon (`{name}_input_01`,
-   `{name}_overlay_01`). Neither side is coverage-checked or -cleaned; see
-   "Why neither input is coverage pre-checked" below.
+   `{name}_overlay_01`). Neither side is cleaned. Each input file runs
+   `check_valid_topology` with `gap_maximum_width=0` and raises naming the file;
+   see "Input checks" below.
 2. **assign**: calls `core.assign.assign_one()` directly, the same
    per-file majority-vote pairing `assign-one` exposes standalone, see
    `docs/dev/explanation/3-edge/assign.md`. Also narrows `{name}_overlay_01` down to
@@ -40,9 +40,13 @@ sides of every overlay border sharing border points, so no stitch is needed
    normal clip; the api layer then calls the shared
    `core.assign.fill_unmatched_overlays()` to append every unmatched
    overlay polygon's own geometry into the same table, before the outputs stage.
-4. **`_02_outputs`**: no coverage gate or gap check (see `docs/adr/0144`). A
-   bounded invalid-edge check (`core.coverage.invalid_edge_issues`, passthrough
-   rows excluded) adds its rows to an issues report listing unassigned/passthrough
+4. **`_02_clean`**: runs `coverage_clean()` in place over `{name}_03`,
+   passthrough rows excluded.
+   `--no-clean` skips this stage.
+5. **`_03_outputs`**: runs `check_valid_topology` and adds `kind='gap'` rows
+   limited to the clip targets, or with `--no-clean` merges micro-polygons and
+   runs the bounded invalid-edge check (`core.coverage.invalid_edge_issues`,
+   passthrough rows excluded). The issues report lists unassigned/passthrough
    input polygons (no dropped-group kind, since there are no groups) and any
    gap-filled overlay polygons, then exports (only when the issues report has
    rows).
@@ -73,9 +77,8 @@ after each file loads (not by the union-time `row_number()` a
 single-file/combined-table run uses), then reassigned fresh via
 `ROW_NUMBER()` over the fully accumulated result once the loop ends,
 preserving the same "fid is renumbered fresh after the union" contract a
-combined-table run also guarantees. Shared border points are picked once, from every file's candidates, before any
-file is clipped, and `outputs` runs once over the fully accumulated result, so
-files that meet at a border share vertices and are checked together.
+combined-table run also guarantees. The clean and `outputs` run once over the fully accumulated result, so
+files that meet at a border are cleaned and checked together.
 Every row on the internal `{name}_03` table still carries a `source_file`
 column tagging its origin file, whichever assembly path produced it; it's
 an `assign-one` working column, stripped before the exported output (see
@@ -114,14 +117,14 @@ overlay polygon (see `docs/dev/explanation/3-edge/edge_match.md`). `merge` alway
 both passthrough mechanisms; there is no way to get one without the
 other (see `docs/adr/0079`, `docs/adr/0088`).
 
-## Why neither input is coverage pre-checked
+## Input checks
 
-Neither the overlay layer nor the input layer is checked or cleaned for coverage
-violations before assign/clip runs (see ADR-0018). `_02_outputs.py`'s invalid-edge check writes what a dirty overlay or
-input layer leaves in the output as issue rows, so it doesn't reach export
-unreported. The
-input layer is additionally assumed to already be a finished `edge_extend()`
-output, which `edge-mosaic` never re-verifies.
+The input layer is expected to be a finished `edge_extend()` output, and a seam or
+gap in it would carry straight into the output, so every input file is checked and
+raises on failure. The check runs at `gap_maximum_width=0` because an input file
+isn't measured against an overlay layer. The overlay layer is not coverage-checked
+or cleaned (see ADR-0018), and `check_no_overlaps` raises on an overlap between
+overlay polygons.
 
 ## edge-match vs. edge-mosaic
 

@@ -7,12 +7,7 @@ from typing import TYPE_CHECKING
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.constants import (
-    GEOMETRY_TYPE,
-    OVERLAY_VERTEX_SNAP,
-    PARQUET_OPTS,
-    SHARED_POINT_TOLERANCE,
-)
+from topo_tools.core.constants import GEOMETRY_TYPE, PARQUET_OPTS
 from topo_tools.core.coverage import merge_detached_parts
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
@@ -22,13 +17,10 @@ from topo_tools.core.duckdb_utils import (
     worker_result,
 )
 
-from ._points import pair_batches
+from ._tiles import pair_batches
 
 if TYPE_CHECKING:
     import multiprocessing
-
-T = SHARED_POINT_TOLERANCE
-D = OVERLAY_VERTEX_SNAP
 
 
 def main(  # noqa: PLR0913 (each param is a distinct required input)
@@ -41,15 +33,14 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
     threads: int | None = None,
     debug: bool = False,
     original_table: str | None = None,
-    points: str,
+    tiles: str,
 ) -> None:
     """Clip every row of table_in to its own overlay_fid's geometry.
 
-    table_in MUST already carry a overlay_fid column, and `points` names the
-    prepare_points prefix covering it; rows and tiles snap to its shared points
-    first. An empty-intersection input polygon is dropped from table_out but
-    kept in "{table_out}_dropped". A clip-detached piece is merged or reported
-    in "{table_out}_detached".
+    table_in MUST already carry a overlay_fid column, and `tiles` names the
+    build_tiles table covering it. An empty-intersection input polygon is dropped
+    from table_out but kept in "{table_out}_dropped". A clip-detached piece is
+    merged or reported in "{table_out}_detached".
     """
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{table_out}" AS
@@ -73,7 +64,7 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
         shutil.rmtree(group_dir, ignore_errors=True)
         group_dir.mkdir(parents=True, exist_ok=True)
 
-        _export_group(conn, table_in, points, overlay_fid, group_dir)
+        _export_group(conn, table_in, tiles, overlay_fid, group_dir)
 
         exitcode, err = spawn_worker(_clip_one_worker, (group_dir, threads, debug))
         output_path = group_dir / "output.parquet"
@@ -112,60 +103,19 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
 def _export_group(
     conn: DuckDBPyConnection,
     table_in: str,
-    points: str,
+    tiles: str,
     overlay_fid: int,
     group_dir: Path,
 ) -> None:
-    """Write one overlay_fid's rows, tiles and the shared points near them."""
+    """Write one overlay_fid's rows and tiles."""
     conn.execute(f"""--sql
         COPY (SELECT * FROM "{table_in}" WHERE overlay_fid = {overlay_fid})
         TO '{group_dir / "input.parquet"}' {PARQUET_OPTS}
     """)
     conn.execute(f"""--sql
-        COPY (SELECT * FROM "{points}_tiles" WHERE overlay_fid = {overlay_fid})
+        COPY (SELECT * FROM "{tiles}" WHERE overlay_fid = {overlay_fid})
         TO '{group_dir / "tiles.parquet"}' {PARQUET_OPTS}
     """)
-    pad = D
-    extent = conn.execute(f"""--sql
-        SELECT min(xmin), max(xmax), min(ymin), max(ymax) FROM (
-            SELECT {bbox_columns_sql("geom")} FROM "{table_in}"
-            WHERE overlay_fid = {overlay_fid}
-            UNION ALL SELECT xmin, xmax, ymin, ymax FROM "{points}_tiles"
-            WHERE overlay_fid = {overlay_fid}
-        )
-    """).fetchone()
-    near = (
-        "FALSE"
-        if extent[0] is None
-        else f"x BETWEEN {extent[0] - pad} AND {extent[1] + pad} "
-        f"AND y BETWEEN {extent[2] - pad} AND {extent[3] + pad}"
-    )
-    conn.execute(f"""--sql
-        COPY (
-            SELECT x, y, EXISTS (
-                SELECT 1 FROM "{points}_dcand" c WHERE c.x = p.x AND c.y = p.y
-            ) AS d
-            FROM "{points}_pts" p WHERE {near}
-        ) TO '{group_dir / "pts.parquet"}' {PARQUET_OPTS}
-    """)
-    conn.execute(f"""--sql
-        COPY (SELECT DISTINCT x, y FROM "{points}_cutnear" WHERE {near})
-        TO '{group_dir / "cutnear.parquet"}' {PARQUET_OPTS}
-    """)
-
-
-def _snap_sql(table: str, key: str, pts_where: str, tol: float) -> str:
-    """Snap each row of table to the clip_pts within tol of its bbox."""
-    return f"""
-        SELECT t.{key}, ST_Snap(
-            any_value(t.geom), ST_Collect(list(p.p ORDER BY p.x, p.y)), {tol}
-        ) AS geom
-        FROM {table} t JOIN clip_pts p
-          ON p.x BETWEEN t.xmin - {tol} AND t.xmax + {tol}
-         AND p.y BETWEEN t.ymin - {tol} AND t.ymax + {tol}
-        WHERE {pts_where}
-        GROUP BY t.{key}
-    """
 
 
 def _clip_one_worker(
@@ -193,42 +143,6 @@ def _clip_one_worker(
         if not x("SELECT count(*) FROM clip_tiles").fetchone()[0]:
             msg = "no overlay geometry for this overlay_fid"
             raise ValueError(msg)
-        x(f"""--sql
-            CREATE TABLE clip_pts AS
-            SELECT x, y, d, ST_Point(x, y) AS p
-            FROM read_parquet('{group_dir / "pts.parquet"}')
-        """)
-        # A tile holding a cut point within T of an overlay vertex keeps one of
-        # the two, so the snap below moves it onto the shared point.
-        x(f"""--sql
-            CREATE TABLE clip_t AS
-            SELECT t.* REPLACE (CASE WHEN t.tid IN (
-                SELECT t.tid FROM clip_tiles t
-                JOIN read_parquet('{group_dir / "cutnear.parquet"}') n
-                  ON n.x BETWEEN t.xmin AND t.xmax AND n.y BETWEEN t.ymin AND t.ymax
-                WHERE ST_Intersects(t.geom, ST_Point(n.x, n.y))
-            ) THEN ST_RemoveRepeatedPoints(t.geom, {T}) ELSE t.geom END AS geom)
-            FROM clip_tiles t
-        """)
-        x(f"""--sql
-            CREATE TABLE clip_t_e AS
-            SELECT t.tid, coalesce(s.geom, t.geom) AS geom
-            FROM clip_t t LEFT JOIN ({_snap_sql("clip_t", "tid", "TRUE", T)}) s
-            USING (tid)
-        """)
-        x(f"""--sql
-            CREATE TABLE clip_i_t AS
-            SELECT i.fid, coalesce(s.geom, i.geom) AS geom,
-                   i.xmin, i.xmax, i.ymin, i.ymax
-            FROM clip_inputs i
-            LEFT JOIN ({_snap_sql("clip_inputs", "fid", "TRUE", T)}) s USING (fid)
-        """)
-        x(f"""--sql
-            CREATE TABLE clip_i_e AS
-            SELECT i.fid, coalesce(s.geom, i.geom) AS geom
-            FROM clip_i_t i
-            LEFT JOIN ({_snap_sql("clip_i_t", "fid", "p.d", D)}) s USING (fid)
-        """)
         pair_batches(worker_conn, "clip_inputs", "clip_tiles", "clip_bat")
         x(f"CREATE TABLE clip_po (fid BIGINT, geom {GEOMETRY_TYPE})")
         for (b,) in x("SELECT DISTINCT b FROM clip_bat ORDER BY 1").fetchall():
@@ -237,7 +151,8 @@ def _clip_one_worker(
                 SELECT p.fid, ST_CollectionExtract(
                     ST_Union_Agg(ST_Intersection(i.geom, t.geom)), 3
                 )
-                FROM clip_bat p JOIN clip_i_e i USING (fid) JOIN clip_t_e t USING (tid)
+                FROM clip_bat p JOIN clip_inputs i USING (fid)
+                JOIN clip_tiles t USING (tid)
                 WHERE p.b = {b}
                 GROUP BY p.fid
             """)

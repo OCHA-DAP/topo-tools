@@ -10,6 +10,7 @@ from topo_tools.api._schema_fill_compose import apply_optional_fill, validate_fi
 from topo_tools.core.assign import (
     assign_one,
     bboxes_overlap,
+    check_input,
     fill_unmatched_overlays,
     input_bbox_extent,
     load_input,
@@ -22,13 +23,9 @@ from topo_tools.core.assign import (
     union_bbox,
     validate_merge_flags,
 )
-from topo_tools.core.clip import (
-    build_tiles,
-    collect_candidates,
-    drop_points,
-    pick_points,
-)
+from topo_tools.core.clip import build_tiles
 from topo_tools.core.constants import SNAP_TOLERANCE
+from topo_tools.core.coverage import check_no_overlaps
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
     collect_spilled,
@@ -38,7 +35,8 @@ from topo_tools.core.duckdb_utils import (
     spill_table,
 )
 from topo_tools.core.edge_mosaic import _01_clip as clip
-from topo_tools.core.edge_mosaic import _02_outputs as outputs
+from topo_tools.core.edge_mosaic import _02_clean as clean_stage
+from topo_tools.core.edge_mosaic import _03_outputs as outputs
 from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
@@ -50,12 +48,13 @@ from topo_tools.core.io import (
 
 logger = getLogger(__name__)
 
-_STEP_ORDER = ["inputs", "assign", "clip", "outputs"]
+_STEP_ORDER = ["inputs", "assign", "clip", "clean", "outputs"]
 
 _STEP_TABLES = {
     "inputs": ["{n}_input_01", "{n}_overlay_01", "{n}_overlay_full", "{n}_original_01"],
     "assign": ["{n}_02_pairs", "{n}_02_assign", "{n}_02_unassigned"],
     "clip": ["{n}_03", "{n}_03_dropped", "{n}_03_detached", "{n}_02_gap_fill"],
+    "clean": ["{n}_03", "{n}_03_micro"],
     "outputs": [],
 }
 
@@ -80,6 +79,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
     input_include: list[str] | None = None,
     input_exclude: list[str] | None = None,
     prefer: str | None = None,
+    clean: bool = True,
     fill_schema: bool = False,
     name_field: str | None = None,
     code_field: str | None = None,
@@ -180,6 +180,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 input_include=input_include,
                 input_exclude=input_exclude,
                 prefer=prefer,
+                clean=clean,
                 fill_schema=fill_schema,
                 name_field=name_field,
                 code_field=code_field,
@@ -197,7 +198,8 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     logger.info("=== %s ===", s)
                 if s == "inputs":
                     load_input(conn, name, paths)
-                    load_overlay(conn, name, overlay_path)
+                    check_input(conn, name, single_path)
+                    load_overlay(conn, name, overlay_path, require_coverage=True)
                     if originals:
                         load_original(conn, name, originals)
                     if passthrough:
@@ -263,16 +265,16 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_03",
                             overlay_snapshot_table=f"{name}_overlay_full",
-                            points_table=f"{name}_02_pt_pts",
                         )
-                    if not debug:
-                        drop_points(conn, f"{name}_02_pt")
                     count = conn.execute(
                         f'SELECT COUNT(*) FROM "{name}_03"'
                     ).fetchone()[0]
                     if count == 0:
                         msg = f"mosaic: no input polygon got an overlay for {name}"
                         raise RuntimeError(msg)
+                elif s == "clean":
+                    if clean:
+                        clean_stage.main(conn, name, passthrough=passthrough)
                 elif s == "outputs":
                     apply_optional_fill(
                         conn,
@@ -292,6 +294,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         code_join=bool(overlay_match_column and input_match_column),
                         passthrough=passthrough,
                         fill_gaps=passthrough,
+                        clean=clean,
                         debug=debug,
                     )
         maybe_export_debug_tables(
@@ -335,6 +338,40 @@ def _load_nearby_originals(
     load_original(conn, name, nearby or [original_bboxes[0][0]])
 
 
+def _check_shared_winner(
+    conn: DuckDBPyConnection,
+    name: str,
+    i: int,
+    winners: dict[int, list[int]],
+    assigned_dir: Path,
+) -> None:
+    """Raise ValueError if file i overlaps an earlier file on the same overlay fid."""
+    for (overlay_fid,) in conn.execute(
+        f'SELECT DISTINCT overlay_fid FROM "{name}_02_assign"'
+    ).fetchall():
+        earlier = winners.setdefault(overlay_fid, [])
+        if earlier:
+            spilled = [
+                str(assigned_dir / f"{name}_input_01" / f"{j:06d}.parquet")
+                for j in earlier
+            ]
+            tmp = f"{name}_02_tmp1"
+            conn.execute(f"""--sql
+                CREATE OR REPLACE TABLE "{tmp}" AS
+                SELECT source_file, geom FROM "{name}_input_01"
+                UNION ALL
+                SELECT source_file, geom FROM read_parquet({spilled})
+            """)
+            try:
+                check_no_overlaps(conn, tmp, group_column="source_file")
+            except ValueError as e:
+                msg = f"input files assigned to overlay fid {overlay_fid} overlap: {e}"
+                raise ValueError(msg) from e
+            finally:
+                conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+        earlier.append(i)
+
+
 def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     conn: DuckDBPyConnection,
     name: str,
@@ -354,6 +391,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     input_include: list[str] | None,
     input_exclude: list[str] | None,
     prefer: str | None,
+    clean: bool,
     fill_schema: bool,
     name_field: str | None,
     code_field: str | None,
@@ -361,7 +399,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     originals: list[Path | str],
 ) -> None:
     """Assign/clip one input file at a time against one already-loaded overlay layer."""
-    load_overlay(conn, name, overlay_path)
+    load_overlay(conn, name, overlay_path, require_coverage=True)
     original_bboxes = _original_bboxes(conn, originals) if originals else []
     conn.execute(f"""--sql
         CREATE TABLE "{name}_overlay_full" AS SELECT * FROM "{name}_overlay_01"
@@ -373,6 +411,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     resolved_input_columns: list[str] | None = None
     for i, file_path in enumerate(paths):
         load_input(conn, name, [file_path])
+        check_input(conn, name, file_path)
         if i == 0:
             resolved_overlay_columns, resolved_input_columns = resolve_merge_columns(
                 conn,
@@ -393,8 +432,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     prepare_overlay_tiles(conn, name, input_bbox=combined_bbox)
 
     passthrough = merge
-    points = f"{name}_02_pt"
-    drop_points(conn, points)
+    tiles = f"{name}_02_tiles"
+    conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
 
     spilled = {
         f"{name}_03_iter": f"{name}_03",
@@ -415,10 +454,11 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     assigned_dir = tmp_dir_path / f"{name}_assigned"
     shutil.rmtree(assigned_dir, ignore_errors=True)
 
-    # Every file's shared points are collected before any clip, so both sides
-    # of a border between two files snap to the same points.
+    # Every file is assigned before any clip, so files overlapping on an overlay
+    # polygon raise before the clip's hours of work.
     overlay_bboxes = overlay_fid_bboxes(conn, f"{name}_overlay_full")
     fid_offset = 0
+    winners: dict[int, list[int]] = {}
     for i, file_path in enumerate(paths):
         load_input(conn, name, [file_path])
         conn.execute(f'UPDATE "{name}_input_01" SET fid = fid + {fid_offset}')
@@ -432,24 +472,17 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             carry_columns=resolved_overlay_columns,
             input_columns=resolved_input_columns,
         )
+        _check_shared_winner(conn, name, i, winners, assigned_dir)
         build_tiles(
             conn,
             f'"{name}_overlay_full"',
             f'SELECT overlay_fid FROM "{name}_02_assign"',
-            points,
+            tiles,
         )
-        conn.execute(f"""--sql
-            CREATE OR REPLACE VIEW "{points}_in" AS
-            SELECT c.fid, a.overlay_fid, c.geom
-            FROM "{name}_input_01" c JOIN "{name}_02_assign" a ON a.input_fid = c.fid
-        """)
-        collect_candidates(conn, f"{points}_in", points)
         for table in assigned:
             spill_table(conn, assigned_dir, table, i)
         new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
         fid_offset = new_max if new_max is not None else fid_offset
-    conn.execute(f'DROP VIEW IF EXISTS "{points}_in"')
-    pick_points(conn, points)
 
     for i in range(len(paths)):
         for table in assigned:
@@ -472,7 +505,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             result_table=f"{name}_03_iter",
             raise_if_empty=False,
             original_table=f"{name}_original_01" if originals else None,
-            points=points,
+            tiles=tiles,
         )
 
         for table in spilled:
@@ -489,13 +522,12 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     if not debug:
         shutil.rmtree(spill_dir, ignore_errors=True)
 
-    if passthrough:
-        # The last loop iteration left _overlay_01 narrowed to its own
-        # file's matched fids; restore it before gap-fill needs every fid.
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TABLE "{name}_overlay_01" AS
-            SELECT * FROM "{name}_overlay_full"
-        """)
+    # The last loop iteration left _overlay_01 narrowed to its own file's
+    # matched fids; gap-fill and the gap rows need every fid.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_overlay_01" AS
+        SELECT * FROM "{name}_overlay_full"
+    """)
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_overlay_full"')
         conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
@@ -506,10 +538,9 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_03",
             overlay_snapshot_table=f"{name}_overlay_01",
-            points_table=f"{points}_pts",
         )
     if not debug:
-        drop_points(conn, points)
+        conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')
 
     count = conn.execute(f'SELECT COUNT(*) FROM "{name}_03"').fetchone()[0]
     if count == 0:
@@ -527,6 +558,13 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     """)
     conn.execute(f'ALTER TABLE "{name}_03" DROP COLUMN input_fid')
 
+    if clean:
+        clean_stage.main(
+            conn,
+            name,
+            passthrough=passthrough,
+            passthrough_fids=f'SELECT fid FROM "{name}_03_passthrough"',
+        )
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_overlay_parts"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_overlay_tiles"')
@@ -550,6 +588,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         passthrough=passthrough,
         fill_gaps=passthrough,
         passthrough_fids=f'SELECT fid FROM "{name}_03_passthrough"',
+        clean=clean,
         debug=debug,
     )
     if not debug:

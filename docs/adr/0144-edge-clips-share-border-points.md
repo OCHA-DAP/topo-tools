@@ -5,7 +5,8 @@
 Accepted. For `edge-mosaic` and `edge-match` only, supersedes the final
 `edge-stitch` pass (with its `docs/adr/0089` escalation) and the
 `check_valid_topology` call on their output kept by `docs/adr/0035`.
-Standalone `edge-stitch` and `edge-clip` are unchanged.
+Standalone `edge-stitch` and `edge-clip` are unchanged. Superseded in part
+by `docs/adr/0149`.
 
 ## Context
 
