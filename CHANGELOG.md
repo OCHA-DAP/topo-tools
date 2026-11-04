@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-04
+
+### Added
+
+- `--no-clean` on `edge-mosaic` and `edge-match` skips the final coverage clean
+  and topology check, for runs too large to clean. Seams stay in the output and
+  are reported as `invalid-edge` issue rows.
+
+### Changed
+
+- `edge-mosaic` and `edge-match` clip rows directly to the overlay and run one
+  coverage clean over the output, then raise on any remaining topology defect.
+  Shared border points are gone. Passthrough rows under `--merge` skip the clean
+  and the check, so they keep their geometry and any overlap with neighbours.
+- `edge-mosaic` checks every input file and raises, naming the file, if it isn't
+  a clean coverage.
+- `edge-mosaic` and `edge-match` report overlay area no output row covers as
+  `gap` issue rows, in both modes, including open gaps along an edge.
+- The invalid-edge check drops segments a third part matches with one hash join,
+  so each issue row holds only its own pair's segments.
+
+### Fixed
+
+- Multi-file `edge-mosaic` and `edge-match` runs resolve `--merge` columns against
+  every input file. A narrower file raised an error in `edge-mosaic`, and
+  `edge-match` dropped columns only a narrower file had.
+- The internal `overlay_fid` column stays out of `edge-mosaic` and `edge-match`
+  output.
+- Multi-file `edge-mosaic` issue rows and output rows share one fid space.
+- The overlay overlap check ignores empty intersections, which raised falsely on
+  valid layers.
+
 ## [0.19.1] - 2026-11-02
 
 ### Fixed
@@ -944,7 +976,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.17.1...v0.18.0
