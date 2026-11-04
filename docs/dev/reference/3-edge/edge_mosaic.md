@@ -87,9 +87,9 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 ## Outputs
 
 - `edge-mosaic` MUST run `check_valid_topology` on the cleaned output, passthrough rows
-  excluded, raising on what remains, and MUST report leftover gaps within the clip targets as `kind='gap'`
-  rows. With `clean` False it MUST run neither, and MUST log a warning that the
-  output is not coverage-cleaned.
+  excluded, raising on what remains. With `clean` False it MUST NOT run it, and
+  MUST log a warning that the output is not coverage-cleaned. In both cases it
+  MUST report overlay area no output row covers as `kind='gap'` rows.
 - `edge-mosaic` MUST export the final merged layer.
 - `edge-mosaic` MUST also export an issues report alongside it, using the same columns as every other tool's issues report, listing every input polygon dropped
   for an empty clip intersection, every clip-detached piece with an edge neighbour, every
@@ -136,8 +136,7 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   one `input_paths` file is given; any other value MUST raise `ValueError` (see
   `docs/adr/0079`).
 - `clean` (CLI `--no-clean`, env `NO_CLEAN`) defaults to True. Setting it False
-  skips the coverage clean, the topology check and the gap rows, and leaves seams
-  in the output.
+  skips the coverage clean and the topology check, and leaves seams in the output.
 - `edge-mosaic` MAY accept `match_column`/`overlay_match_column`/`input_match_column`
   to override spatial assignment with an exact code join (see `docs/dev/explanation/3-edge/assign.md`).
 - `edge-mosaic` MAY accept `merge: bool = False` (CLI: `--merge`, a plain
