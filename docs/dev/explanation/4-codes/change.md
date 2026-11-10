@@ -11,7 +11,7 @@ sidebar:
 classifies every unit as `unchanged` / `renamed` / `modified` / `relocated` /
 `split` / `merge` / `complex` / `created` / `removed`, using spatial overlap
 and, optionally, code/name identity linking. Ported from the sister JS app's
-interactive tool (`cod-site/src/lib/tools/change/`, its internal `cw_*`
+interactive tool (`cod-app/src/lib/tools/change/`, its internal `cw_*`
 tables named for "Boundary Cross-walk"); this doc covers what changed in the port and the
 classification algorithm's non-obvious pieces.
 

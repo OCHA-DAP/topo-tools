@@ -70,7 +70,7 @@ protected and only accepts merges via PR.
       its command's `Examples:` docstring block, then
       `uv run python .github/scripts/gen_reference.py` regenerates
       `docs/pages/{phase}/reference/{tool}.md`. Preview
-      with `npm run dev` in a sibling `cod-site` checkout, which
+      with `npm run dev` in a sibling `cod-app` checkout, which
       serves `docs/pages` at `/docs/`
 - [ ] `CHANGELOG.md` updated under `## [Unreleased]` for user-visible
       changes
