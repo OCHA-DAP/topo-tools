@@ -11,7 +11,7 @@
 for cleaning and reconciling administrative boundary polygons, usable from
 the CLI or as a Python package.
 
-Full documentation: <https://ocha-dap.github.io/cod-site/tools/docs/>
+Full documentation: <https://cod.unocha.org/tools/docs/>
 
 | Tool | Description |
 | --- | --- |

@@ -1,6 +1,6 @@
 """Classifies old/new polygon pairs into relationship classes.
 
-Ported from cod-site's change/pipeline/classify.ts.
+Ported from cod-app's change/pipeline/classify.ts.
 """
 
 from dataclasses import dataclass

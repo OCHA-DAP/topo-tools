@@ -1,6 +1,6 @@
 """Degrees -> meters conversion for issues-file reporting columns.
 
-Ported from cod-site/src/lib/tools/topo-clean/pipeline/units.ts.
+Ported from cod-app/src/lib/tools/topo-clean/pipeline/units.ts.
 """
 
 from math import cos, radians
