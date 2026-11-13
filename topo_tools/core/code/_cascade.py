@@ -22,8 +22,12 @@ def assign_new_codes(  # noqa: PLR0913
     fmt: CodeFormat,
     level: int,
     existing_codes: list[str] | None = None,
+    width_group_column: str | None = None,
 ) -> None:
-    """Assign each row in table a new sequential code within its own parent group."""
+    """Assign each row in table a new sequential code within its own parent group.
+
+    Under auto width, rows sharing a width_group_column value share one width.
+    """
     existing_codes = existing_codes or []
     counts = dict(
         conn.execute(
@@ -64,10 +68,14 @@ def assign_new_codes(  # noqa: PLR0913
         existing_width = max(
             (len(c.rsplit(fmt.delimiter, 1)[-1]) for c in existing_codes), default=1
         )
-        width_sql = f"GREATEST({existing_width}, MAX(LENGTH(tail)) OVER ())"
+        width_sql = (
+            f"GREATEST({existing_width}, "
+            "MAX(LENGTH(tail)) OVER (PARTITION BY width_group))"
+        )
     else:
         width_sql = str(width)
 
+    group_sql = f'src."{width_group_column}"' if width_group_column else "NULL"
     order_sql = ", ".join(f'"{c}" NULLS LAST' for c in sort_columns)
     ranked_table = f"{table}_code_ranked"
     # lpad truncates a too-long string (unlike Python's zfill); widen the
@@ -76,11 +84,13 @@ def assign_new_codes(  # noqa: PLR0913
         CREATE OR REPLACE TEMP TABLE "{ranked_table}" AS
         WITH numbered AS (
             SELECT
-                r.id_value, r.parent_code, CAST(num.n AS VARCHAR) AS tail
+                r.id_value, r.parent_code, r.width_group,
+                CAST(num.n AS VARCHAR) AS tail
             FROM (
                 SELECT
                     src."{id_column}" AS id_value,
                     src."{parent_column}" AS parent_code,
+                    {group_sql} AS width_group,
                     ROW_NUMBER() OVER (
                         PARTITION BY src."{parent_column}" ORDER BY {order_sql}
                     ) AS rank

@@ -175,6 +175,11 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def quote_literal(value: str) -> str:
+    """Single-quote a SQL string literal, escaping any embedded single-quote."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def bbox_columns_sql(geom_expr: str) -> str:
     """Build a bbox column list, to precompute once rather than inline in a JOIN."""
     return (

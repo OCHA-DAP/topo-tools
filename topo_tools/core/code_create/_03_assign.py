@@ -47,12 +47,14 @@ def _copy_source_codes(
     )
 
 
-def _strip_parent_prefixes(
+def _strip_parent_prefixes(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     table: str,
     levels: dict[int, Level],
     fmt: CodeFormat,
     integers: set[int],
+    *,
+    root_sql: str,
 ) -> None:
     """Strip each level's parent source code (or root) where every code repeats it."""
     numbered = sorted(n for n in levels if n >= 1)
@@ -62,7 +64,7 @@ def _strip_parent_prefixes(
         if level.seeded:
             continue
         if n == numbered[0]:
-            prefix_sql, params = "?", [fmt.root_code]
+            prefix_sql, params = f"{root_sql}::VARCHAR", []
         elif levels[n - 1].seeded:
             continue
         else:
@@ -146,37 +148,51 @@ def _fix_width(  # noqa: PLR0913 (each param is a distinct required input)
     fmt: CodeFormat,
     *,
     integer: bool,
+    root_sql: str,
 ) -> None:
-    """Without a delimiter, zero-pad integer codes to one width; raise if mixed."""
+    """Without a delimiter, zero-pad integer codes per root; raise if mixed."""
     if fmt.delimiter != "":
         return
-    (lengths,) = conn.execute(
-        f'SELECT list(DISTINCT length("{level.code}")) FROM "{table}"'
-    ).fetchone()
-    lengths = sorted(lengths or [])
-    if len(lengths) > 1 and not integer:
-        msg = (
-            f"level {n} ({level.code!r}) source codes vary in length "
-            f"{lengths}; without a delimiter the code can't be split"
-        )
-        raise ValueError(msg)
-    if integer and lengths:
-        width = max(fmt.width(n) or 0, lengths[-1])
+    per_root = conn.execute(f"""--sql
+        SELECT list(DISTINCT length("{level.code}")) FROM "{table}" GROUP BY {root_sql}
+    """).fetchall()
+    for (raw,) in per_root:
+        lengths = sorted(raw or [])
+        if len(lengths) > 1 and not integer:
+            msg = (
+                f"level {n} ({level.code!r}) source codes vary in length "
+                f"{lengths}; without a delimiter the code can't be split"
+            )
+            raise ValueError(msg)
+    if integer:
         conn.execute(
-            f'UPDATE "{table}" SET "{level.code}" = lpad("{level.code}", ?, \'0\')',
-            [width],
+            f"""--sql
+            UPDATE "{table}"
+            SET "{level.code}" = lpad("{level.code}", GREATEST(?, w.len)::INTEGER, '0')
+            FROM (
+                SELECT {root_sql} AS root, max(length("{level.code}")) AS len
+                FROM "{table}" GROUP BY 1
+            ) w
+            WHERE {root_sql} = w.root
+            """,
+            [fmt.width(n) or 0],
         )
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     table: str,
     *,
     levels: dict[int, Level],
     fmt: CodeFormat,
     source_codes: str = "replace",
+    root_sql: str,
+    root_column: str | None = None,
 ) -> None:
-    """Assign a code into each level's own column, in place, root to leaf."""
+    """Assign a code into each level's own column, in place, root to leaf.
+
+    root_sql is the root as SQL: a quoted literal, or root_column's own values.
+    """
     if source_codes not in SOURCE_CODES:
         msg = f"source_codes must be one of {SOURCE_CODES}, got {source_codes!r}"
         raise ValueError(msg)
@@ -191,14 +207,14 @@ def main(
                 parent = levels[n - 1].code if n - 1 in levels else None
                 check_unique_names(conn, table, n, level.code, parent)
     if source_codes == "embed":
-        _strip_parent_prefixes(conn, table, levels, fmt, integers)
-    if 0 in levels:
+        _strip_parent_prefixes(conn, table, levels, fmt, integers, root_sql=root_sql)
+    if 0 in levels and levels[0].code != root_column:
         root, top = levels[0], levels[1]
         after = (root.name,) if root.name else (top.name, top.code)
-        write_root_code(conn, table, root.code, fmt.root_code, after)
+        write_root_code(conn, table, root.code, root_sql, after)
 
-    parent_sql = f"'{fmt.root_code}'"
-    parent_column: str | None = None
+    parent_sql = root_sql
+    parent_column = root_column
     for n in sorted(level for level in levels if level >= 1):
         code_column = levels[n].code
         if source_codes == "embed" and not levels[n].seeded:
@@ -209,6 +225,7 @@ def main(
                 levels[n],
                 fmt,
                 integer=n in integers,
+                root_sql=root_sql,
             )
             conn.execute(
                 f'UPDATE "{table}" SET "{code_column}" = '
@@ -222,11 +239,12 @@ def main(
         conn.execute(f"""--sql
             CREATE OR REPLACE TEMP TABLE "{staging}" AS
             SELECT ROW_NUMBER() OVER () AS row_id, orig_code,
-                   orig_code AS code_val, parent_code
+                   orig_code AS code_val, parent_code, root_code
             FROM (
                 SELECT DISTINCT
                     "{code_column}" AS orig_code,
-                    {parent_sql} AS parent_code
+                    {parent_sql} AS parent_code,
+                    {root_sql} AS root_code
                 FROM "{table}"
             ) d
         """)
@@ -239,13 +257,14 @@ def main(
             code_column="code_val",
             fmt=fmt,
             level=n,
+            width_group_column="root_code",
         )
         # A raw value MAY repeat across parents; match on parent too so this
         # never collides with, or drops, the same value/NULL elsewhere.
         parent_match = (
             "TRUE"
             if parent_column is None
-            else f't."{parent_column}" IS NOT DISTINCT FROM s.parent_code'
+            else f't."{parent_column}"::VARCHAR IS NOT DISTINCT FROM s.parent_code'
         )
         conn.execute(f"""--sql
             UPDATE "{table}" t

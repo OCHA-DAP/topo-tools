@@ -39,7 +39,14 @@ code, for instance) never becomes a level; it's dropped before
 renumbering. In structural mode `root_code` is only level 1's parent,
 since no level 0 column name follows from the data. With a code template,
 `_02_levels.main()` always adds level 0, and `_03_assign` writes
-`root_code` into it.
+`root_code` into it. With `root_code_field`, `_02_levels` detects levels
+on a view that leaves the root column out, since a multi-country file's
+root column would otherwise resolve as the coarsest level. `_03_assign`
+then ranks level 1 under each row's own root value, the same
+parent-grouping every deeper level already uses, so one call gives the
+same codes as separate calls per root. `--min-width auto` sizes each
+level per root (`assign_new_codes`' `width_group_column`), as does the
+zero-padding of embedded integer codes, so the widths match too.
 
 ## `_03_assign`: chained, not independent, per level
 

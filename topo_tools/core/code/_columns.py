@@ -28,11 +28,11 @@ def write_root_code(
     conn: DuckDBPyConnection,
     table: str,
     column: str,
-    root_code: str,
+    root_sql: str,
     after: tuple[str | None, ...],
 ) -> None:
-    """Set column to root_code on every row, adding it after `after` if missing."""
+    """Set column to the root_sql expression on every row, adding it if missing."""
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
     if column not in columns:
         insert_column_after(conn, table, column, "NULL::VARCHAR", after)
-    conn.execute(f'UPDATE "{table}" SET "{column}" = ?', [root_code])
+    conn.execute(f'UPDATE "{table}" SET "{column}" = ({root_sql})::VARCHAR')

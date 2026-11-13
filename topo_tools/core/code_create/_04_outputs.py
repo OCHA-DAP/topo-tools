@@ -17,6 +17,7 @@ def main(  # noqa: PLR0913
     levels: dict[int, Level],
     fmt: CodeFormat,
     source_codes: str = "replace",
+    root_sql: str,
     issues_dest: Path | None = None,
     debug: bool = False,
 ) -> None:
@@ -24,7 +25,9 @@ def main(  # noqa: PLR0913
     export_geometry_table(conn, table, dest)
 
     if issues_dest is not None:
-        _write_overflow_issues(conn, table, levels, fmt, source_codes, issues_dest)
+        _write_overflow_issues(
+            conn, table, levels, fmt, source_codes, root_sql, issues_dest
+        )
 
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{table}"')
@@ -36,11 +39,12 @@ def _write_overflow_issues(  # noqa: PLR0913, PLR0917
     levels: dict[int, Level],
     fmt: CodeFormat,
     source_codes: str,
+    root_sql: str,
     issues_dest: Path,
 ) -> None:
     """Group each numbered level's codes by parent, flag any over min_width capacity."""
     rows: list[tuple[str, int, str, str, int, int, str]] = []
-    parent_sql = f"'{fmt.root_code}'"
+    parent_sql = f"{root_sql}::VARCHAR"
     for level in sorted(n for n in levels if n >= 1):
         code_column = levels[level].code
         width = fmt.width(level)
