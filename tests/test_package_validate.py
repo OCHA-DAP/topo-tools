@@ -181,8 +181,10 @@ def test_existing_report_without_overwrite_raises(tmp_path):
 
 
 def test_overlap_cleaned_before_packaging(tmp_path):
-    package(_write(tmp_path / "in.parquet", _OVERLAP), _out(tmp_path))
+    work = tmp_path / "work"
+    package(_write(tmp_path / "in.parquet", _OVERLAP), _out(tmp_path), tmp_dir=work)
     assert (tmp_path / "out" / "admin1.parquet").exists()
+    assert not list(work.rglob("*.parquet"))
 
 
 def test_no_clean_reports_invalid_edges(tmp_path):

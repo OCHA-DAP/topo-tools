@@ -131,3 +131,5 @@ def package(  # noqa: PLR0913
             check_topology=clean,
             **common,
         )
+        if clean and not debug:
+            source.unlink()
