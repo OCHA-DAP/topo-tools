@@ -118,7 +118,8 @@ testing found no native GEOS jitter to guard against. See
 
 Each of the two detection queries (gap/overlap) falls back to an empty
 result for that one kind (logged) on a GEOS failure, rather than raising,
-consistent with `edge-match`'s "failed group is logged and dropped, not fatal"
+except a DuckDB out-of-memory error, which raises so a run too large to check
+is never reported as clean; the fallback is consistent with `edge-match`'s "failed group is logged and dropped, not fatal"
 precedent, applied per-detection-kind here instead of per-group.
 
 ## Portolan-scale profiling
