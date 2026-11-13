@@ -794,3 +794,37 @@ def test_template_writes_root_code_at_level_0(tmp_path):
     ]
     assert columns.index("adm0_code") == columns.index("adm1_name") + 1
     assert _fetch(output_path, "DISTINCT adm0_code", "1") == [("BH",)]
+
+
+def test_integer_typed_code_column_in_new_is_overwritten(tmp_path):
+    """NEW's raw integer column sharing OLD's code column name takes the new codes."""
+    old_path = tmp_path / "old.parquet"
+    _write_synthetic(
+        old_path,
+        [
+            {"adm1_name": "A", "adm1_code": "SA01", "wkt": _square(0, 0)},
+            {"adm1_name": "B", "adm1_code": "SA02", "wkt": _square(1, 0)},
+        ],
+    )
+    new_path = tmp_path / "new.parquet"
+    _write_synthetic(
+        new_path,
+        [
+            {"adm1_name": "A", "adm1_code": 1, "wkt": _square(0, 0)},
+            {"adm1_name": "B", "adm1_code": 2, "wkt": _square(1, 0)},
+        ],
+    )
+    output_path = tmp_path / "out.parquet"
+    changelog_path = tmp_path / "changelog.csv"
+    code_update(old_path, new_path, output_path, changelog_path)
+
+    assert _fetch(output_path, "adm1_name, adm1_code", "adm1_name") == [
+        ("A", "SA01"),
+        ("B", "SA02"),
+    ]
+    types = dict(
+        r[:2] for r in duckdb.sql(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
+    )
+    assert types["adm1_code"] == "VARCHAR"
+    rows = _read_changelog(changelog_path)
+    assert all(r["code_outcome"] == "retained" for r in rows)

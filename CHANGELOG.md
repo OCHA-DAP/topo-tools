@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `code-update` no longer crashes with a DuckDB `ConversionException` when the
+  new file already has a non-text column (e.g. an integer source id) under the
+  old file's code column name. The column is retyped to text and takes the new
+  codes.
+
 ## [0.20.0] - 2026-11-04
 
 ### Added

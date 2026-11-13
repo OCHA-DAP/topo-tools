@@ -58,7 +58,10 @@ def main(  # noqa: PLR0913
     raw_val_by_fid supplies the fid -> raw NEW value lookup without needing dsl_{n}_b.
     """
     _flag_overflow(changelog, fmt)
-    existing = {r[0] for r in conn.execute(f'DESCRIBE "{finest_table}"').fetchall()}
+    column_types = {
+        r[0]: r[1] for r in conn.execute(f'DESCRIBE "{finest_table}"').fetchall()
+    }
+    existing = set(column_types)
 
     # Runs before the code-column loop below: if OLD's output column name and
     # NEW's raw column name coincide, that loop overwrites raw_col in place.
@@ -102,6 +105,13 @@ def main(  # noqa: PLR0913
                 f'ALTER TABLE "{finest_table}" ADD COLUMN "{output_col}" VARCHAR'
             )
             existing.add(output_col)
+        elif column_types.get(output_col, "VARCHAR") != "VARCHAR":
+            # NEW can carry its own non-text column under OLD's code column name
+            # (e.g. a numeric source id); codes are text, so retype it first.
+            conn.execute(
+                f'ALTER TABLE "{finest_table}" ALTER COLUMN "{output_col}" TYPE VARCHAR'
+            )
+            column_types[output_col] = "VARCHAR"
 
         mapping = f"{name}_out_map_{n}"
         conn.execute(f"""--sql
