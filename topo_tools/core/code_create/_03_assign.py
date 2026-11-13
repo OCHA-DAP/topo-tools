@@ -202,8 +202,7 @@ def main(  # noqa: PLR0913
     if 0 in levels and levels[0].code != root_column:
         root, top = levels[0], levels[1]
         after = (root.name,) if root.name else (top.name, top.code)
-        sql = None if root_column is None else root_sql
-        write_root_code(conn, table, root.code, fmt.root_code, after, root_sql=sql)
+        write_root_code(conn, table, root.code, root_sql, after)
 
     parent_sql = root_sql
     parent_column = root_column

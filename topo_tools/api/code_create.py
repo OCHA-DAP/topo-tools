@@ -13,6 +13,7 @@ from topo_tools.core.duckdb_utils import (
     maybe_export_debug_tables,
     pipeline_connection,
     quote_identifier,
+    quote_literal,
     resolve_tmp_dir,
 )
 from topo_tools.core.io import (
@@ -35,7 +36,7 @@ _STEP_TABLES = {
 
 
 def _resolve_format(
-    root_code: str, delimiter: str, min_width: int | str, source_codes: str
+    root_code: str | None, delimiter: str, min_width: int | str, source_codes: str
 ) -> CodeFormat:
     if source_codes not in SOURCE_CODES:
         msg = f"source_codes must be one of {SOURCE_CODES}, got {source_codes!r}"
@@ -55,7 +56,7 @@ def _root_sql(root_code: str | None, root_code_field: str | None) -> str:
         raise ValueError(msg)
     if root_code_field is not None:
         return f"{quote_identifier(root_code_field)}::VARCHAR"
-    return "'" + str(root_code).replace("'", "''") + "'"
+    return quote_literal(str(root_code))
 
 
 def code_create(  # noqa: PLR0913
@@ -85,9 +86,7 @@ def code_create(  # noqa: PLR0913
         raise ValueError(msg)
 
     root_sql = _root_sql(root_code, root_code_field)
-    fmt = _resolve_format(
-        root_code or root_code_field or "", delimiter, min_width, source_codes
-    )
+    fmt = _resolve_format(root_code, delimiter, min_width, source_codes)
     input_path = resolve_input_path(input_path)
     output_path = (
         Path(output_path)

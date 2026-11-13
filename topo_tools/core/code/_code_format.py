@@ -11,7 +11,7 @@ MinWidth = int | tuple[int, ...] | Literal["auto"]
 class CodeFormat:
     """One target format for a dot-style hierarchical code. No default values."""
 
-    root_code: str
+    root_code: str | None
     delimiter: str
     min_width: MinWidth
 
@@ -54,14 +54,14 @@ def parse_min_width(value: int | str | Sequence[int]) -> MinWidth:
 
 
 def resolve_code_format(
-    root_code: str,
+    root_code: str | None,
     delimiter: str,
     min_width: int | str | Sequence[int],
     *,
     allow_empty_delimiter: bool = False,
 ) -> CodeFormat:
-    """Validate root_code/delimiter/min_width and build a CodeFormat."""
-    if not root_code:
+    """Validate root_code (None: one root per row), delimiter and min_width."""
+    if root_code is not None and not root_code:
         msg = "root_code must be a non-empty string"
         raise ValueError(msg)
     if not (allow_empty_delimiter and delimiter == "") and len(delimiter) != 1:

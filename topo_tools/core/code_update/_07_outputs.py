@@ -12,6 +12,7 @@ from topo_tools.core.code import (
 )
 from topo_tools.core.code_update._02_levels import SideLevels
 from topo_tools.core.code_update._06_assign import ChangeRow
+from topo_tools.core.duckdb_utils import quote_literal
 from topo_tools.core.io import add_csv_bom, export_geometry_table
 
 
@@ -131,7 +132,8 @@ def main(  # noqa: PLR0913
             else (side_a.columns[1], side_b.names.get(1))
         )
         root = side_a.schema.code_field.format(n=0)
-        write_root_code(conn, finest_table, root, fmt.root_code, after)
+        root_sql = quote_literal(fmt.root_code)
+        write_root_code(conn, finest_table, root, root_sql, after)
 
     export_geometry_table(conn, finest_table, dest)
 
