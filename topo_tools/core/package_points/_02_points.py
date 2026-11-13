@@ -1,5 +1,7 @@
 """Dissolves each detected level and reduces it to a pole-of-inaccessibility point."""
 
+from logging import getLogger
+
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
@@ -12,6 +14,8 @@ from topo_tools.core.schema_map._level_columns import (
     verify_functional_cluster,
 )
 from topo_tools.core.schema_map._target_schema import TargetSchema
+
+logger = getLogger(__name__)
 
 
 def _check_row_count(
@@ -117,8 +121,9 @@ def main(
     table_in = f"{name}_01"
     columns = [row[0] for row in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
     if depth_column in columns:
-        msg = f"depth_column {depth_column!r} already exists on {table_in!r}"
-        raise ValueError(msg)
+        # Each point is stamped with the level it labels, like package-lines.
+        logger.info("package-points: replacing input column %r", depth_column)
+        conn.execute(f'ALTER TABLE "{table_in}" DROP "{depth_column}"')
 
     level_columns: dict[int, LevelColumns] | None = None
     root_injected = False
