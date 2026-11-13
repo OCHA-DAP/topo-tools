@@ -20,7 +20,6 @@ from .api import (
     schema_map,
     topo_clean,
     topo_detect,
-    validate,
 )
 from .cli.main import cli
 
@@ -45,5 +44,4 @@ __all__ = [
     "schema_map",
     "topo_clean",
     "topo_detect",
-    "validate",
 ]

@@ -262,6 +262,7 @@ def test_cli_package_output_code_field(admin2_input, tmp_path):
         cli,
         [
             "package",
+            "--no-block",
             str(admin2_input),
             "--output",
             str(tmp_path / "{x}.parquet"),

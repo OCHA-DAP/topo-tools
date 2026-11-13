@@ -8,10 +8,17 @@ from topo_tools.core.coverage import check_no_overlaps, merge_micro_polygons
 from topo_tools.core.io import read_and_reproject
 
 
-def main(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:
-    """Read `{name}_01` in EPSG:4326, micro-polygons merged; raise on overlap."""
+def main(
+    conn: DuckDBPyConnection,
+    name: str,
+    path: Path | str,
+    *,
+    check_topology: bool = True,
+) -> None:
+    """Read `{name}_01` in EPSG:4326, micro-polygons merged, overlaps checked."""
     read_and_reproject(conn, name, path)
     table = f"{name}_01"
     merge_micro_polygons(conn, table, table, issues_table=f"{name}_01_micro")
-    check_no_overlaps(conn, table)
+    if check_topology:
+        check_no_overlaps(conn, table)
     conn.execute(f'DROP TABLE IF EXISTS "{name}_01_micro"')

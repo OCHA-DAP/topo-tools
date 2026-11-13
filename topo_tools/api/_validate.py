@@ -1,4 +1,4 @@
-"""Public API: run every single-layer detect tool and summarize their reports."""
+"""Runs every single-layer detect tool on one layer and summarizes their reports."""
 
 from logging import getLogger
 from pathlib import Path
@@ -9,46 +9,28 @@ from topo_tools.api.code_detect import detect as code_detect
 from topo_tools.api.name_detect import detect as name_detect
 from topo_tools.api.schema_detect import detect as schema_detect
 from topo_tools.api.topo_detect import detect as topo_detect
-from topo_tools.core.io import check_overwrite, default_output_path, resolve_input_path
 from topo_tools.core.validate import _summary as summary
 from topo_tools.core.validate._constants import BLOCKING_KINDS, STAGES
 
 logger = getLogger(__name__)
 
 
-def _path(input_path: Path | str, output_dir: Path | None, suffix: str) -> Path:
-    path = default_output_path(input_path, "")
-    return (output_dir or path.parent) / f"{path.stem}{suffix}"
-
-
 def validate(  # noqa: PLR0913
-    input_path: str | Path,
-    output_dir: str | Path | None = None,
+    input_path: Path | str,
+    reports: dict[str, Path],
+    summary_path: Path,
     *,
+    skip_topo: bool = False,
     name_field: str | None = None,
     code_field: str | None = None,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
-    overwrite: bool = True,
     debug: bool = False,
 ) -> bool:
-    """Run schema-, topo-, code- and name-detect on one layer, then summarize.
+    """Run schema-, topo-, code- and name-detect into reports, then summarize.
 
-    Each report and the summary go beside input_path, or into output_dir.
     Returns True if any report has an error row or a stage failed.
     """
-    input_path = resolve_input_path(input_path)
-    output_dir = Path(output_dir) if output_dir is not None else None
-    reports = {
-        "schema": _path(input_path, output_dir, "_schema_issues.parquet"),
-        "topo": _path(input_path, output_dir, "_topo_issues.parquet"),
-        "code": _path(input_path, output_dir, "_code_issues.parquet"),
-        "name": _path(input_path, output_dir, "_name_issues.parquet"),
-    }
-    summary_path = _path(input_path, output_dir, "_validate_summary.csv")
-    for path in [*reports.values(), summary_path]:
-        check_overwrite(path, overwrite=overwrite)
-
     common = {"threads": threads, "tmp_dir": tmp_dir, "debug": debug}
     fields = {"name_field": name_field, "code_field": code_field}
     runs = {
@@ -61,6 +43,10 @@ def validate(  # noqa: PLR0913
         summary.create(conn)
         blocked = False
         for stage in STAGES:
+            if stage == "topo" and skip_topo:
+                reason = "not checked: package ran with --no-clean"
+                summary.add_outcome(conn, stage, "skipped", "warn", reason)
+                continue
             if blocked and stage in {"code", "name"}:
                 reason = "levels could not be detected; see the schema report"
                 summary.add_outcome(conn, stage, "skipped", "warn", reason)

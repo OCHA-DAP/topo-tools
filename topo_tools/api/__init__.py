@@ -19,7 +19,6 @@ from .schema_join import join as schema_join
 from .schema_map import map as schema_map
 from .topo_clean import clean as topo_clean
 from .topo_detect import detect as topo_detect
-from .validate import validate
 
 __all__ = [
     "change",
@@ -41,5 +40,4 @@ __all__ = [
     "schema_map",
     "topo_clean",
     "topo_detect",
-    "validate",
 ]

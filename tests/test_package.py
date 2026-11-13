@@ -71,6 +71,7 @@ def test_default_output_matches_calling_each_tool_separately(tmp_path):
         name_field="adm{n}_name",
         code_field="adm{n}_pcode",
         overwrite=True,
+        block=False,
     )
 
     separate_dir = tmp_path / "separate"
@@ -96,7 +97,8 @@ def test_default_output_matches_calling_each_tool_separately(tmp_path):
         overwrite=True,
     )
 
-    combined_names = {p.name for p in combined_dir.glob("*.parquet")}
+    reports = {f"admin2_{s}_issues.parquet" for s in ("schema", "topo", "code", "name")}
+    combined_names = {p.name for p in combined_dir.glob("*.parquet")} - reports
     separate_names = {p.name for p in separate_dir.glob("*.parquet")}
     assert combined_names == separate_names
 
@@ -109,6 +111,7 @@ def test_x_template_substitutes_per_subtool(admin2_input, tmp_path):
         name_field="adm{n}_name",
         code_field="adm{n}_pcode",
         overwrite=True,
+        block=False,
     )
 
     assert (tmp_path / "web_admin1.parquet").exists()
@@ -125,6 +128,7 @@ def test_missing_x_raises(admin2_input, tmp_path):
             name_field="adm{n}_name",
             code_field="adm{n}_pcode",
             overwrite=True,
+            block=False,
         )
 
 
@@ -136,6 +140,7 @@ def test_overwrite_and_name_field_code_field_passed_through(admin2_input, tmp_pa
         name_field="adm{n}_name",
         code_field="adm{n}_pcode",
         overwrite=True,
+        block=False,
     )
 
     with pytest.raises(FileExistsError, match="already exists"):
@@ -145,6 +150,7 @@ def test_overwrite_and_name_field_code_field_passed_through(admin2_input, tmp_pa
             name_field="adm{n}_name",
             code_field="adm{n}_pcode",
             overwrite=False,
+            block=False,
         )
 
 
@@ -153,6 +159,7 @@ def test_cli_default_naming(admin2_input):
         cli,
         [
             "package",
+            "--no-block",
             str(admin2_input),
             "--name-field",
             "adm{n}_name",
@@ -171,6 +178,7 @@ def test_cli_output_template(admin2_input, tmp_path):
         cli,
         [
             "package",
+            "--no-block",
             str(admin2_input),
             "--output",
             str(tmp_path / "web_{x}.parquet"),

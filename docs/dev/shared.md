@@ -65,7 +65,7 @@ in sync.
 - `code-update` MUST NOT depend on `edge-extend`, `edge-match`,
   `edge-mosaic`, or `topo-clean`, and none of them MUST depend on
   `code-update`.
-- `validate` MAY depend on every detect tool's `api.*.detect()`;
+- `package` MAY depend on every detect tool's `api.*.detect()`;
   `core.validate` MUST NOT depend on any tool package.
 
 ## Multi-file combine ordering
@@ -269,7 +269,7 @@ kind that has one (`unassigned`, `dropped_group`, `clip-empty`,
 `detached-part`, `passthrough`), null only for `gap` (see `docs/adr/0084`,
 `docs/adr/0087`). `schema-detect`, `code-detect` and `name-detect` each
 write their own schema (see their references), always, even with zero
-rows, as CSV by default; `validate` summarizes all four reports in its own
+rows, as CSV by default; `package` summarizes all four reports in its own
 schema (see its reference).
 
 Neither `edge-match`'s nor `edge-mosaic`'s *main* output carries a

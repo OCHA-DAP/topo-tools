@@ -39,7 +39,6 @@ LAYOUT = {
     "package-polygons": ("6-packaging", 4),
     "package-points": ("6-packaging", 5),
     "package-lines": ("6-packaging", 6),
-    "validate": ("6-packaging", 7),
 }
 
 

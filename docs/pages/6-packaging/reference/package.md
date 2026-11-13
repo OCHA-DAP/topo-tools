@@ -1,17 +1,21 @@
 ---
 title: "package"
-description: "Run package-polygons, package-points and package-lines on one input."
+description: "Clean, check and package one input into polygons, points and lines."
 sidebar:
   order: 3
 ---
 
-Run package-polygons, package-points and package-lines on one input.
+Clean, check and package one input into polygons, points and lines.
 
 ## Synopsis
 
 ```text
 topo-tools package [OPTIONS] INPUT_FILE
 ```
+
+## Description
+
+Coverage-cleans INPUT_FILE, then runs schema-detect, topo-detect, code-detect and name-detect on it, each writing its own report beside the outputs plus a summary. Any error stops the run before packaging, with exit status 1. Then runs package-polygons, package-points and package-lines on the cleaned layer.
 
 ## Options
 
@@ -21,6 +25,8 @@ topo-tools package [OPTIONS] INPUT_FILE
 - `--output-name-field TEXT`: Rename the `--name-field` columns to this pattern in every output, e.g. 'adm{n}_label'. Needs `--name-field` and `--code-field`.
 - `--output-code-field TEXT`: Rename the `--code-field` columns to this pattern in every output, e.g. 'adm{n}_pcode'. Needs `--name-field` and `--code-field`.
 - `--aggregation TEXT`: How package-polygons combines a column whose values differ inside one unit, as 'column=function', where function is sum, min, max, avg or first. By default numbers are summed and other columns dropped. Repeat for more columns.
+- `--no-clean`: Skip the coverage clean and the topology check, writing invalid edges to the package-polygons issues files instead of stopping. For inputs too large to clean, such as a global layer.
+- `--no-block`: Package even when the schema, topology, code or name checks find errors. The reports are still written.
 - `--overwrite BOOLEAN`: Replace output files that already exist. Pass `--overwrite=false` to stop with an error instead. [default: True]
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).
 - `--debug`: Keep intermediate tables, export them to Parquet, and log the time and memory each query takes.
@@ -38,4 +44,10 @@ Choose where the outputs go:
 
 ```sh
 topo-tools package admin3.geojson --output "web/{x}.geojson"
+```
+
+A global layer too large to clean, invalid edges reported instead:
+
+```sh
+topo-tools package global_admin2.parquet --no-clean
 ```

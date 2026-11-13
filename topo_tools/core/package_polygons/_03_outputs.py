@@ -7,7 +7,11 @@ from pathlib import Path
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import output_renames
-from topo_tools.core.coverage import check_valid_topology, gap_issues_sql
+from topo_tools.core.coverage import (
+    check_valid_topology,
+    gap_issues_sql,
+    invalid_edge_issues,
+)
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 logger = getLogger(__name__)
@@ -32,19 +36,23 @@ def _export_one(
     name: str,
     item: LevelOutput,
     renames: tuple[tuple[str, str], tuple[str | None, str | None]] | None,
+    *,
+    check_topology: bool,
 ) -> None:
-    check_valid_topology(conn, item.table)
-
     issues_table = f"{name}_03_{item.level}"
-    micro = (
-        f'UNION ALL BY NAME SELECT * FROM "{name}_01_micro"'
-        if item.table == f"{name}_01"
-        else ""
-    )
+    invalid_table = f"{issues_table}_invalid"
+    if check_topology:
+        check_valid_topology(conn, item.table)
+        parts = [gap_issues_sql(conn, item.table, coverage=True)]
+    else:
+        # Gaps need a union, which fails on unmatched edges, like edge-mosaic's.
+        invalid_edge_issues(conn, item.table, invalid_table)
+        parts = [f'SELECT * FROM "{invalid_table}"']
+    if item.table == f"{name}_01":
+        parts.append(f'SELECT * FROM "{name}_01_micro"')
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{issues_table}" AS
-        {gap_issues_sql(conn, item.table, coverage=True)}
-        {micro}
+        {" UNION ALL BY NAME ".join(parts)}
     """)
     remaining = conn.execute(f"""--sql
         SELECT COUNT(*) FROM "{issues_table}" WHERE kind = 'gap'
@@ -67,14 +75,16 @@ def _export_one(
     )
     export_issues_table(conn, issues_table, item.issues_dest)
     conn.execute(f'DROP TABLE IF EXISTS "{issues_table}"')
+    conn.execute(f'DROP TABLE IF EXISTS "{invalid_table}"')
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     items: list[LevelOutput],
     *,
     renames: tuple[tuple[str, str], tuple[str | None, str | None]] | None = None,
+    check_topology: bool = True,
     debug: bool = False,
 ) -> None:
     """Export every level with a non-None dest; drop intermediates unless debug.
@@ -83,7 +93,7 @@ def main(
     """
     for item in items:
         if item.dest is not None:
-            _export_one(conn, name, item, renames)
+            _export_one(conn, name, item, renames, check_topology=check_topology)
 
     if not debug:
         for item in items:
