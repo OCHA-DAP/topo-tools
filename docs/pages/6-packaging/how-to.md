@@ -17,7 +17,7 @@ writing each report plus a summary into `release/`. Any error stops the run
 before packaging, with exit status 1. Open
 `release/admin3_names_edited_validate_summary.csv` for one row per stage and
 kind found; each row names the report with the details. Fix the errors and
-rerun, or pass `--no-validate` to package anyway.
+rerun, or pass `--no-block` to package anyway.
 
 Earlier steps work with `adm{n}_code`; `--output-code-field` writes the
 release's code columns as `adm{n}_pcode`.

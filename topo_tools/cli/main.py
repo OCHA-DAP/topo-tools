@@ -948,10 +948,11 @@ def package_lines(  # noqa: PLR0913, PLR0917
     "inputs too large to clean, such as a global layer.",
 )
 @click.option(
-    "--no-validate",
-    envvar="NO_VALIDATE",
+    "--no-block",
+    envvar="NO_BLOCK",
     is_flag=True,
-    help="Skip the schema, topology, code and name checks run before packaging.",
+    help="Package even when the schema, topology, code or name checks find "
+    "errors. The reports are still written.",
 )
 @click.option(
     "--overwrite",
@@ -992,7 +993,7 @@ def package(  # noqa: PLR0913, PLR0917
     output_code_field: str | None,
     aggregations: tuple[str, ...],
     no_clean: bool,  # noqa: FBT001
-    no_validate: bool,  # noqa: FBT001
+    no_block: bool,  # noqa: FBT001
     overwrite: bool,  # noqa: FBT001
     threads: int | None,
     debug: bool,  # noqa: FBT001
@@ -1030,7 +1031,7 @@ def package(  # noqa: PLR0913, PLR0917
             output_code_field=output_code_field,
             aggregations=_parse_aggregations(aggregations),
             clean=not no_clean,
-            validate=not no_validate,
+            block=not no_block,
             threads=threads,
             tmp_dir=tmp_dir,
             overwrite=overwrite,

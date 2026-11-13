@@ -56,7 +56,7 @@ reports, one `GROUP BY` per report. `topo-detect`'s report has no severity
 column, so each kind gets one: an overlap or a micro-polygon is an error,
 but a gap is a warning, since a gap may be a real hole in the layer (a
 lake, an enclave). Any error row stops `package` before it writes an
-output; `--no-validate` skips the checks.
+output, unless `--no-block` is given; the reports are written either way.
 
 ## Usage
 

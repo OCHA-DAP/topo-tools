@@ -307,7 +307,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    `{stem}_validate_summary.csv` into `06_packaging/` and stops on any
    `error` row. Show the user every `error` row of the summary; once they
    are fixed, rerun, or once the user accepts them, rerun with
-   `--no-validate`.
+   `--no-block`.
 
    When the name-cleaned file in `05_names/` has more units than the stage 3
    output (the full geometry was coded first), ask whether to package it

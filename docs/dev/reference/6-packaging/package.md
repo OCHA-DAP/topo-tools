@@ -70,8 +70,10 @@ sidebar:
 ## Configuration (`api.package.package()` / CLI)
 
 - `package` MUST process exactly one input file per call.
-- `clean` (CLI: `--no-clean`) and `validate` (CLI: `--no-validate`) MUST
-  default to on.
+- `clean` (CLI: `--no-clean`) and `block` (CLI: `--no-block`) MUST
+  default to on. Validation MUST always run and write its reports; with
+  `block` off, `package` MUST log a warning on an error row and package
+  anyway.
 - `package` MUST raise `FileExistsError` before reading the input if the
   points or lines output, any report or the summary already exists and
   overwriting wasn't requested.

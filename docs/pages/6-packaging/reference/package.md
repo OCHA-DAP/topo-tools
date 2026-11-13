@@ -26,7 +26,7 @@ Coverage-cleans INPUT_FILE, then runs schema-detect, topo-detect, code-detect an
 - `--output-code-field TEXT`: Rename the `--code-field` columns to this pattern in every output, e.g. 'adm{n}_pcode'. Needs `--name-field` and `--code-field`.
 - `--aggregation TEXT`: How package-polygons combines a column whose values differ inside one unit, as 'column=function', where function is sum, min, max, avg or first. By default numbers are summed and other columns dropped. Repeat for more columns.
 - `--no-clean`: Skip the coverage clean and the topology check, writing invalid edges to the package-polygons issues files instead of stopping. For inputs too large to clean, such as a global layer.
-- `--no-validate`: Skip the schema, topology, code and name checks run before packaging.
+- `--no-block`: Package even when the schema, topology, code or name checks find errors. The reports are still written.
 - `--overwrite BOOLEAN`: Replace output files that already exist. Pass `--overwrite=false` to stop with an error instead. [default: True]
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).
 - `--debug`: Keep intermediate tables, export them to Parquet, and log the time and memory each query takes.

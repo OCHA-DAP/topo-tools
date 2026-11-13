@@ -97,16 +97,17 @@ def test_error_blocks_outputs(tmp_path):
     assert not (out / "admin1.parquet").exists()
 
 
-def test_no_validate_skips_checks(tmp_path):
+def test_no_block_reports_and_packages(tmp_path):
     package(
         _write(tmp_path / "in.parquet", _DUPLICATE),
         _out(tmp_path),
-        validate=False,
+        block=False,
         **_FIELDS,
     )
     out = tmp_path / "out"
     assert (out / "admin1.parquet").exists()
-    assert not (out / "in_validate_summary.csv").exists()
+    rows = _summary(out / "in_validate_summary.csv")
+    assert any(r["severity"] == "error" for r in rows)
 
 
 def test_undetected_levels_skip_code_and_name(tmp_path):
