@@ -167,6 +167,14 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   or combined with any of `overlay_include`/`overlay_exclude`/
   `input_include`/`input_exclude` (see `docs/adr/0077`, `docs/adr/0079`, `docs/adr/0083`, `docs/adr/0088`;
   supersedes the input-orphan passthrough of `docs/adr/0078`).
+- With `merge` set, `edge-mosaic` MAY additionally accept `fill: dict[str, str]
+  | None = None` (CLI: repeatable `--fill input_column=overlay_column`) to
+  value input columns on the unmatched overlay polygons it keeps (gap-fill
+  rows only), each cast to the input column's type. A source MAY be any
+  overlay column, copied or not. `fill` MUST raise `ValueError` before
+  assign if given without `merge`, if a target isn't a kept input column
+  or is also a copied overlay column, or if a source isn't an overlay
+  column.
 - `edge-mosaic` MAY opt into cascading admin-hierarchy columns via
   `fill_schema`/`--fill-schema`, right after clipping and before export
   (both the single-file step loop and the multi-file combine path).

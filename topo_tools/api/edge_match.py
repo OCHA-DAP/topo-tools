@@ -84,6 +84,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
     input_include: list[str] | None = None,
     input_exclude: list[str] | None = None,
     prefer: str | None = None,
+    fill: dict[str, str] | None = None,
     assign: str = "auto",
     clean: bool = True,
     fill_schema: bool = False,
@@ -113,6 +114,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
         input_include=input_include,
         input_exclude=input_exclude,
         prefer=prefer,
+        fill=fill,
     )
     validate_fill_flags(
         fill_schema=fill_schema, name_field=name_field, code_field=code_field
@@ -193,6 +195,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 input_include=input_include,
                 input_exclude=input_exclude,
                 prefer=prefer,
+                fill=fill,
                 clean=clean,
                 fill_schema=fill_schema,
                 name_field=name_field,
@@ -227,6 +230,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                                 input_include=input_include,
                                 input_exclude=input_exclude,
                                 prefer=prefer,
+                                fill=fill,
                             )
                         )
                         merge_resolved = True
@@ -251,6 +255,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                                 input_include=input_include,
                                 input_exclude=input_exclude,
                                 prefer=prefer,
+                                fill=fill,
                             )
                         )
                         merge_resolved = True
@@ -276,6 +281,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                                 input_include=input_include,
                                 input_exclude=input_exclude,
                                 prefer=prefer,
+                                fill=fill,
                             )
                         )
                         merge_resolved = True
@@ -294,6 +300,7 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_04",
                             overlay_snapshot_table=f"{name}_overlay_full",
+                            fill=fill,
                         )
                 elif s == "clean":
                     if clean:
@@ -395,6 +402,7 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
     input_include: list[str] | None,
     input_exclude: list[str] | None,
     prefer: str | None,
+    fill: dict[str, str] | None,
     clean: bool,
     fill_schema: bool,
     name_field: str | None,
@@ -431,6 +439,7 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
         input_include=input_include,
         input_exclude=input_exclude,
         prefer=prefer,
+        fill=fill,
         input_table=f"{name}_input_schema",
     )
     conn.execute(f'DROP TABLE IF EXISTS "{name}_input_schema"')
@@ -504,6 +513,7 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_04",
             overlay_snapshot_table=f"{name}_overlay_01",
+            fill=fill,
         )
     if clean:
         clean_stage.main(conn, name, passthrough=passthrough)

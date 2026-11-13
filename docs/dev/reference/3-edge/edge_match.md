@@ -185,6 +185,14 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   collision. `prefer` MUST raise `ValueError` if given without `merge`,
   or combined with any of `overlay_include`/`overlay_exclude`/
   `input_include`/`input_exclude` (see `docs/adr/0077`, `docs/adr/0081`, `docs/adr/0088`).
+- With `merge` set, `edge-match` MAY additionally accept `fill: dict[str, str]
+  | None = None` (CLI: repeatable `--fill input_column=overlay_column`) to
+  value input columns on the unmatched overlay polygons it keeps (gap-fill
+  rows only), each cast to the input column's type. A source MAY be any
+  overlay column, copied or not. `fill` MUST raise `ValueError` before
+  assign if given without `merge`, if a target isn't a kept input column
+  or is also a copied overlay column, or if a source isn't an overlay
+  column.
 - `edge-match` MAY opt into cascading admin-hierarchy columns via
   `fill_schema`/`--fill-schema`, right after clipping and before export
   (both the single-file step loop and the multi-file combine path).

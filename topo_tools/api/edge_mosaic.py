@@ -86,6 +86,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
     input_include: list[str] | None = None,
     input_exclude: list[str] | None = None,
     prefer: str | None = None,
+    fill: dict[str, str] | None = None,
     clean: bool = True,
     fill_schema: bool = False,
     name_field: str | None = None,
@@ -115,6 +116,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         input_include=input_include,
         input_exclude=input_exclude,
         prefer=prefer,
+        fill=fill,
     )
     validate_fill_flags(
         fill_schema=fill_schema, name_field=name_field, code_field=code_field
@@ -187,6 +189,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 input_include=input_include,
                 input_exclude=input_exclude,
                 prefer=prefer,
+                fill=fill,
                 clean=clean,
                 fill_schema=fill_schema,
                 name_field=name_field,
@@ -226,6 +229,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                                 input_include=input_include,
                                 input_exclude=input_exclude,
                                 prefer=prefer,
+                                fill=fill,
                             )
                         )
                         merge_resolved = True
@@ -249,6 +253,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                                 input_include=input_include,
                                 input_exclude=input_exclude,
                                 prefer=prefer,
+                                fill=fill,
                             )
                         )
                         merge_resolved = True
@@ -272,6 +277,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                             carry_columns=resolved_overlay_columns,
                             result_table=f"{name}_03",
                             overlay_snapshot_table=f"{name}_overlay_full",
+                            fill=fill,
                         )
                     count = conn.execute(
                         f'SELECT COUNT(*) FROM "{name}_03"'
@@ -398,6 +404,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     input_include: list[str] | None,
     input_exclude: list[str] | None,
     prefer: str | None,
+    fill: dict[str, str] | None,
     clean: bool,
     fill_schema: bool,
     name_field: str | None,
@@ -433,6 +440,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         input_include=input_include,
         input_exclude=input_exclude,
         prefer=prefer,
+        fill=fill,
         input_table=f"{name}_input_schema",
     )
     conn.execute(f'DROP TABLE IF EXISTS "{name}_input_schema"')
@@ -547,6 +555,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             carry_columns=resolved_overlay_columns,
             result_table=f"{name}_03",
             overlay_snapshot_table=f"{name}_overlay_01",
+            fill=fill,
         )
     if not debug:
         conn.execute(f'DROP TABLE IF EXISTS "{tiles}"')

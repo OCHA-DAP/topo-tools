@@ -3,13 +3,14 @@
 from duckdb import DuckDBPyConnection
 
 
-def fill_unmatched_overlays(
+def fill_unmatched_overlays(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     *,
     carry_columns: list[str] | None = None,
     result_table: str,
     overlay_snapshot_table: str,
+    fill: dict[str, str] | None = None,
 ) -> None:
     """Append each unmatched overlay polygon's own row (unclipped) onto result_table.
 
@@ -30,6 +31,17 @@ def fill_unmatched_overlays(
             ALTER TABLE "{result_table}"
             ADD COLUMN IF NOT EXISTS "{column}" {column_type}
         """)
+    for target, source in (fill or {}).items():
+        conn.execute(f"""--sql
+            ALTER TABLE "{result_table}"
+            ADD COLUMN IF NOT EXISTS "{target}" {column_types[source]}
+        """)
+    result_types = {
+        row[0]: row[1] for row in conn.execute(f'DESCRIBE "{result_table}"').fetchall()
+    }
+    carry_sql += "".join(
+        f', "{s}"::{result_types[t]} AS "{t}"' for t, s in (fill or {}).items()
+    )
     fids = conn.execute(f"""--sql
         SELECT fid FROM "{overlay_snapshot_table}"
         WHERE fid NOT IN (SELECT DISTINCT overlay_fid FROM "{name}_02_assign")

@@ -182,7 +182,8 @@ fail with extra, unmatched columns).
 **Overlay gap-fill.** An overlay polygon matched by zero input polygons is dropped by
 default; with `merge` set, that overlay polygon's own geometry and carried columns
 are kept in the output unclipped instead, reported as a `kind='gap-fill'`
-row. This is the shared `core.assign.fill_unmatched_overlays()` helper
+row. Its input columns are NULL except those named in `fill`, each read
+from the overlay snapshot, so a source needn't be a copied column. This is the shared `core.assign.fill_unmatched_overlays()` helper
 (the same one `edge-mosaic` calls), called from the api layer right after
 `_03_clip`'s `core.clip.main()` call returns, against a
 `{name}_overlay_full` snapshot taken before assign narrows

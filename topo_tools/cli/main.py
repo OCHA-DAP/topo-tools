@@ -42,18 +42,20 @@ def _split_columns(value: str | None) -> list[str] | None:
     return value.split(",") if value is not None else None
 
 
-def _parse_aggregations(values: tuple[str, ...]) -> dict[str, str] | None:
-    """Parse repeated --aggregation 'column=function' values into a dict."""
+def _parse_pairs(
+    values: tuple[str, ...], flag: str, shape: str
+) -> dict[str, str] | None:
+    """Parse repeated 'key=value' flag values into a dict."""
     if not values:
         return None
-    aggregations = {}
+    pairs = {}
     for raw in values:
-        column, sep, function = raw.partition("=")
+        key, sep, value = raw.partition("=")
         if not sep:
-            msg = f"--aggregation must be 'column=function', got {raw!r}"
+            msg = f"{flag} must be '{shape}', got {raw!r}"
             raise click.BadParameter(msg)
-        aggregations[column] = function
-    return aggregations
+        pairs[key] = value
+    return pairs
 
 
 _MERGE_OPTIONS = (
@@ -104,6 +106,17 @@ _MERGE_OPTIONS = (
             "keep this layer's column. Needs --merge. Can't be combined with "
             "--overlay-include, --overlay-exclude, --input-include or "
             "--input-exclude."
+        ),
+    ),
+    click.option(
+        "--fill",
+        "fill",
+        envvar="FILL",
+        multiple=True,
+        help=(
+            "On an unmatched overlay polygon kept in the output, set an input "
+            "column from an overlay column, as 'input_column=overlay_column'. "
+            "Repeat for more columns. Needs --merge."
         ),
     ),
 )
@@ -671,7 +684,7 @@ def package_polygons(  # noqa: PLR0913, PLR0917
             code_field=code_field,
             output_name_field=output_name_field,
             output_code_field=output_code_field,
-            aggregations=_parse_aggregations(aggregations),
+            aggregations=_parse_pairs(aggregations, "--aggregation", "column=function"),
             threads=threads,
             tmp_dir=tmp_dir,
             overwrite=overwrite,
@@ -1029,7 +1042,7 @@ def package(  # noqa: PLR0913, PLR0917
             code_field,
             output_name_field=output_name_field,
             output_code_field=output_code_field,
-            aggregations=_parse_aggregations(aggregations),
+            aggregations=_parse_pairs(aggregations, "--aggregation", "column=function"),
             clean=not no_clean,
             block=not no_block,
             threads=threads,
@@ -2042,6 +2055,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
     input_include: str | None,
     input_exclude: str | None,
     prefer: str | None,
+    fill: tuple[str, ...],
     assign: str,
     no_clean: bool,  # noqa: FBT001
     fill_schema: bool,  # noqa: FBT001
@@ -2131,6 +2145,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
             input_include=_split_columns(input_include),
             input_exclude=_split_columns(input_exclude),
             prefer=prefer,
+            fill=_parse_pairs(fill, "--fill", "input_column=overlay_column"),
             assign=assign,
             clean=not no_clean,
             fill_schema=fill_schema,
@@ -2266,6 +2281,7 @@ def edge_mosaic(  # noqa: PLR0913, PLR0917
     input_include: str | None,
     input_exclude: str | None,
     prefer: str | None,
+    fill: tuple[str, ...],
     no_clean: bool,  # noqa: FBT001
     fill_schema: bool,  # noqa: FBT001
     name_field: str | None,
@@ -2346,6 +2362,7 @@ def edge_mosaic(  # noqa: PLR0913, PLR0917
             input_include=_split_columns(input_include),
             input_exclude=_split_columns(input_exclude),
             prefer=prefer,
+            fill=_parse_pairs(fill, "--fill", "input_column=overlay_column"),
             clean=not no_clean,
             fill_schema=fill_schema,
             name_field=name_field,

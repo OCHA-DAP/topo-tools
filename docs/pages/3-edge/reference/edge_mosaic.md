@@ -36,6 +36,7 @@ Like edge-match, but skips the extending step, for input already run through edg
 - `--input-include TEXT`: Input columns to keep, comma-separated. Needs `--merge`.
 - `--input-exclude TEXT`: Input columns to drop, comma-separated. Needs `--merge`.
 - `--prefer [overlay|input]`: When the overlay and input both have a column with the same name, keep this layer's column. Needs `--merge`. Can't be combined with `--overlay-include`, `--overlay-exclude`, `--input-include` or `--input-exclude`.
+- `--fill TEXT`: On an unmatched overlay polygon kept in the output, set an input column from an overlay column, as 'input_column=overlay_column'. Repeat for more columns. Needs `--merge`.
 - `--no-clean`: Skip the final coverage clean, for runs too large for it. Seams between overlay polygons stay in the output, reported as invalid-edge issue rows.
 - `--fill-schema`: Before writing the output, fill each row's empty finer admin columns from its coarser ones and add a column with the row's own admin level. Set the columns with `--name-field` and `--code-field`, and the level column's name with `--depth-column`.
 - `--name-field TEXT`: Name column of each level, with {n} for the level number, e.g. 'adm{n}_name'. Needs `--fill-schema` and `--code-field`. Without both, levels are detected from the data.
