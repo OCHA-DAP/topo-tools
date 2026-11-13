@@ -1561,3 +1561,91 @@ def test_mosaic_reports_overlay_area_no_input_covers(tmp_path, clean):
             WHERE kind = 'gap'
         """).fetchall()
     assert rows == [(1, pytest.approx(0.5), "overlay area no output row covers")]
+
+
+def _write_fill_layers(tmp_path):
+    overlays_path = tmp_path / "parents.parquet"
+    _write_overlay_pcode_only(
+        overlays_path,
+        [
+            (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))", "P1"),
+            (2, "POLYGON((10 0, 13 0, 13 3, 10 3, 10 0))", "P2"),
+        ],
+    )
+    input_path = tmp_path / "children.parquet"
+    _write_with_code(input_path, [(fid, wkt, f"C{fid}") for fid, wkt in _INPUT_WKT[:2]])
+    return input_path, overlays_path
+
+
+@pytest.mark.parametrize("multi_file", [False, True])
+def test_mosaic_fill_sets_input_columns_on_unmatched_overlay(tmp_path, multi_file):
+    input_path, overlays_path = _write_fill_layers(tmp_path)
+    output_path = tmp_path / "out.parquet"
+    mosaic(
+        [input_path] if multi_file else input_path,
+        overlays_path,
+        output_path,
+        merge=True,
+        overlay_include=["pid"],
+        fill={"pcode": "pcode", "id": "pid"},
+        overwrite=True,
+    )
+    with duckdb.connect() as conn:
+        rows = conn.execute(
+            f"SELECT pid, id, pcode FROM '{output_path}' ORDER BY pcode"
+        ).fetchall()
+    assert rows == [(1, 1, "C1"), (1, 2, "C2"), (2, 2, "P2")]
+
+
+def test_cli_fill(tmp_path):
+    input_path, overlays_path = _write_fill_layers(tmp_path)
+    output_path = tmp_path / "out.parquet"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "edge-mosaic",
+            str(input_path),
+            str(overlays_path),
+            str(output_path),
+            "--merge",
+            "--overlay-include",
+            "pid",
+            "--fill",
+            "pcode=pcode",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with duckdb.connect() as conn:
+        rows = conn.execute(
+            f"SELECT pcode FROM '{output_path}' WHERE pid = 2"
+        ).fetchall()
+    assert rows == [("P2",)]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"fill": {"pcode": "pcode"}}, "require merge"),
+        ({"merge": True, "fill": {"nope": "pcode"}}, "not a kept input column"),
+        (
+            {"merge": True, "overlay_include": ["pid"], "fill": {"pcode": "nope"}},
+            "not an overlay column",
+        ),
+        (
+            {"merge": True, "overlay_include": ["pid"], "fill": {"pcode": "fid"}},
+            "not an overlay column",
+        ),
+        (
+            {"merge": True, "fill": {"pcode": "pid"}},
+            "also a copied overlay column",
+        ),
+        (
+            {"merge": True, "overlay_include": ["pid"], "fill": {"id": "pcode"}},
+            "can't convert",
+        ),
+    ],
+)
+def test_mosaic_fill_errors(tmp_path, kwargs, match):
+    input_path, overlays_path = _write_fill_layers(tmp_path)
+    with pytest.raises(ValueError, match=match):
+        mosaic(input_path, overlays_path, tmp_path / "out.parquet", **kwargs)

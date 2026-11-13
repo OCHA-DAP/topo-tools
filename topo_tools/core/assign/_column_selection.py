@@ -49,6 +49,7 @@ def validate_merge_flags(  # noqa: PLR0913
     input_include: list[str] | None,
     input_exclude: list[str] | None,
     prefer: str | None,
+    fill: dict[str, str] | None = None,
 ) -> None:
     """Raise on mutual-exclusion/require-merge violations among the merge flags."""
     if overlay_include and overlay_exclude:
@@ -69,9 +70,9 @@ def validate_merge_flags(  # noqa: PLR0913
             "overlay_include/overlay_exclude/input_include/input_exclude"
         )
         raise ValueError(msg)
-    if not merge and (narrowing_given or prefer):
+    if not merge and (narrowing_given or prefer or fill):
         msg = (
-            "overlay_include/overlay_exclude/input_include/input_exclude/prefer "
+            "overlay_include/overlay_exclude/input_include/input_exclude/prefer/fill "
             "require merge=True"
         )
         raise ValueError(msg)
@@ -88,6 +89,7 @@ def resolve_merge_columns(  # noqa: PLR0913
     input_exclude: list[str] | None,
     prefer: str | None,
     input_table: str | None = None,
+    fill: dict[str, str] | None = None,
 ) -> tuple[list[str] | None, list[str] | None]:
     """Resolve merge settings into concrete (overlay_columns, input_columns) lists."""
     if not merge:
@@ -110,7 +112,55 @@ def resolve_merge_columns(  # noqa: PLR0913
         input_columns = [c for c in input_columns if c not in set(overlay_columns)]
     elif prefer == "input":
         overlay_columns = [c for c in overlay_columns if c not in set(input_columns)]
+    _check_fill(
+        conn,
+        fill,
+        overlay_table=f"{name}_overlay_01",
+        input_table=input_table or f"{name}_input_01",
+        overlay_columns=overlay_columns,
+        input_columns=input_columns,
+    )
     return overlay_columns, input_columns
+
+
+def _check_fill(  # noqa: PLR0913
+    conn: DuckDBPyConnection,
+    fill: dict[str, str] | None,
+    *,
+    overlay_table: str,
+    input_table: str,
+    overlay_columns: list[str],
+    input_columns: list[str],
+) -> None:
+    """Raise unless each fill pair maps a kept input column to an overlay column."""
+    if not fill:
+        return
+    overlay_all = {r[0] for r in conn.execute(f'DESCRIBE "{overlay_table}"').fetchall()}
+    input_types = {
+        r[0]: r[1] for r in conn.execute(f'DESCRIBE "{input_table}"').fetchall()
+    }
+    for target, source in fill.items():
+        if target not in input_columns or target in ("fid", "geom", "source_file"):
+            msg = f"fill target {target!r} is not a kept input column"
+            raise ValueError(msg)
+        if target in overlay_columns:
+            msg = f"fill target {target!r} is also a copied overlay column"
+            raise ValueError(msg)
+        if source not in overlay_all or source in ("fid", "geom"):
+            msg = f"fill source {source!r} is not an overlay column"
+            raise ValueError(msg)
+        target_type = input_types[target]
+        (bad,) = conn.execute(f"""--sql
+            SELECT COUNT(*) FROM "{overlay_table}"
+            WHERE "{source}" IS NOT NULL
+              AND TRY_CAST("{source}" AS {target_type}) IS NULL
+        """).fetchone()
+        if bad:
+            msg = (
+                f"fill source {source!r} has {bad} value(s) that can't convert to "
+                f"{target!r}'s type {target_type}"
+            )
+            raise ValueError(msg)
 
 
 def union_input_schema(conn: DuckDBPyConnection, name: str, *, first: bool) -> None:

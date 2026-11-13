@@ -1361,3 +1361,32 @@ def test_match_reports_overlay_area_no_input_covers(tmp_path, clean):
             SELECT overlay_fid, reason FROM '{issues_path}' WHERE kind = 'gap'
         """).fetchall()
     assert rows == [(1, "overlay area no output row covers")]
+
+
+@pytest.mark.parametrize("multi_file", [False, True])
+def test_match_fill_sets_input_columns_on_unmatched_overlay(tmp_path, multi_file):
+    overlays_path = tmp_path / "parents.parquet"
+    _write_with_code(
+        overlays_path,
+        [
+            (1, "POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))", "P1"),
+            (2, "POLYGON((10 0, 13 0, 13 3, 10 3, 10 0))", "P2"),
+        ],
+    )
+    input_path = tmp_path / "children.parquet"
+    _write_synthetic(input_path, [_INPUT_WKT[0], _INPUT_WKT[1]])
+    output_path = tmp_path / "out.parquet"
+    match(
+        [input_path] if multi_file else input_path,
+        overlays_path,
+        output_path,
+        merge=True,
+        overlay_include=["pcode"],
+        fill={"id": "id"},
+        overwrite=True,
+    )
+    with duckdb.connect() as conn:
+        rows = conn.execute(
+            f"SELECT pcode, id FROM '{output_path}' WHERE pcode = 'P2'"
+        ).fetchall()
+    assert rows == [("P2", 2)]

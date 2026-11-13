@@ -105,7 +105,8 @@ unaffected either way. `_01_clip.py`'s `main()` builds this directly as a
 **Overlay gap-fill.** An overlay polygon matched by zero input polygons is dropped by
 default; with `merge` set, that overlay polygon's own geometry and carried columns
 are kept in the output unclipped instead, reported as a `kind='gap-fill'`
-row. This is the shared `core.assign.fill_unmatched_overlays()` helper
+row. Its input columns are NULL except those named in `fill`, each read
+from the overlay snapshot, so a source needn't be a copied column. This is the shared `core.assign.fill_unmatched_overlays()` helper
 (relocated from a mosaic-local `fill_gaps()` this session so `edge-match`
 can call it too, see `docs/adr/0088`), called from the api layer right
 after `_01_clip.main()` returns, against a `{name}_overlay_full` snapshot
