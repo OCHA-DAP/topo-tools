@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Introduce yourself
+    url: https://github.com/OCHA-DAP/topo-tools/discussions/categories/introductions
+    about: New here? Say hello first, with what brought you to topo-tools and what boundary data you work with.
