@@ -3,6 +3,26 @@
 Thanks for contributing! This guide covers how to get set up, how we work,
 and what a finished pull request looks like.
 
+## Start with an introduction
+
+Development Seed's post [AI is Accelerating our Social Debt](https://developmentseed.org/blog/2026-11-10-ai-and-social-debt/)
+describes how people find their way into open source. They get stuck, ask a
+question in public, and someone already on the project notices and invites
+them in. A pull request written by an AI agent can skip that step, so the
+project never meets the person who sent it. "Now more than ever the most
+valuable thing we can contribute might not be code but our time and support
+for each other."
+
+Issues and pull requests are welcome, but first I'd like to hear from you.
+Post in [Introductions](https://github.com/OCHA-DAP/topo-tools/discussions/categories/introductions):
+what brought you to this project, and what boundary data are you cleaning
+that these tools could help with? I'll reply there. Pull requests are limited
+to collaborators, so if you'd like to work on the code, we can talk about
+adding you as one.
+
+Questions are welcome in [Discussions](https://github.com/OCHA-DAP/topo-tools/discussions)
+too, where others can see and answer them.
+
 ## Prerequisites
 
 - Python 3.11+
