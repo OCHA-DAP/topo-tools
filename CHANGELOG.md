@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `change` classes a matched unit whose name changed as `renamed` under
+  `--link-by-code`. Before, names were compared only under `--link-by-name`,
+  so a name-only change was reported as `unchanged`.
+
 ## [0.20.0] - 2026-11-04
 
 ### Added

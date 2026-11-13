@@ -245,8 +245,11 @@ def main(  # noqa: C901, PLR0912, PLR0913, PLR0915 (ported classification algori
             and p.b_code is not None
             and p.a_code != p.b_code
         )
+        # A unit linked by code whose name changed is renamed too. Codes are
+        # compared only under link_by_code: code-update links by name against
+        # NEW's raw codes, which never equal OLD's.
         name_changed = (
-            link_by_name
+            (link_by_code or link_by_name)
             and p.a_name is not None
             and p.b_name is not None
             and p.a_name != p.b_name

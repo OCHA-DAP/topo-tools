@@ -345,3 +345,38 @@ def test_change_steps(old_layer, new_layer, tmp_path):
         )
     assert output_path.exists()
     assert overlay_path.exists()
+
+
+def _write_named(path, rows):
+    values = ", ".join(
+        f"('{code}', '{name}', ST_GeomFromText('{wkt}'))" for code, name, wkt in rows
+    )
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) AS t(adm1_code, adm1_name, geom)) "
+            f"TO '{path}'"
+        )
+
+
+@pytest.mark.parametrize(
+    ("link", "expected"),
+    [
+        ({"link_by_code": True}, "renamed"),
+        ({"link_by_name": True}, "renamed"),
+        ({"link_by_code": True, "link_by_name": True}, "renamed"),
+        ({}, "unchanged"),
+    ],
+)
+def test_change_name_only_change_is_renamed_when_linked(tmp_path, link, expected):
+    """Same code and shape with a new name is renamed under either link flag."""
+    north = "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))"
+    south = "POLYGON((0 0, 2 0, 2 1, 0 1, 0 0))"
+    old, new = tmp_path / "old.parquet", tmp_path / "new.parquet"
+    _write_named(old, [("XX01", "North", north), ("XX02", "South", south)])
+    _write_named(new, [("XX01", "Northern", north), ("XX02", "South", south)])
+    output_path = tmp_path / "named.csv"
+    change(old, new, output_path, tmp_path / "named_overlay.parquet", **link)
+    rows = _read_changelog(output_path)
+    assert _class_of(rows, code_a="XX01", code_b="XX01") == expected
+    assert _class_of(rows, code_a="XX02", code_b="XX02") == "unchanged"
