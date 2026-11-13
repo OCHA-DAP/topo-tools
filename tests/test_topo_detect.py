@@ -219,6 +219,17 @@ def test_detect_overlap_detection_failure_falls_back_to_empty(
     assert any("overlap detection failed" in r.message for r in caplog.records)
 
 
+def test_detect_out_of_memory_raises(monkeypatch, synthetic_input, tmp_path):
+    def out_of_memory(*_args, **_kwargs):
+        msg = "simulated out of memory"
+        raise duckdb.OutOfMemoryException(msg)
+
+    monkeypatch.setattr(issues_stage, "_build_overlaps", out_of_memory)
+
+    with pytest.raises(duckdb.OutOfMemoryException):
+        detect(synthetic_input, tmp_path / "issues.parquet", overwrite=True)
+
+
 def test_cli_positional_args(synthetic_input, tmp_path):
     output_path = tmp_path / "cli_out.parquet"
     result = CliRunner().invoke(

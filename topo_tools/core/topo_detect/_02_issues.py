@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from logging import getLogger
 
-from duckdb import DuckDBPyConnection
+from duckdb import DuckDBPyConnection, OutOfMemoryException
 
 from topo_tools.core.constants import NOTCH_SPACING
 from topo_tools.core.coverage import (
@@ -28,6 +28,8 @@ def _detect_or_empty(
     """Call build(conn, source); on failure, log and run empty_sql instead."""
     try:
         build(conn, source)
+    except OutOfMemoryException:
+        raise
     except Exception as e:  # noqa: BLE001 (GEOS topology failures surface as generic duckdb errors)
         logger.warning(
             "%s detection failed on %s (%s); reporting none", kind, source, e
