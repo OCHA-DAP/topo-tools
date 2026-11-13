@@ -2,6 +2,7 @@
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.admin_columns import family_level
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
@@ -44,19 +45,38 @@ def _check_covers(conn: DuckDBPyConnection, dissolved: str, points: str) -> None
         raise ValueError(msg)
 
 
+def _name_siblings(
+    schema: TargetSchema, columns: list[str], levels: list[int]
+) -> dict[str, dict[int, str]]:
+    """Each level's extra name columns (`adm1_name1`, ...), keyed like "name1"."""
+    siblings: dict[str, dict[int, str]] = {}
+    for column in columns:
+        n = family_level(column, schema.name_field)
+        own = schema.name_field.format(n=n) if n is not None else None
+        if n not in levels or column == own:
+            continue
+        kind = "name" + column[len(own) :].lstrip("_")
+        siblings.setdefault(kind, {})[n] = column
+    return siblings
+
+
 def _level_group_by(
     schema: TargetSchema | None,
     level_columns: dict[int, LevelColumns] | None,
     n: int,
-    levels: list[int],
+    families: dict[str, dict[int, str]],
     *,
     allow_empty_root: bool = False,
 ) -> tuple[list[str], list[str]]:
     """One level's dissolve group_by/exclude, from an explicit schema or auto-detect."""
     if schema is not None:
-        other_levels = [lvl for lvl in levels if lvl != n]
-        exclude = [schema.code_field.format(n=lvl) for lvl in other_levels] + [
-            schema.name_field.format(n=lvl) for lvl in other_levels
+        # Every other level's identity column, extra-language names included,
+        # else an ancestor's `adm0_name1` rides along on every finer point.
+        exclude = [
+            column
+            for per_level in families.values()
+            for lvl, column in per_level.items()
+            if lvl != n
         ]
         return [schema.code_field.format(n=n)], exclude
 
@@ -95,6 +115,8 @@ def _identity_families(
         for n in levels:
             families["code"][n] = schema.code_field.format(n=n)
             families["name"][n] = schema.name_field.format(n=n)
+        columns = [r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()]
+        families.update(_name_siblings(schema, columns, levels))
         return families
     if level_columns is None or not any(
         cols.group_by for cols in level_columns.values()
@@ -135,7 +157,7 @@ def main(
     generalizable: set[str] | None = None
     for n in levels:
         group_by, exclude = _level_group_by(
-            schema, level_columns, n, levels, allow_empty_root=root_injected
+            schema, level_columns, n, families, allow_empty_root=root_injected
         )
         if schema is None and group_by:
             verify_functional_cluster(conn, table_in, group_by[0], group_by)

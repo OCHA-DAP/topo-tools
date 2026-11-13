@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `package-points` (and `package`) with `--name-field`/`--code-field` writes
+  each point's own extra-language name (`adm{n}_name1`, ...) into one shared
+  `name1` column. Before, the country's `adm0_name1` was repeated on every
+  point and the units' own values were dropped.
+
 ## [0.20.0] - 2026-11-04
 
 ### Added

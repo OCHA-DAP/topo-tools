@@ -336,3 +336,55 @@ def test_cli_overwrite_false_raises_on_existing_output(admin2_input, tmp_path):
     )
     assert result.exit_code != 0
     assert "output already exists" in result.output
+
+
+def test_second_language_name_is_each_units_own(tmp_path):
+    """Every point carries its own `adm{n}_name1`, not the country's."""
+    north = "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))"
+    south = "POLYGON((0 0, 2 0, 2 1, 0 1, 0 0))"
+    country = {"adm0_name": "Xland", "adm0_name1": "Xpays", "adm0_code": "XX"}
+    rows = [
+        {
+            "adm1_name": "North",
+            "adm1_name1": "Nord",
+            "adm1_code": "XX01",
+            **country,
+            "wkt": north,
+        },
+        {
+            "adm1_name": "South",
+            "adm1_name1": "Sud",
+            "adm1_code": "XX02",
+            **country,
+            "wkt": south,
+        },
+    ]
+    input_path = tmp_path / "two_units.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "points.parquet"
+    package_points(
+        input_path,
+        output_path,
+        name_field="adm{n}_name",
+        code_field="adm{n}_code",
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        columns = {
+            row[0]
+            for row in conn.execute(
+                f"DESCRIBE SELECT * FROM '{output_path}'"
+            ).fetchall()
+        }
+        found = conn.execute(f"""--sql
+            SELECT name, name1, code, adm_lvl FROM '{output_path}'
+            ORDER BY adm_lvl, code
+        """).fetchall()
+    assert not {"adm0_name1", "adm1_name1"} & columns
+    assert found == [
+        ("Xland", "Xpays", "XX", 0),
+        ("North", "Nord", "XX01", 1),
+        ("South", "Sud", "XX02", 1),
+    ]
