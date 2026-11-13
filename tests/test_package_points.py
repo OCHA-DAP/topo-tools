@@ -291,10 +291,10 @@ def test_existing_depth_column_replaced(tmp_path):
     )
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        levels = conn.execute(
-            f"SELECT DISTINCT adm_lvl FROM '{output_path}' ORDER BY 1"
+        rows = conn.execute(
+            f"SELECT code, adm_lvl FROM '{output_path}' ORDER BY code"
         ).fetchall()
-    assert {r[0] for r in levels} <= {0, 1, 2}
+    assert rows == [("A1", 2), ("A2", 2), ("B1", 2), ("P1", 1), ("P2", 1)]
 
 
 def test_step_reuse(admin2_input, tmp_path):
