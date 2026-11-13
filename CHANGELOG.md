@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-13
+
+### Added
+
+- `package` coverage-cleans its input and runs `schema-detect`, `topo-detect`,
+  `code-detect` and `name-detect` on it before packaging, writing each report
+  plus a `_validate_summary.csv` beside the outputs. An error row stops it before
+  any output is written; `--no-block` packages anyway.
+- `--no-clean` on `package` skips the clean and `topo-detect`, writing
+  `invalid-edge` rows to each level's polygons issues file instead of raising,
+  for a global `edge-mosaic --no-clean` output.
+- `--root-code-field` on `code-create` takes each row's root code from a column,
+  coding each root as its own tree, with `--min-width auto` sized per root.
+- `--fill` on `edge-mosaic` and `edge-match` sets an input column from an overlay
+  column on each unmatched overlay polygon kept under `--merge`, checking the
+  values convert to the input column's type before assigning.
+
+### Changed
+
+- The `validate` command is removed; `package` runs its checks.
+- `package` reports an out-of-memory coverage clean with a hint to rerun with
+  `--no-clean`.
+
+### Fixed
+
+- `topo-detect` raises on an out-of-memory error instead of returning an empty
+  result for that defect kind.
+- `package-points` and `package` replace an input `adm_lvl` column instead of
+  failing on it.
+
 ## [0.20.0] - 2026-11-04
 
 ### Added
@@ -976,7 +1006,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.18.0...v0.19.0
