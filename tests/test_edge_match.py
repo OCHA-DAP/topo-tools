@@ -1363,7 +1363,8 @@ def test_match_reports_overlay_area_no_input_covers(tmp_path, clean):
     assert rows == [(1, "overlay area no output row covers")]
 
 
-def test_match_fill_sets_input_columns_on_unmatched_overlay(tmp_path):
+@pytest.mark.parametrize("multi_file", [False, True])
+def test_match_fill_sets_input_columns_on_unmatched_overlay(tmp_path, multi_file):
     overlays_path = tmp_path / "parents.parquet"
     _write_with_code(
         overlays_path,
@@ -1376,7 +1377,7 @@ def test_match_fill_sets_input_columns_on_unmatched_overlay(tmp_path):
     _write_synthetic(input_path, [_INPUT_WKT[0], _INPUT_WKT[1]])
     output_path = tmp_path / "out.parquet"
     match(
-        input_path,
+        [input_path] if multi_file else input_path,
         overlays_path,
         output_path,
         merge=True,

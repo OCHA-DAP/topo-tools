@@ -1639,6 +1639,10 @@ def test_cli_fill(tmp_path):
             {"merge": True, "fill": {"pcode": "pid"}},
             "also a copied overlay column",
         ),
+        (
+            {"merge": True, "overlay_include": ["pid"], "fill": {"id": "pcode"}},
+            "can't convert",
+        ),
     ],
 )
 def test_mosaic_fill_errors(tmp_path, kwargs, match):

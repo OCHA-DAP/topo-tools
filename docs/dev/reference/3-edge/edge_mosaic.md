@@ -173,8 +173,8 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   rows only), each cast to the input column's type. A source MAY be any
   overlay column, copied or not. `fill` MUST raise `ValueError` before
   assign if given without `merge`, if a target isn't a kept input column
-  or is also a copied overlay column, or if a source isn't an overlay
-  column.
+  or is also a copied overlay column, if a source isn't an overlay
+  column, or if a source value can't convert to its target's type.
 - `edge-mosaic` MAY opt into cascading admin-hierarchy columns via
   `fill_schema`/`--fill-schema`, right after clipping and before export
   (both the single-file step loop and the multi-file combine path).
