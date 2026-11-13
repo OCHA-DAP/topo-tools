@@ -883,3 +883,86 @@ def test_structural_detection_adds_no_level_0(tmp_path):
         r[0] for r in duckdb.sql(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
     ]
     assert not any(c.startswith("adm0") for c in columns)
+
+
+def _two_root_rows() -> list[dict]:
+    rows = []
+    for x, root in enumerate(["AAA", "BBB"]):
+        for a in range(2):
+            for b in range(2):
+                left = x * 4 + a * 2 + b
+                rows.append(
+                    {
+                        "iso3": root,
+                        "adm1_pcode": f"{root}{a}",
+                        "adm1_name": f"{root} Region {a}",
+                        "adm2_pcode": f"{root}{a}{b}",
+                        "adm2_name": f"{root} District {a}{b}",
+                        "wkt": f"POLYGON(({left} 0, {left + 1} 0, {left + 1} 1, "
+                        f"{left} 1, {left} 0))",
+                    }
+                )
+    return rows
+
+
+def test_root_code_field_numbers_each_root_apart(tmp_path):
+    input_path, output_path = tmp_path / "in.parquet", tmp_path / "out.parquet"
+    _write_synthetic(input_path, _two_root_rows())
+    code_create(
+        input_path, output_path, root_code_field="iso3", delimiter=".", min_width=2
+    )
+    combined = _fetch(output_path, "iso3, adm1_pcode, adm2_pcode", "adm2_name")
+    separate = []
+    for root in ["AAA", "BBB"]:
+        rows = [r for r in _two_root_rows() if r["iso3"] == root]
+        one_in, one_out = tmp_path / f"{root}.parquet", tmp_path / f"{root}_out.parquet"
+        _write_synthetic(one_in, rows)
+        code_create(one_in, one_out, root_code=root, delimiter=".", min_width=2)
+        separate += _fetch(one_out, "iso3, adm1_pcode, adm2_pcode", "adm2_name")
+    assert combined == separate
+    assert ("BBB", "BBB.01", "BBB.01.01") in combined
+
+
+def test_root_code_field_with_templates_keeps_level_0_column(tmp_path):
+    input_path, output_path = tmp_path / "in.parquet", tmp_path / "out.parquet"
+    rows = [{"adm0_pcode": r.pop("iso3"), **r} for r in _two_root_rows()]
+    _write_synthetic(input_path, rows)
+    code_create(
+        input_path,
+        output_path,
+        root_code_field="adm0_pcode",
+        delimiter=".",
+        min_width=2,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+    )
+    assert _fetch(output_path, "DISTINCT adm0_pcode, adm1_pcode", "2") == [
+        ("AAA", "AAA.01"),
+        ("AAA", "AAA.02"),
+        ("BBB", "BBB.01"),
+        ("BBB", "BBB.02"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({}, "exactly one"),
+        ({"root_code": "X", "root_code_field": "iso3"}, "exactly one"),
+        ({"root_code_field": "missing"}, "not found"),
+    ],
+)
+def test_root_code_field_errors(tmp_path, kwargs, match):
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, _two_root_rows())
+    with pytest.raises(ValueError, match=match):
+        code_create(input_path, delimiter=".", min_width=2, **kwargs)
+
+
+def test_blank_root_code_field_raises(tmp_path):
+    input_path = tmp_path / "in.parquet"
+    rows = _two_root_rows()
+    rows[0]["iso3"] = " "
+    _write_synthetic(input_path, rows)
+    with pytest.raises(ValueError, match="blank on 1 row"):
+        code_create(input_path, root_code_field="iso3", delimiter=".", min_width=2)

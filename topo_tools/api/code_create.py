@@ -12,6 +12,7 @@ from topo_tools.core.code_create._constants import SOURCE_CODES
 from topo_tools.core.duckdb_utils import (
     maybe_export_debug_tables,
     pipeline_connection,
+    quote_identifier,
     resolve_tmp_dir,
 )
 from topo_tools.core.io import (
@@ -47,12 +48,23 @@ def _resolve_format(
     )
 
 
+def _root_sql(root_code: str | None, root_code_field: str | None) -> str:
+    """Return the root as SQL: a quoted literal, or the root column's values."""
+    if (root_code is None) == (root_code_field is None):
+        msg = "give exactly one of root_code and root_code_field"
+        raise ValueError(msg)
+    if root_code_field is not None:
+        return f"{quote_identifier(root_code_field)}::VARCHAR"
+    return "'" + str(root_code).replace("'", "''") + "'"
+
+
 def code_create(  # noqa: PLR0913
     input_path: str | Path,
     output_path: str | Path | None = None,
     issues_path: str | Path | None = None,
     *,
-    root_code: str,
+    root_code: str | None = None,
+    root_code_field: str | None = None,
     delimiter: str,
     min_width: int | str,
     source_codes: str = "replace",
@@ -66,14 +78,16 @@ def code_create(  # noqa: PLR0913
 ) -> None:
     """Cold-start a hierarchical code on one input file, ranked per parent.
 
-    Omitting name_field/code_field triggers structural auto-detection; source_codes
-    replaces, embeds, or copies each level's existing code.
+    Give root_code, or root_code_field to number each of its values' rows apart.
     """
     if step is not None and step not in _STEP_ORDER:
         msg = f"step must be one of {_STEP_ORDER}, got {step!r}"
         raise ValueError(msg)
 
-    fmt = _resolve_format(root_code, delimiter, min_width, source_codes)
+    root_sql = _root_sql(root_code, root_code_field)
+    fmt = _resolve_format(
+        root_code or root_code_field or "", delimiter, min_width, source_codes
+    )
     input_path = resolve_input_path(input_path)
     output_path = (
         Path(output_path)
@@ -114,10 +128,20 @@ def code_create(  # noqa: PLR0913
             if s == "inputs":
                 inputs.main(conn, name, input_path)
             elif s == "levels":
-                levels = levels_stage.main(conn, f"{name}_01", name_field, code_field)
+                levels = levels_stage.main(
+                    conn,
+                    f"{name}_01",
+                    name_field,
+                    code_field,
+                    root_column=root_code_field,
+                )
             elif s == "assign":
                 levels = levels or levels_stage.main(
-                    conn, f"{name}_01", name_field, code_field
+                    conn,
+                    f"{name}_01",
+                    name_field,
+                    code_field,
+                    root_column=root_code_field,
                 )
                 assign_stage.main(
                     conn,
@@ -125,10 +149,16 @@ def code_create(  # noqa: PLR0913
                     levels=levels,
                     fmt=fmt,
                     source_codes=source_codes,
+                    root_sql=root_sql,
+                    root_column=root_code_field,
                 )
             elif s == "outputs":
                 levels = levels or levels_stage.main(
-                    conn, f"{name}_01", name_field, code_field
+                    conn,
+                    f"{name}_01",
+                    name_field,
+                    code_field,
+                    root_column=root_code_field,
                 )
                 outputs.main(
                     conn,
@@ -137,6 +167,7 @@ def code_create(  # noqa: PLR0913
                     levels=levels,
                     fmt=fmt,
                     source_codes=source_codes,
+                    root_sql=root_sql,
                     issues_dest=issues_path,
                     debug=debug,
                 )

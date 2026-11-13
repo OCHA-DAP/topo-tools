@@ -24,15 +24,20 @@ def insert_column_after(
     )
 
 
-def write_root_code(
+def write_root_code(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     table: str,
     column: str,
     root_code: str,
     after: tuple[str | None, ...],
+    *,
+    root_sql: str | None = None,
 ) -> None:
-    """Set column to root_code on every row, adding it after `after` if missing."""
+    """Set column to root_code (or the root_sql expression) on every row."""
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
     if column not in columns:
         insert_column_after(conn, table, column, "NULL::VARCHAR", after)
-    conn.execute(f'UPDATE "{table}" SET "{column}" = ?', [root_code])
+    if root_sql is None:
+        conn.execute(f'UPDATE "{table}" SET "{column}" = ?', [root_code])
+    else:
+        conn.execute(f'UPDATE "{table}" SET "{column}" = {root_sql}::VARCHAR')

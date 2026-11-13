@@ -36,13 +36,41 @@ def _has_codes(
     )
 
 
+def _without_root(conn: DuckDBPyConnection, table: str, root_column: str) -> str:
+    """Return a view of table without root_column; raise if it is missing or blank."""
+    columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
+    if root_column not in columns:
+        msg = f"root code column {root_column!r} not found in {table}"
+        raise ValueError(msg)
+    (blanks,) = conn.execute(
+        f'SELECT COUNT(*) FROM "{table}" '
+        f"WHERE coalesce(trim(\"{root_column}\"::VARCHAR), '') = ''"
+    ).fetchone()
+    if blanks:
+        msg = f"root code column {root_column!r} is blank on {blanks} row(s)"
+        raise ValueError(msg)
+    view = f"{table}_levels"
+    conn.execute(
+        f'CREATE OR REPLACE TEMP VIEW "{view}" AS '
+        f'SELECT * EXCLUDE ("{root_column}") FROM "{table}"'
+    )
+    return view
+
+
 def main(
     conn: DuckDBPyConnection,
     table: str,
     name_field: str | None,
     code_field: str | None,
+    *,
+    root_column: str | None = None,
 ) -> dict[int, Level]:
-    """Return {level: Level}, structurally detected or explicit schema."""
+    """Return {level: Level}, structurally detected or explicit schema.
+
+    root_column, when given, is left out of detection: it holds each row's root.
+    """
+    if root_column is not None:
+        table = _without_root(conn, table, root_column)
     schema = resolve_explicit_target_schema(name_field, code_field)
     if schema is not None:
         columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}

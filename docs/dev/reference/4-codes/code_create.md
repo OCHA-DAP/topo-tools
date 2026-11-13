@@ -50,7 +50,7 @@ sidebar:
   step and never becomes a level.
 - A source column that never resolves into a level MUST be left
   untouched. With `code_field`, level 0's code column MUST hold
-  `root_code` on every row, added after level 0's name column (else after
+  `root_code` (or the row's `root_code_field` value) on every row, added after level 0's name column (else after
   level 1's columns) when missing. Structural detection MUST NOT add a
   level 0 column.
 
@@ -118,14 +118,20 @@ sidebar:
 ## Configuration (`api.code_create.code_create()` / CLI)
 
 - `code-create` MUST process exactly one input file per call.
-- `root_code`, `delimiter`, and `min_width` MUST all be given explicitly
-  (no default), validated via `core.code.resolve_code_format()`:
+- Exactly one of `root_code` or `root_code_field` MUST be given, raising
+  `ValueError` otherwise; `delimiter` and `min_width` MUST be given
+  explicitly (no default), validated via `core.code.resolve_code_format()`:
   `root_code` non-empty, `delimiter` exactly one character, or empty,
   `min_width` one positive width, a comma list of
   positive widths with exactly one per numbered level (coarsest first),
   or `auto`. `root_code` is opaque, never shape-checked (a disputed-
   territory or otherwise non-ISO3 string works identically to an ISO3
   one).
+- `root_code_field` (CLI: `--root-code-field`) MUST name an existing
+  column, blank on no row, raising `ValueError` otherwise. Each row's own
+  value is its root code: level 1 is ranked and numbered under it, so each
+  root's units number from 1 exactly as a separate call per root would.
+  The column MUST NOT become a level itself.
 - `output_path`, if omitted, MUST default to `input_path` with a `_coded`
   stem suffix.
 - `issues_path`, if omitted, MUST default to `output_path` with an
@@ -168,3 +174,7 @@ min_width - 1` children, `admin2_coded_issues.parquet`:
 ### Example 6: one width per level
 
     topo-tools code-create admin3.geojson --root-code XYZ --delimiter . --min-width 2,3,4
+
+### Example 7: one root code per country, from a column
+
+    topo-tools code-create world_admin2.parquet --root-code-field iso3 --delimiter . --min-width 3

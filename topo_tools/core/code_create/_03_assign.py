@@ -47,12 +47,14 @@ def _copy_source_codes(
     )
 
 
-def _strip_parent_prefixes(
+def _strip_parent_prefixes(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     table: str,
     levels: dict[int, Level],
     fmt: CodeFormat,
     integers: set[int],
+    *,
+    root_sql: str,
 ) -> None:
     """Strip each level's parent source code (or root) where every code repeats it."""
     numbered = sorted(n for n in levels if n >= 1)
@@ -62,7 +64,7 @@ def _strip_parent_prefixes(
         if level.seeded:
             continue
         if n == numbered[0]:
-            prefix_sql, params = "?", [fmt.root_code]
+            prefix_sql, params = f"{root_sql}::VARCHAR", []
         elif levels[n - 1].seeded:
             continue
         else:
@@ -168,15 +170,20 @@ def _fix_width(  # noqa: PLR0913 (each param is a distinct required input)
         )
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     table: str,
     *,
     levels: dict[int, Level],
     fmt: CodeFormat,
     source_codes: str = "replace",
+    root_sql: str,
+    root_column: str | None = None,
 ) -> None:
-    """Assign a code into each level's own column, in place, root to leaf."""
+    """Assign a code into each level's own column, in place, root to leaf.
+
+    root_sql is the root as SQL: a quoted literal, or root_column's own values.
+    """
     if source_codes not in SOURCE_CODES:
         msg = f"source_codes must be one of {SOURCE_CODES}, got {source_codes!r}"
         raise ValueError(msg)
@@ -191,14 +198,15 @@ def main(
                 parent = levels[n - 1].code if n - 1 in levels else None
                 check_unique_names(conn, table, n, level.code, parent)
     if source_codes == "embed":
-        _strip_parent_prefixes(conn, table, levels, fmt, integers)
-    if 0 in levels:
+        _strip_parent_prefixes(conn, table, levels, fmt, integers, root_sql=root_sql)
+    if 0 in levels and levels[0].code != root_column:
         root, top = levels[0], levels[1]
         after = (root.name,) if root.name else (top.name, top.code)
-        write_root_code(conn, table, root.code, fmt.root_code, after)
+        sql = None if root_column is None else root_sql
+        write_root_code(conn, table, root.code, fmt.root_code, after, root_sql=sql)
 
-    parent_sql = f"'{fmt.root_code}'"
-    parent_column: str | None = None
+    parent_sql = root_sql
+    parent_column = root_column
     for n in sorted(level for level in levels if level >= 1):
         code_column = levels[n].code
         if source_codes == "embed" and not levels[n].seeded:
@@ -245,7 +253,7 @@ def main(
         parent_match = (
             "TRUE"
             if parent_column is None
-            else f't."{parent_column}" IS NOT DISTINCT FROM s.parent_code'
+            else f't."{parent_column}"::VARCHAR IS NOT DISTINCT FROM s.parent_code'
         )
         conn.execute(f"""--sql
             UPDATE "{table}" t

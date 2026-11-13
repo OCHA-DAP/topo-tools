@@ -1504,10 +1504,21 @@ def code_detect(  # noqa: PLR0913, PLR0917
 @click.option(
     "--root-code",
     envvar="ROOT_CODE",
-    required=True,
+    default=None,
     help=(
         "Code at the start of every code, e.g. a country code. With "
-        "--code-field, also written to level 0's code column."
+        "--code-field, also written to level 0's code column. Give this or "
+        "--root-code-field."
+    ),
+)
+@click.option(
+    "--root-code-field",
+    envvar="ROOT_CODE_FIELD",
+    default=None,
+    help=(
+        "Column holding each row's root code, for a file of several "
+        "countries. Each value's units are numbered on their own, as if "
+        "code-create ran once per value. Give this or --root-code."
     ),
 )
 @click.option(
@@ -1593,7 +1604,8 @@ def code_create(  # noqa: PLR0913, PLR0917
     input_file: str,
     output_file: str | None,
     issues_file: str | None,
-    root_code: str,
+    root_code: str | None,
+    root_code_field: str | None,
     delimiter: str,
     min_width: str,
     source_codes: str,
@@ -1630,6 +1642,11 @@ def code_create(  # noqa: PLR0913, PLR0917
       topo-tools code-create admin2.geojson --root-code AF --delimiter '' \\
         --min-width 2 --source-codes embed --code-field adm{n}_code \\
         --name-field adm{n}_name
+
+    \b
+      # Several countries in one file, each numbered under its own root
+      topo-tools code-create world_admin2.parquet --root-code-field iso3 \\
+        --delimiter . --min-width 3
     """
     logger.info("--debug=%s", debug)
     try:
@@ -1638,6 +1655,7 @@ def code_create(  # noqa: PLR0913, PLR0917
             Path(output_file) if output_file is not None else None,
             Path(issues_file) if issues_file is not None else None,
             root_code=root_code,
+            root_code_field=root_code_field,
             delimiter=delimiter,
             min_width=min_width,
             source_codes=source_codes,
