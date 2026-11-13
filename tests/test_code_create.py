@@ -966,3 +966,42 @@ def test_blank_root_code_field_raises(tmp_path):
     _write_synthetic(input_path, rows)
     with pytest.raises(ValueError, match="blank on 1 row"):
         code_create(input_path, root_code_field="iso3", delimiter=".", min_width=2)
+
+
+def _uneven_root_rows() -> list[dict]:
+    rows = []
+    for root, count in [("AAA", 2), ("BBB", 12)]:
+        for a in range(1, count + 1):
+            left = len(rows)
+            rows.append(
+                {
+                    "iso3": root,
+                    "adm1_pcode": a,
+                    "adm1_name": f"{root} Region {a}",
+                    "wkt": f"POLYGON(({left} 0, {left + 1} 0, {left + 1} 1, "
+                    f"{left} 1, {left} 0))",
+                }
+            )
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("delimiter", "source_codes"), [(".", "replace"), ("", "embed")]
+)
+def test_root_code_field_auto_width_per_root(tmp_path, delimiter, source_codes):
+    fields = {"name_field": "adm{n}_name", "code_field": "adm{n}_pcode"}
+    common = {"delimiter": delimiter, "min_width": "auto", **fields}
+    common["source_codes"] = source_codes
+    input_path, output_path = tmp_path / "in.parquet", tmp_path / "out.parquet"
+    _write_synthetic(input_path, _uneven_root_rows())
+    code_create(input_path, output_path, root_code_field="iso3", **common)
+    combined = _fetch(output_path, "adm1_name, adm1_pcode", "adm1_name")
+    separate = []
+    for root in ["AAA", "BBB"]:
+        rows = [r for r in _uneven_root_rows() if r["iso3"] == root]
+        one_in, one_out = tmp_path / f"{root}.parquet", tmp_path / f"{root}_out.parquet"
+        _write_synthetic(one_in, rows)
+        code_create(one_in, one_out, root_code=root, **common)
+        separate += _fetch(one_out, "adm1_name, adm1_pcode", "adm1_name")
+    assert combined == sorted(separate)
+    assert ("AAA Region 1", f"AAA{delimiter}1") in combined

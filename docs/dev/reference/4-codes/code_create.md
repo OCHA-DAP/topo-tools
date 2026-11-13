@@ -131,6 +131,7 @@ sidebar:
   column, blank on no row, raising `ValueError` otherwise. Each row's own
   value is its root code: level 1 is ranked and numbered under it, so each
   root's units number from 1 exactly as a separate call per root would.
+  Under `min_width="auto"`, each level's width MUST be sized per root.
   The column MUST NOT become a level itself.
 - `output_path`, if omitted, MUST default to `input_path` with a `_coded`
   stem suffix.

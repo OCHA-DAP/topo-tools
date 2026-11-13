@@ -45,8 +45,8 @@ root column would otherwise resolve as the coarsest level. `_03_assign`
 then ranks level 1 under each row's own root value, the same
 parent-grouping every deeper level already uses, so one call gives the
 same codes as separate calls per root. `--min-width auto` sizes each
-level by its largest parent across all roots, so a root with fewer units
-can come out wider than it would in a call of its own.
+level per root (`assign_new_codes`' `width_group_column`), as does the
+zero-padding of embedded integer codes, so the widths match too.
 
 ## `_03_assign`: chained, not independent, per level
 

@@ -148,25 +148,34 @@ def _fix_width(  # noqa: PLR0913 (each param is a distinct required input)
     fmt: CodeFormat,
     *,
     integer: bool,
+    root_sql: str,
 ) -> None:
-    """Without a delimiter, zero-pad integer codes to one width; raise if mixed."""
+    """Without a delimiter, zero-pad integer codes per root; raise if mixed."""
     if fmt.delimiter != "":
         return
-    (lengths,) = conn.execute(
-        f'SELECT list(DISTINCT length("{level.code}")) FROM "{table}"'
-    ).fetchone()
-    lengths = sorted(lengths or [])
-    if len(lengths) > 1 and not integer:
-        msg = (
-            f"level {n} ({level.code!r}) source codes vary in length "
-            f"{lengths}; without a delimiter the code can't be split"
-        )
-        raise ValueError(msg)
-    if integer and lengths:
-        width = max(fmt.width(n) or 0, lengths[-1])
+    per_root = conn.execute(f"""--sql
+        SELECT list(DISTINCT length("{level.code}")) FROM "{table}" GROUP BY {root_sql}
+    """).fetchall()
+    for (raw,) in per_root:
+        lengths = sorted(raw or [])
+        if len(lengths) > 1 and not integer:
+            msg = (
+                f"level {n} ({level.code!r}) source codes vary in length "
+                f"{lengths}; without a delimiter the code can't be split"
+            )
+            raise ValueError(msg)
+    if integer:
         conn.execute(
-            f'UPDATE "{table}" SET "{level.code}" = lpad("{level.code}", ?, \'0\')',
-            [width],
+            f"""--sql
+            UPDATE "{table}"
+            SET "{level.code}" = lpad("{level.code}", GREATEST(?, w.len)::INTEGER, '0')
+            FROM (
+                SELECT {root_sql} AS root, max(length("{level.code}")) AS len
+                FROM "{table}" GROUP BY 1
+            ) w
+            WHERE {root_sql} = w.root
+            """,
+            [fmt.width(n) or 0],
         )
 
 
@@ -216,6 +225,7 @@ def main(  # noqa: PLR0913
                 levels[n],
                 fmt,
                 integer=n in integers,
+                root_sql=root_sql,
             )
             conn.execute(
                 f'UPDATE "{table}" SET "{code_column}" = '
@@ -229,11 +239,12 @@ def main(  # noqa: PLR0913
         conn.execute(f"""--sql
             CREATE OR REPLACE TEMP TABLE "{staging}" AS
             SELECT ROW_NUMBER() OVER () AS row_id, orig_code,
-                   orig_code AS code_val, parent_code
+                   orig_code AS code_val, parent_code, root_code
             FROM (
                 SELECT DISTINCT
                     "{code_column}" AS orig_code,
-                    {parent_sql} AS parent_code
+                    {parent_sql} AS parent_code,
+                    {root_sql} AS root_code
                 FROM "{table}"
             ) d
         """)
@@ -246,6 +257,7 @@ def main(  # noqa: PLR0913
             code_column="code_val",
             fmt=fmt,
             level=n,
+            width_group_column="root_code",
         )
         # A raw value MAY repeat across parents; match on parent too so this
         # never collides with, or drops, the same value/NULL elsewhere.
