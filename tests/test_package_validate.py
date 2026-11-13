@@ -214,3 +214,14 @@ def test_cli_exit_code(tmp_path, select, exit_code):
         cli, ["package", str(path), "--output", _out(tmp_path), *fields]
     )
     assert result.exit_code == exit_code
+
+
+def test_clean_out_of_memory_points_to_no_clean(tmp_path, monkeypatch):
+    def out_of_memory(*_args, **_kwargs):
+        msg = "simulated out of memory"
+        raise duckdb.OutOfMemoryException(msg)
+
+    module = sys.modules["topo_tools.api.package"]
+    monkeypatch.setattr(module, "read_reproject_and_clean", out_of_memory)
+    with pytest.raises(duckdb.OutOfMemoryException, match="--no-clean"):
+        package(_write(tmp_path / "in.parquet"), _out(tmp_path), **_FIELDS)

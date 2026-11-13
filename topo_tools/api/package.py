@@ -3,6 +3,8 @@
 from logging import getLogger
 from pathlib import Path
 
+from duckdb import OutOfMemoryException
+
 from topo_tools.api._validate import validate as run_validation
 from topo_tools.api.package_lines import package_lines
 from topo_tools.api.package_points import package_points
@@ -38,7 +40,11 @@ def _clean(
     name = input_basename(input_path).replace(".", "_") + "_package"
     dest = work / "package_clean" / f"{Path(input_basename(input_path)).stem}.parquet"
     with pipeline_connection(name, work, threads=threads, debug=debug) as conn:
-        read_reproject_and_clean(conn, name, input_path)
+        try:
+            read_reproject_and_clean(conn, name, input_path)
+        except OutOfMemoryException as e:
+            msg = f"coverage clean ran out of memory; rerun with --no-clean ({e})"
+            raise OutOfMemoryException(msg) from e
         export_geometry_table(conn, f"{name}_01", dest)
         if not debug:
             conn.execute(f'DROP TABLE IF EXISTS "{name}_01"')
