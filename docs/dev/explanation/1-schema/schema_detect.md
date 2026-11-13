@@ -58,7 +58,7 @@ level costs at most extra `duplicate-name` warnings, names compared under
 a parent one level too coarse. `resolve_levels()` refuses a layer with a
 skipped level or no level that has both a code and a name, and
 `schema-detect` reports that refusal as `levels-undetected`, the one place
-a layer's level resolution is judged, so `validate` can skip
+a layer's level resolution is judged, so `package` can skip
 `code-detect` and `name-detect` with that reason.
 
 ## Real-data results

@@ -132,7 +132,7 @@ https://astral.sh/uv/install.ps1 | iex"` on Windows).
    | `03_edge_matching/` | the edge-matched file |
    | `04_codes/` | the coded file |
    | `05_names/` | the name-cleaned file plus `{iso3}_admin{n}_name_issues.parquet` from the final `name-detect` check (any row count, even zero) |
-   | `06_packaging/` | one parquet per output layer, plus `package-*` issues reports and `{iso3}_metadata.csv` and `.parquet` |
+   | `06_packaging/` | one parquet per output layer, plus `package` issues reports, validation summary and `{iso3}_metadata.csv` and `.parquet` |
 
    The highest-numbered stage with its defining output present marks the
    last completed stage; resume at the next one. No stage folders yet
@@ -301,14 +301,13 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    edge-matched supplement. For the second, drop the stage 2 file's own
    admin columns, then run `schema-join` with the name-cleaned file as the
    join layer. Package that file as `{iso3}_admin{n}` (polygons, points
-   and lines), package the edge-matched file with the `_em` suffix, and
-   run `validate` on both.
+   and lines), and package the edge-matched file with the `_em` suffix.
 
-   Run `validate` on each file to package, with the
-   `--code-field`/`--name-field` templates and
-   `--output-dir 06_packaging/validate/`. Show the user every `error` row
-   of the summary and package only once they are fixed or the user
-   accepts them.
+   `package` writes `{stem}_{stage}_issues.parquet` reports and
+   `{stem}_validate_summary.csv` into `06_packaging/` and stops on any
+   `error` row. Show the user every `error` row of the summary; once they
+   are fixed, rerun, or once the user accepts them, rerun with
+   `--no-validate`.
 
    When the name-cleaned file in `05_names/` has more units than the stage 3
    output (the full geometry was coded first), ask whether to package it
@@ -333,8 +332,8 @@ After stage 6, export each release candidate (`rc`) sent for review:
 1. Set `{NN}` to the next candidate number after the highest in
    `03_outputs/{iso3}/{version}/`, starting at `01`. Never overwrite an
    existing candidate.
-2. Write every layer parquet directly in `06_packaging/` (not `validate/`
-   or any `_issues.parquet` report) as one layer of
+2. Write every layer parquet directly in `06_packaging/` (not any
+   `_issues.parquet` report) as one layer of
    `03_outputs/{iso3}/{version}/{iso3}_{version}_rc{NN}.gdb` with
    `uv run <skill-dir>/scripts/convert.py to-gdb {gdb} {parquet}...`, and
    the metadata as a `metadata` table (`metadata={iso3}_metadata.parquet`).
@@ -344,9 +343,10 @@ After stage 6, export each release candidate (`rc`) sent for review:
    number prefix (`schema`, `topology`, ...), with `names` taking
    `{iso3}_admin{n}_name_fixes.parquet`, plus `change` output
    comparing this candidate against the previous one (`rc01`: against
-   `00a_old/`, skipped when absent), and each report in
-   `06_packaging/validate/` as `validate_schema`, `validate_topo`,
-   `validate_code` and `validate_name`.
+   `00a_old/`, skipped when absent), and each `package` report in
+   `06_packaging/` (`{stem}_schema_issues.parquet` and so on) as
+   `validate_schema`, `validate_topo`, `validate_code` and
+   `validate_name`.
 
 For a file returned by the reviewer (step 3 of Setup), ask which stage it
 re-enters at, place it there as GeoParquet or CSV, and rerun from that

@@ -4,14 +4,14 @@
 
 `topo-tools` is a Python package of DuckDB-powered geospatial topology utilities,
 `pip install`-able and importable, mirroring the organization of the sister JS app
-at `../cod-app` (a DuckDB-WASM web app with the same tools). It ships twenty
+at `../cod-app` (a DuckDB-WASM web app with the same tools). It ships nineteen
 tools, all used for improving administrative boundary datasets and matching
 sub-national boundaries to national boundaries (import-linter contracts
 governing which tool may depend on which are in `docs/dev/shared.md`).
 Tools are named `{group}-{verb}`: **edge** (boundary-fitting between layers),
 **topo** (single-layer topology defects), **schema** (column crosswalking and hierarchy checks),
 **name** (unit-name checks) and **package** (cartographic derivatives for web maps); `change` and bare
-`package` stand alone for now, as do `code-detect`, `code-create`, `code-update` and `validate`. Several
+`package` stand alone for now, as do `code-detect`, `code-create` and `code-update`. Several
 are primitives, each standalone AND reused internally by the composite tools
 below them:
 
@@ -20,7 +20,7 @@ below them:
 - **package-polygons**: dissolves a polygon layer into every detected coarser admin level in a single call, levels auto-detected structurally by default (or via an explicit `--name-field`/`--code-field` pair), reusing the `core.dissolve` leaf's stage functions directly, once per level. See `docs/dev/explanation/6-packaging/package_polygons.md`.
 - **package-points**: one label point per admin unit per detected level, using the pole of inaccessibility (always interior, unlike a centroid), combined into a single output file. See `docs/dev/explanation/6-packaging/package_points.md`.
 - **package-lines**: one deduplicated line network of admin boundaries (shared between two units, or exterior to all of them), tagged by adjacency and the coarsest admin level each segment belongs to. See `docs/dev/explanation/6-packaging/package_lines.md`.
-- **package**: runs `package-polygons`, `package-points`, and `package-lines` against one input in a single call, for the common case of wanting the full cartographic bundle at once. See `docs/dev/explanation/6-packaging/package.md`.
+- **package**: coverage-cleans one input when it has defects, runs `schema-detect` → `topo-detect` → `code-detect` → `name-detect` on it (each writing its own report, plus a `_validate_summary.csv` with one row per stage, kind and severity) and stops before writing any output on an error row, then runs `package-polygons`, `package-points`, and `package-lines` against the cleaned layer. `--no-validate` skips the checks; `--no-clean` skips the clean and `topo-detect`, writing `invalid-edge` rows (no `gap` rows) to each level's polygons issues file instead of raising, for a global `edge-mosaic --no-clean` output (see `docs/adr/0151`). See `docs/dev/explanation/6-packaging/package.md`.
 - **edge-match**: `--assign auto|one|many` (default `auto`: `assign-one`, forcing the whole input file onto one majority-vote overlay polygon, switching to per-polygon `assign-many` when fewer than half the input polygons overlap the winner, the mode used always logged; see `docs/adr/0082`) → per-group `edge-extend` (own subprocess) → batched clip (`core.clip`) → coverage clean (`--no-clean` skips it), fitting an input layer into a coarser overlay layer (e.g. admin4 into admin0). The input role MAY span multiple raw files per call, combined via a memory-bounded per-file `inputs`+`assign` loop, groups/clip/outputs running once over the combined result so cross-file input polygons sharing an overlay polygon extend together (`--assign many`/`step` rejected outright for a multi-file call, `auto` runs `one`, see `docs/adr/0084`). Also accepts an opt-in `--merge` (a plain boolean, plus `--overlay-include`/`--overlay-exclude`/`--input-include`/`--input-exclude`/`--prefer` narrowing flags, the same design `edge-mosaic` uses), which both groups every input polygon with no overlay polygon overlap at all into one orphan group of its own (sentinel `PASSTHROUGH_OVERLAY_FID`), extending it like any other group and keeping it unclipped in the output (materially weaker safety profile than `edge-mosaic`'s own input polygon passthrough, see `docs/adr/0081`), and gap-fills an overlay polygon matched by zero input polygons via the shared `fill_unmatched_overlays()` helper, identically to `edge-mosaic` (see `docs/adr/0088`). See `docs/dev/explanation/3-edge/edge_match.md`.
 - **edge-mosaic**: `assign-one` → clip (`core.clip`) → coverage clean (`--no-clean` skips it), fitting an already-extended input layer (a prior `edge_extend()` output) into a new/different overlay layer, skipping Voronoi extension entirely (see `docs/adr/0149`). See `docs/dev/explanation/3-edge/edge_mosaic.md`.
 - **topo-clean**: `topo-detect` → fixes the reported coverage defects (gaps, overlaps) with `ST_CoverageClean`, reporting the fix outcome in the issues file for manual review. See `docs/dev/explanation/2-topology/topo_clean.md`.
@@ -34,7 +34,6 @@ below them:
 - **code-detect**: checks a coded layer's codes and writes a Parquet report, rule-based DuckDB SQL, never modifying the input: blank codes, a code with several names, a finest-level code on several features (`split-unit` warning when they share name and parent), a code not starting with its parent's, and a code shaped unlike its level's (letters as `A`, digits as `9`), the last two only where 90% of a level's codes follow the rule. Owns `blank-code`/`name-conflict`, which `name-detect` doesn't report (see `docs/adr/0128`). See `docs/dev/explanation/4-codes/code_detect.md`.
 - **code-create**: cold-starts a hierarchical code on a flat, finest-level input, levels resolved structurally by default (or via an explicit `--name-field`/`--code-field` pair), each level's units ranked under their parent and assigned a fresh sequential code in a configurable `--root-code`/`--delimiter`/`--min-width` format (`--min-width` one width, one per level, or `auto`, see `docs/adr/0123`; `core.code`, a shared leaf), with `--source-codes replace|embed|copy` discarding, embedding, or copying each level's existing source code (see `docs/adr/0122`). See `docs/dev/explanation/4-codes/code_create.md`, `docs/dev/explanation/4-codes/code.md`.
 - **code-update**: reconciles an already-coded OLD layer against an uncoded NEW candidate, classifying every unit via `core.change`'s own engine and applying a changelog-driven retention policy (retain/replace/retire) per unit, cascading a changed parent's new code prefix down to every unchanged/renamed descendant. Format (`root_code`/`delimiter`/`min_width`, the width per level) auto-detects off OLD's own existing codes unless overridden. See `docs/dev/explanation/4-codes/code_update.md`, `docs/dev/explanation/4-codes/code.md`.
-- **validate**: runs `schema-detect` → `topo-detect` → `code-detect` → `name-detect` against one layer through their own `api.*()` functions, each writing its own report, then writes a `_validate_summary.csv` with one row per stage, kind and severity; a stage that raises is recorded as a `failed` row and the rest still run, `code-detect`/`name-detect` are skipped when `schema-detect` reports `levels-undetected`, and the CLI exits 1 on any error row. See `docs/dev/explanation/6-packaging/validate.md`.
 
 ## Deployment Targets
 
@@ -84,7 +83,7 @@ split):
   `docs/adr/0092`); `schema-fill` does not call `core.dissolve` itself, a
   caller runs `package-polygons` separately after filling (see
   `docs/dev/explanation/1-schema/schema_fill.md`).
-- `topo_tools/api/{edge_extend,topo_detect,code_detect,schema_detect,schema_map,schema_fill,schema_join,package_polygons,package_points,package_lines,package,edge_match,edge_mosaic,topo_clean,change,code_create,code_update,name_detect,name_clean,validate}.py`:
+- `topo_tools/api/{edge_extend,topo_detect,code_detect,schema_detect,schema_map,schema_fill,schema_join,package_polygons,package_points,package_lines,package,edge_match,edge_mosaic,topo_clean,change,code_create,code_update,name_detect,name_clean}.py`:
   public API functions; each chains its own tool's stages for exactly one
   file (or file pair) per call, except `edge-mosaic`'s and `edge-match`'s
   input roles, which MAY span multiple files (see
@@ -196,8 +195,9 @@ uv run topo-tools package-polygons admin3.geojson
 uv run topo-tools package-points admin3.geojson
 uv run topo-tools package-lines admin3.geojson
 
-# Run the package tool (package-polygons + package-points + package-lines in one call)
+# Run the package tool (clean, validate, then package-polygons + package-points + package-lines; exits 1 on validation errors)
 uv run topo-tools package admin3.geojson
+uv run topo-tools package global_admin2.parquet --no-clean
 
 # Override auto-detected level naming with an explicit pair (any tool above)
 uv run topo-tools package-polygons admin3.geojson --name-field adm{n}_name --code-field adm{n}_pcode
@@ -226,9 +226,6 @@ uv run topo-tools name-detect admin3.parquet
 
 # Run the name-clean tool (fix safe name defects, report the rest)
 uv run topo-tools name-clean admin3.parquet
-
-# Run the validate tool (every single-layer detect, plus a summary; exits 1 on errors)
-uv run topo-tools validate admin3.parquet --output-dir checks
 
 # Format and lint
 uv run ruff format && uv run ruff check
