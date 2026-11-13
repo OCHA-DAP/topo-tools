@@ -278,17 +278,23 @@ def test_custom_depth_column(admin2_input, tmp_path):
     assert "adm_lvl" not in columns
 
 
-def test_depth_column_collision_raises(tmp_path):
-    rows = [{**r, "adm_lvl": 2} for r in _ROWS]
+def test_existing_depth_column_replaced(tmp_path):
+    rows = [{**r, "adm_lvl": 9} for r in _ROWS]
     input_path = tmp_path / "admin2.parquet"
+    output_path = tmp_path / "points.parquet"
     _write_synthetic(input_path, rows)
-    with pytest.raises(ValueError, match="adm_lvl"):
-        package_points(
-            input_path,
-            tmp_path / "points.parquet",
-            name_field="adm{n}_name",
-            code_field="adm{n}_pcode",
-        )
+    package_points(
+        input_path,
+        output_path,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+    )
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(
+            f"SELECT code, adm_lvl FROM '{output_path}' ORDER BY code"
+        ).fetchall()
+    assert rows == [("A1", 2), ("A2", 2), ("B1", 2), ("P1", 1), ("P2", 1)]
 
 
 def test_step_reuse(admin2_input, tmp_path):

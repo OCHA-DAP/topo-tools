@@ -97,12 +97,9 @@ cores:
 | --------------------------------- | ---------------------------------- | --------- | -------- | ------------------------------------ |
 | Global admin4 (`portolan/global/admin4/admin4.parquet`, 217,223 rows, 5 detected levels, `--depth-column pkg_lvl`) | 297,503 (111 + 1,889 + 19,842 + 58,438 + 217,223) | 483s | 8.01 GB | Every point `ST_Covers`-ed by its own source polygon |
 
-**Real-data gotcha: `depth_column` collision.** The portolan catalog's own
-global admin files already carry an `adm_lvl` column of their own (the
-source's real-depth stamp); `package-points`' default `depth_column`
-(`"adm_lvl"`) collides with it. `_02_points.py` raises `ValueError` on this
-collision (`depth_column {value!r} already exists on {table!r}`) rather
-than silently producing a renamed duplicate column the way DuckDB's own
-`CREATE TABLE AS SELECT` does for a repeated column name; pass a
-non-colliding `--depth-column` (e.g. `pkg_lvl`, as above) against such a
-file.
+**`depth_column` on the input.** Files run through `schema-fill`, and the
+portolan catalog's global admin files, already carry an `adm_lvl` column
+holding each row's real depth. `_02_points.py` drops it before dissolving
+and stamps each point with the level it labels, the same way
+`package-lines` stamps each segment's coarsest level, logging the
+replacement.

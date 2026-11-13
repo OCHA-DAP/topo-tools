@@ -42,11 +42,8 @@ sidebar:
   `package-polygons` only; `package-points` and `package-lines` write
   generic per-role columns, not template-named ones.
 - `package` MUST NOT expose `depth_column`: `package-points` and
-  `package-lines` each run with their own default (`adm_lvl`). An input
-  that already has its own `adm_lvl` column (raising `ValueError` in
-  either sub-tool) MUST be run through `package-points`/`package-lines`
-  directly with a non-colliding `--depth-column` instead of through
-  `package`.
+  `package-lines` each run with their own default (`adm_lvl`), replacing an
+  input column of the same name.
 
 ## Examples
 

@@ -34,9 +34,9 @@ sidebar:
   (`ST_Covers`).
 - Every level's points MUST be tagged with a depth column (`adm_lvl` by
   default, overridable via `depth_column`), holding that level's own
-  numeric depth. `package-points` MUST raise `ValueError` if `depth_column`
-  already exists as a column on the input, rather than silently producing
-  a renamed duplicate column.
+  numeric depth. An input column of the same name (e.g. `schema-fill`'s
+  real-depth stamp) MUST be dropped and replaced, logged, matching
+  `package-lines`.
 - Every level's own identity columns, including a whole-table-constant
   root's, MUST land under one name shared across every level: the source
   file's own naming convention (e.g. `pcode`, `name`, derived by stripping
