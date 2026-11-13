@@ -1,13 +1,24 @@
-"""Public API: run package-polygons, package-points, and package-lines in one call."""
+"""Public API: clean, validate, then package polygons, points and lines in one call."""
 
 from pathlib import Path
 
+from topo_tools.api._validate import validate as run_validation
 from topo_tools.api.package_lines import package_lines
 from topo_tools.api.package_points import package_points
 from topo_tools.api.package_polygons import package_polygons
+from topo_tools.core.duckdb_utils import pipeline_connection, resolve_tmp_dir
+from topo_tools.core.io import (
+    check_overwrite,
+    default_output_path,
+    export_geometry_table,
+    input_basename,
+    read_reproject_and_clean,
+    resolve_input_path,
+)
+from topo_tools.core.validate._constants import STAGES
 
 
-def _substitute(output_path: str | Path | None, word: str) -> str | Path | None:
+def _substitute(output_path: str | Path | None, word: str) -> str | None:
     if output_path is None:
         return None
     text = str(output_path)
@@ -15,6 +26,20 @@ def _substitute(output_path: str | Path | None, word: str) -> str | Path | None:
         msg = f"output_path given without a literal '{{x}}' placeholder: {output_path}"
         raise ValueError(msg)
     return text.replace("{x}", word)
+
+
+def _clean(
+    input_path: Path | str, work: Path, *, threads: int | None, debug: bool
+) -> Path:
+    """Write input_path, coverage-cleaned if it has defects, as GeoParquet in work."""
+    name = input_basename(input_path).replace(".", "_") + "_package"
+    dest = work / "package_clean" / f"{Path(input_basename(input_path)).stem}.parquet"
+    with pipeline_connection(name, work, threads=threads, debug=debug) as conn:
+        read_reproject_and_clean(conn, name, input_path)
+        export_geometry_table(conn, f"{name}_01", dest)
+        if not debug:
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_01"')
+    return dest
 
 
 def package(  # noqa: PLR0913
@@ -26,45 +51,83 @@ def package(  # noqa: PLR0913
     output_name_field: str | None = None,
     output_code_field: str | None = None,
     aggregations: dict[str, str] | None = None,
+    clean: bool = True,
+    validate: bool = True,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
     overwrite: bool = True,
     debug: bool = False,
 ) -> None:
-    """Run package-polygons, package-points, and package-lines against one input.
+    """Coverage-clean and validate one input, then package polygons, points, lines.
 
-    With no name_field/code_field, levels are auto-detected.
+    Raises ValueError, before writing any output, if validation finds an error.
     """
-    package_polygons(
-        input_path,
-        _substitute(output_path, "admin{n}"),
-        name_field=name_field,
-        code_field=code_field,
-        output_name_field=output_name_field,
-        output_code_field=output_code_field,
-        aggregations=aggregations,
-        threads=threads,
-        tmp_dir=tmp_dir,
-        overwrite=overwrite,
-        debug=debug,
+    input_path = resolve_input_path(input_path)
+    polygons = _substitute(output_path, "admin{n}") or str(
+        default_output_path(input_path, "_admin{n}")
     )
-    package_points(
-        input_path,
-        _substitute(output_path, "points"),
-        name_field,
-        code_field,
-        threads=threads,
-        tmp_dir=tmp_dir,
-        overwrite=overwrite,
-        debug=debug,
+    points = Path(
+        _substitute(output_path, "points") or default_output_path(input_path, "_points")
     )
-    package_lines(
-        input_path,
-        _substitute(output_path, "lines"),
-        name_field,
-        code_field,
-        threads=threads,
-        tmp_dir=tmp_dir,
-        overwrite=overwrite,
-        debug=debug,
+    lines = Path(
+        _substitute(output_path, "lines") or default_output_path(input_path, "_lines")
     )
+    report_dir = Path(polygons).parent
+    stem = Path(input_basename(input_path)).stem
+    reports = {s: report_dir / f"{stem}_{s}_issues.parquet" for s in STAGES}
+    summary_path = report_dir / f"{stem}_validate_summary.csv"
+    for path in [points, lines, *(reports.values() if validate else ())]:
+        check_overwrite(path, overwrite=overwrite)
+    if validate:
+        check_overwrite(summary_path, overwrite=overwrite)
+
+    with resolve_tmp_dir(tmp_dir, debug=debug) as work:
+        source = (
+            _clean(input_path, work, threads=threads, debug=debug)
+            if clean
+            else input_path
+        )
+        common = {"threads": threads, "tmp_dir": work, "debug": debug}
+        if validate and run_validation(
+            source,
+            reports,
+            summary_path,
+            skip_topo=not clean,
+            name_field=name_field,
+            code_field=code_field,
+            **common,
+        ):
+            msg = f"validation found errors, see {summary_path}"
+            raise ValueError(msg)
+
+        package_polygons(
+            source,
+            polygons,
+            name_field=name_field,
+            code_field=code_field,
+            output_name_field=output_name_field,
+            output_code_field=output_code_field,
+            aggregations=aggregations,
+            overwrite=overwrite,
+            check_topology=clean,
+            original_path=input_path,
+            **common,
+        )
+        package_points(
+            source,
+            points,
+            name_field,
+            code_field,
+            overwrite=overwrite,
+            check_topology=clean,
+            **common,
+        )
+        package_lines(
+            source,
+            lines,
+            name_field,
+            code_field,
+            overwrite=overwrite,
+            check_topology=clean,
+            **common,
+        )

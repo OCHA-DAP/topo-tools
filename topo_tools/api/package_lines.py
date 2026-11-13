@@ -44,6 +44,7 @@ def package_lines(  # noqa: PLR0913
     overwrite: bool = True,
     debug: bool = False,
     step: str | None = None,
+    check_topology: bool = True,
 ) -> None:
     """Deduplicated shared+exterior boundary lines, classified by admin level.
 
@@ -77,7 +78,7 @@ def package_lines(  # noqa: PLR0913
             if debug:
                 logger.info("=== %s ===", s)
             if s == "inputs":
-                inputs.main(conn, name, input_path)
+                inputs.main(conn, name, input_path, check_topology=check_topology)
             elif s == "boundaries":
                 if schema is not None:
                     levels = detect_levels(conn, f"{name}_01", schema)

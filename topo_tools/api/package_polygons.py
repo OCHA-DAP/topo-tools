@@ -150,6 +150,8 @@ def package_polygons(  # noqa: PLR0913
     overwrite: bool = True,
     debug: bool = False,
     step: str | None = None,
+    check_topology: bool = True,
+    original_path: str | Path | None = None,
 ) -> None:
     """Dissolve a polygon layer into every detected coarser admin level.
 
@@ -162,6 +164,8 @@ def package_polygons(  # noqa: PLR0913
         raise ValueError(msg)
 
     input_path = resolve_input_path(input_path)
+    # Output paths follow the caller's original file when input_path is a copy.
+    plan_path = resolve_input_path(original_path or input_path)
     schema = resolve_explicit_target_schema(name_field, code_field)
     renames = _output_templates(schema, output_name_field, output_code_field)
 
@@ -181,12 +185,12 @@ def package_polygons(  # noqa: PLR0913
             if debug:
                 logger.info("=== %s ===", s)
             if s == "inputs":
-                inputs.main(conn, name, input_path)
+                inputs.main(conn, name, input_path, check_topology=check_topology)
             elif s == "dissolve":
                 schema, levels, plan = _load_plan(
                     conn,
                     name,
-                    input_path,
+                    plan_path,
                     output_path,
                     issues_path,
                     schema,
@@ -200,13 +204,20 @@ def package_polygons(  # noqa: PLR0913
                     _schema, _levels, plan = _load_plan(
                         conn,
                         name,
-                        input_path,
+                        plan_path,
                         output_path,
                         issues_path,
                         schema,
                         overwrite=overwrite,
                     )
-                outputs.main(conn, name, plan, renames=renames, debug=debug)
+                outputs.main(
+                    conn,
+                    name,
+                    plan,
+                    renames=renames,
+                    check_topology=check_topology,
+                    debug=debug,
+                )
         maybe_export_debug_tables(
             conn, tmp_dir_path, name, step, _STEP_TABLES, debug=debug
         )

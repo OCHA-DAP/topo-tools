@@ -9,8 +9,14 @@ from topo_tools.core.coverage import check_no_overlaps, merge_micro_polygons
 from topo_tools.core.io import read_and_reproject
 
 
-def main(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:
-    """Read `{name}_01` in EPSG:4326, micro-polygons merged; raise on overlap.
+def main(
+    conn: DuckDBPyConnection,
+    name: str,
+    path: Path | str,
+    *,
+    check_topology: bool = True,
+) -> None:
+    """Read `{name}_01` in EPSG:4326, micro-polygons merged, overlaps checked.
 
     Also strips ArcGIS/export-tool artifact columns, since this table doubles
     as the finest level's own output.
@@ -22,4 +28,5 @@ def main(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:
     for c in noise:
         conn.execute(f'ALTER TABLE "{table}" DROP "{c}"')
     merge_micro_polygons(conn, table, table, issues_table=f"{name}_01_micro")
-    check_no_overlaps(conn, table)
+    if check_topology:
+        check_no_overlaps(conn, table)
