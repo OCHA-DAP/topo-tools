@@ -85,8 +85,8 @@ def _labels(
 
 def _auto_detect(
     conn: DuckDBPyConnection, table_in: str, dissolved: str, levels: list[int]
-) -> tuple[list, dict[str, dict[int, str]]]:
-    """Dissolve at the detected finest level; return codes and families."""
+) -> tuple[list, dict[str, dict[int, str]], int | None]:
+    """Dissolve at the detected finest level; return codes, families, root level."""
     level_columns = detect_levels_with_root(conn, table_in)
     for n in levels:
         cols = level_columns[n]
@@ -102,7 +102,8 @@ def _auto_detect(
         verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
     dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
     families = generic_names_by_family(families, levels, code_columns)
-    return code_columns, families
+    root = next((n for n, c in level_columns.items() if c.is_root), None)
+    return code_columns, families, root
 
 
 def main(  # noqa: PLR0913
@@ -128,6 +129,7 @@ def main(  # noqa: PLR0913
         raise ValueError(msg)
 
     table_in = f"{name}_01"
+    root_level = None
     dissolved = f"{name}_02_dissolved"
     if schema is not None:
         code_columns = [schema.code_field.format(n=n) for n in levels]
@@ -143,7 +145,9 @@ def main(  # noqa: PLR0913
             target_schema=schema,
         )
     else:
-        code_columns, families = _auto_detect(conn, table_in, dissolved, levels)
+        code_columns, families, root_level = _auto_detect(
+            conn, table_in, dissolved, levels
+        )
 
     dissolved_columns = {
         r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
@@ -242,7 +246,14 @@ def main(  # noqa: PLR0913
         WHERE NOT ST_IsEmpty(geom)
     """)
 
-    classification = _classification_sql(levels, code_columns)
+    # A whole-table-constant root never separates two units; a NULL would.
+    classification = _classification_sql(
+        levels,
+        [
+            None if n == root_level else c
+            for n, c in zip(levels, code_columns, strict=True)
+        ],
+    )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_rows" AS
         SELECT s.left_fid, s.right_fid, {classification} AS depth, s.geom

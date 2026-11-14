@@ -481,6 +481,22 @@ def test_bare_constant_root_outline_labelled_as_code(tmp_path):
     assert outer == [(0, "SEN", "nSEN")]
 
 
+def test_root_code_blank_on_some_rows_keeps_shared_depth(tmp_path):
+    """A blank root on one unit never marks its shared lines as depth 0."""
+    rows = _country_rows(["SEN"])
+    rows[0] |= {"adm0_pcode": None, "adm0_name": None}
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "lines.parquet"
+    package_lines(input_path, output_path)
+    with duckdb.connect() as conn:
+        shared = conn.execute(f"""
+            SELECT LEAST(a_pcode, b_pcode), GREATEST(a_pcode, b_pcode), adm_lvl
+            FROM '{output_path}' WHERE b_pcode IS NOT NULL ORDER BY ALL
+        """).fetchall()
+    assert shared == [("SEN0", "SEN1", 1), ("SEN00", "SEN01", 2), ("SEN10", "SEN11", 2)]
+
+
 def test_multi_country_outer_edges_are_depth_minus_one(tmp_path):
     """Several adm0 units: outer edges at -1, a border between two at 0."""
     input_path = tmp_path / "in.parquet"
