@@ -57,15 +57,10 @@ def _level_group_by(
     *,
     allow_empty_root: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """One level's dissolve group_by/exclude, from an explicit schema or auto-detect."""
+    """One level's dissolve group_by and own identity columns."""
+    own = [per_level[n] for per_level in families.values() if n in per_level]
     if schema is not None:
-        exclude = [
-            col
-            for per_level in families.values()
-            for lvl, col in per_level.items()
-            if lvl != n
-        ]
-        return [schema.code_field.format(n=n)], exclude
+        return [schema.code_field.format(n=n)], own
 
     cluster = level_columns[n]
     if (
@@ -75,23 +70,19 @@ def _level_group_by(
     ):
         msg = f"no reliable group-by column detected for level {n}"
         raise ValueError(msg)
-    # An ancestor never survives under its own numbered name: a row
-    # already carries its own level via the depth column.
-    exclude = [
-        c
-        for lvl, cols in level_columns.items()
-        if lvl != n
-        for c in cols.identity_columns
-    ]
-    return cluster.group_by, exclude
+    return cluster.group_by, own or list(
+        dict.fromkeys(cluster.group_by + cluster.identity_columns)
+    )
 
 
-def _identity_families(
+def _identity_families(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     table: str,
     schema: TargetSchema | None,
     level_columns: dict[int, LevelColumns] | None,
     levels: list[int],
+    *,
+    depth_column: str,
 ) -> dict[str, dict[int, str]]:
     """Every level's own identity columns, keyed by the file's own naming for it.
 
@@ -99,7 +90,13 @@ def _identity_families(
     """
     if schema is not None:
         columns = [r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()]
-        return generic_families(columns, levels, schema.name_field, schema.code_field)
+        return generic_families(
+            columns,
+            levels,
+            schema.name_field,
+            schema.code_field,
+            reserved={"fid", "geom", "geometry", depth_column},
+        )
     if level_columns is None or not any(
         cols.group_by for cols in level_columns.values()
     ):
@@ -134,23 +131,28 @@ def main(
             level_columns = {0: root, **level_columns}
             levels = sorted({0, *levels})
             root_injected = True
-    families = _identity_families(conn, table_in, schema, level_columns, levels)
+    families = _identity_families(
+        conn, table_in, schema, level_columns, levels, depth_column=depth_column
+    )
 
+    columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
     point_tables = []
     for n in levels:
-        group_by, exclude = _level_group_by(
+        group_by, own = _level_group_by(
             schema, level_columns, n, families, allow_empty_root=root_injected
         )
         if schema is None and group_by:
             verify_functional_cluster(conn, table_in, group_by[0], group_by)
 
+        # Points carry only their own level's identity; metadata stays on polygons.
+        keep = {*group_by, *own, "fid", "geom"}
         dissolved = f"{name}_02_tmp{n}"
         dissolve_stage.main(
             conn,
             table_in,
             dissolved,
             group_by=group_by,
-            exclude=exclude,
+            exclude=[c for c in columns if c not in keep],
             target_schema=schema,
         )
         _check_row_count(conn, dissolved, table_in, group_by)
@@ -158,11 +160,10 @@ def main(
         dissolved_columns = {
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
         }
-        own_rename = level_family_names(families, n, group_by[0] if group_by else None)
-        # Points carry only their own level's identity; metadata stays on polygons.
+        renames = level_family_names(families, n, group_by[0] if group_by else None)
         identity_sql = "".join(
-            f', "{col}" AS "{generic}"'
-            for col, generic in own_rename.items()
+            f', "{col}" AS "{renames.get(col, col)}"'
+            for col in own
             if col in dissolved_columns
         )
 

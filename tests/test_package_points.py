@@ -304,6 +304,31 @@ def test_explicit_schema_keeps_own_level_siblings_drops_ancestors(tmp_path):
     ]
 
 
+def test_unanchored_level_keeps_identity_under_own_names(tmp_path):
+    """A level with no naming anchor keeps its own columns, never metadata."""
+    rows = [
+        {
+            "adm0_pcode": "Z",
+            "adm0_name": "Zed",
+            "adm1_pcode": r["adm2_pcode"],
+            "adm1_name": f"n{r['adm2_pcode']}",
+            "valid_on": "2020",
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "admin1.parquet"
+    output_path = tmp_path / "points.parquet"
+    _write_synthetic(input_path, rows)
+    package_points(input_path, output_path)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        out = conn.execute(
+            f"SELECT * EXCLUDE geometry FROM '{output_path}' ORDER BY ALL"
+        ).fetchall()
+    assert out == [("A1", "nA1", 1), ("A2", "nA2", 1), ("B1", "nB1", 1)]
+
+
 def test_custom_depth_column(admin2_input, tmp_path):
     output_path = tmp_path / "points.parquet"
     package_points(

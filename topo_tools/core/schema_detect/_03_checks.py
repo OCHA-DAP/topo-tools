@@ -123,18 +123,24 @@ def _varying(name: str, _parents: list, codes: list, metadata: list[str]) -> str
         return f'SELECT NULL, NULL, NULL, NULL, NULL FROM "{name}_02" WHERE false'
     level, code = codes[0]
     c = quote_identifier(code)
-    return " UNION ALL ".join(
-        f"""--sql
-        SELECT 'varying-column', {level}, {_literal(column)}, min(unit),
-               printf('several values within %d unit(s) of {code}', count(*))
-        FROM (
-            SELECT {c}::VARCHAR AS unit FROM "{name}_01"
-            GROUP BY {c} HAVING count(DISTINCT {quote_identifier(column)}) > 1
-        )
-        HAVING count(*) > 0
-        """
-        for column in metadata
+    flags = ", ".join(
+        f'count(DISTINCT {quote_identifier(col)}) > 1 AS "v{i}"'
+        for i, col in enumerate(metadata)
     )
+    keys = ", ".join(f"('v{i}', {_literal(col)})" for i, col in enumerate(metadata))
+    names = ", ".join(f'"v{i}"' for i in range(len(metadata)))
+    label = _literal(f" unit(s) of {code}")
+    return f"""--sql
+        SELECT 'varying-column', {level}, m.column_name, min(u.unit),
+               'several values within ' || count(*) || {label}
+        FROM (
+            SELECT {c}::VARCHAR AS unit, {flags}
+            FROM "{name}_01" WHERE {c} IS NOT NULL GROUP BY {c}
+        ) UNPIVOT (varies FOR flag IN ({names})) u
+        JOIN (VALUES {keys}) m(flag, column_name) USING (flag)
+        WHERE u.varies
+        GROUP BY m.column_name
+    """
 
 
 _CHECKS = {

@@ -53,9 +53,9 @@ sidebar:
   cartographic layer, not a coverage layer.
 - `package-points` MUST combine every level's points into one output file.
   Every output row MUST carry only geometry, its own level's generic
-  identity columns and the depth column. No other input column MUST appear
-  in the output: metadata stays on the polygons, joined back by `code` and
-  the depth column.
+  identity columns and the depth column. Any other input column MUST NOT
+  appear in the output: metadata stays on the polygons, joined back by the
+  identity columns and the depth column.
 
 ## Configuration (`api.package_points.package_points()` / CLI)
 

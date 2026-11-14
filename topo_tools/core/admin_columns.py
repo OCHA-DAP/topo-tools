@@ -55,12 +55,18 @@ def template_families(
 
 
 def generic_families(
-    columns: list[str], levels: list[int], name_field: str, code_field: str
+    columns: list[str],
+    levels: list[int],
+    name_field: str,
+    code_field: str,
+    *,
+    reserved: set[str] = frozenset(),
 ) -> dict[str, dict[int, str]]:
     """Key template families by a level-free name: code, name, then by suffix (pcode).
 
-    Raises ValueError if two families reduce to the same name.
+    Raises ValueError if a name is empty, reserved, or shared, case-insensitively.
     """
+    taken = {r.lower() for r in reserved}
     generic: dict[str, dict[int, str]] = {}
     for key, per_level in template_families(
         columns, levels, name_field, code_field
@@ -71,9 +77,10 @@ def generic_families(
             name = "name"
         else:
             name = key.split("{n}", 1)[1].strip("_")
-        if name in generic:
-            msg = f"two column families both reduce to {name!r}"
+        if not name or name.lower() in taken:
+            msg = f"column family {key!r} reduces to unusable name {name!r}"
             raise ValueError(msg)
+        taken.add(name.lower())
         generic[name] = per_level
     return generic
 

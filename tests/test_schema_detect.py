@@ -123,6 +123,30 @@ def test_varying_column(tmp_path, fields):
     }
 
 
+def test_varying_column_skips_blank_coarsest_code(tmp_path):
+    """Rows with no coarsest code are not one unit; odd names stay quoted."""
+    select = """--sql
+        SELECT * REPLACE (CASE WHEN adm2_pcode = 'XY11' THEN NULL
+                               ELSE adm0_pcode END AS adm0_pcode),
+               CASE WHEN adm2_pcode = 'XY11' THEN adm3_pcode ELSE 'x' END
+                   AS "it's 100%"
+        FROM base
+    """
+    kinds = _kinds(tmp_path, select, **_FIELDS)
+    assert not [k for k in kinds if k[0] in {"varying-column", "check-failed"}]
+
+
+def test_varying_column_single_level(tmp_path):
+    select = """--sql
+        SELECT adm2_pcode AS adm1_pcode, adm2_name AS adm1_name,
+               adm3_pcode AS note, geom
+        FROM base
+    """
+    assert _kinds(tmp_path, select, **_FIELDS) == {
+        ("varying-column", "error", 1, "note")
+    }
+
+
 def test_levels_undetected_is_reported_not_raised(tmp_path):
     fields = {"name_field": "lvl{n}_name", "code_field": "lvl{n}_code"}
     assert _kinds(tmp_path, "SELECT * FROM base", **fields) == {

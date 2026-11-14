@@ -54,9 +54,9 @@ Then check the finest level's schema and nesting:
 
 This writes `admin2_mapped_schema_issues.parquet` without changing the input.
 Errors (`levels-undetected`, `level-skipped`, `multiple-parents`,
-`orphan-child`) mean the hierarchy can't be trusted yet, and a column that
-varies within one unit (`varying-column`), which packaging would drop:
-fix them before coding. Warnings list columns named or present unlike the
+`orphan-child`) mean the hierarchy can't be trusted yet, and
+`varying-column` marks a column with several values within one unit,
+which packaging would drop: fix them before coding. Warnings list columns named or present unlike the
 other levels'
 (`column-naming`, `column-set-mismatch`), and columns set aside as a
 coarser grouping (`supplemental-column`). If such a grouping is a real
