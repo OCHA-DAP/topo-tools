@@ -276,3 +276,30 @@ def test_cli_package_output_code_field(admin2_input, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert "adm1_code" in _describe_columns(tmp_path / "admin1.parquet")
+
+
+def test_auto_detected_constant_root_writes_admin0(tmp_path):
+    """A constant adm0 column becomes its own one-row admin0 output."""
+    rows = [
+        {
+            "adm0_pcode": "SEN",
+            "adm0_name": "Senegal",
+            "adm1_pcode": f"SN0{p}",
+            "adm1_name": f"Region {p}",
+            "adm2_pcode": f"SN0{p}0{j}",
+            "adm2_name": f"Department {p}{j}",
+            "wkt": f"POLYGON(({20 * p + 10 * j} 0,{20 * p + 10 * j} 10,"
+            f"{20 * p + 10 * j + 10} 10,{20 * p + 10 * j + 10} 0,"
+            f"{20 * p + 10 * j} 0))",
+        }
+        for p in (1, 2)
+        for j in (1, 2)
+    ]
+    input_path = tmp_path / "admin2.parquet"
+    _write_synthetic(input_path, rows)
+    package_polygons(input_path, tmp_path / "out_{n}.parquet")
+    with duckdb.connect() as conn:
+        admin0 = conn.execute(
+            f"SELECT adm0_pcode, adm0_name FROM '{tmp_path / 'out_0.parquet'}'"
+        ).fetchall()
+    assert admin0 == [("SEN", "Senegal")]

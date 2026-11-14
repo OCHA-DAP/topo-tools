@@ -422,3 +422,57 @@ def test_generic_name_clash_is_case_insensitive():
     families = {"_pcode": {1: "adm1_pcode"}, "_PCODE": {1: "adm1_PCODE"}}
     with pytest.raises(ValueError, match="reduces to unusable name 'PCODE'"):
         _generic_names(families, [1], ["adm1_pcode"])
+
+
+def _country_rows(countries: list[str]) -> list[dict]:
+    """Two adm1 units with two adm2 units each, per country, in a row."""
+    rows = []
+    for c, country in enumerate(countries):
+        for p in range(2):
+            for j in range(2):
+                x = 40 * c + 20 * p + 10 * j
+                rows.append(
+                    {
+                        "adm0_pcode": country,
+                        "adm0_name": f"n{country}",
+                        "adm1_pcode": f"{country}{p}",
+                        "adm1_name": f"n{country}{p}",
+                        "adm2_pcode": f"{country}{p}{j}",
+                        "adm2_name": f"n{country}{p}{j}",
+                        "wkt": f"POLYGON(({x} 0,{x} 10,{x + 10} 10,{x + 10} 0,{x} 0))",
+                    }
+                )
+    return rows
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_single_country_outline_is_depth_zero(tmp_path, explicit):
+    """One adm0 unit: every outer edge is its outline, at depth 0, labelled adm0."""
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, _country_rows(["SEN"]))
+    output_path = tmp_path / "lines.parquet"
+    fields = (
+        {"name_field": "adm{n}_name", "code_field": "adm{n}_pcode"} if explicit else {}
+    )
+    package_lines(input_path, output_path, **fields)
+    with duckdb.connect() as conn:
+        outer = conn.execute(f"""
+            SELECT DISTINCT adm_lvl, columns('^a_') FROM '{output_path}'
+            WHERE columns('^b_.*code$') IS NULL
+        """).fetchall()
+    assert outer == [(0, "SEN", "nSEN")]
+
+
+def test_multi_country_outer_edges_are_depth_minus_one(tmp_path):
+    """Several adm0 units: outer edges at -1, a border between two at 0."""
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, _country_rows(["SEN", "GMB"]))
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path, output_path, name_field="adm{n}_name", code_field="adm{n}_pcode"
+    )
+    with duckdb.connect() as conn:
+        depths = conn.execute(f"""
+            SELECT DISTINCT adm_lvl, b_code IS NULL FROM '{output_path}' ORDER BY ALL
+        """).fetchall()
+    assert depths == [(-1, True), (0, False), (1, False), (2, False)]

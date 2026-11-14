@@ -413,6 +413,17 @@ def group_families_by_level(
     return families
 
 
+def detect_levels_with_root(
+    conn: DuckDBPyConnection, table: str
+) -> dict[int, LevelColumns]:
+    """detect_level_columns_or_single(), plus a whole-table-constant root as level 0."""
+    level_columns = detect_level_columns_or_single(conn, table)
+    if 0 in level_columns:
+        return level_columns
+    root = detect_root_level(conn, table, level_columns)
+    return level_columns if root is None else {0: root, **level_columns}
+
+
 def fallback_families(
     level_columns: dict[int, LevelColumns], levels: list[int]
 ) -> dict[str, dict[int, str]]:

@@ -6,7 +6,7 @@ from topo_tools.core.admin_columns import check_generic_names, generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._level_columns import (
-    detect_level_columns_or_single,
+    detect_levels_with_root,
     fallback_families,
     group_families_by_level,
     level_family_names,
@@ -23,6 +23,7 @@ def _classification_sql(levels: list[int], code_columns: list[str]) -> str:
     cases = "".join(
         f'WHEN l."{col}" IS DISTINCT FROM r."{col}" THEN {level} '
         for level, col in zip(levels[:-1], code_columns[:-1], strict=True)
+        if col is not None
     )
     return f"CASE {cases}ELSE {levels[-1]} END"
 
@@ -58,14 +59,31 @@ def _generic_names(
     return {generic: per_level for _, generic, per_level in named}
 
 
+def _outer_depth(
+    conn: DuckDBPyConnection,
+    table: str,
+    levels: list[int],
+    code_columns: list,
+    *,
+    constant_root: bool,
+) -> int:
+    """Return the coarsest level if it has one unit (its outline), else one less."""
+    code = code_columns[0]
+    if code is None:
+        return min(levels) if constant_root else min(levels) - 1
+    units = conn.execute(f'SELECT COUNT(DISTINCT "{code}") FROM "{table}"').fetchall()
+    return min(levels) if units[0][0] <= 1 else min(levels) - 1
+
+
 def _labels(
     families: dict[str, dict[int, str]],
     levels: list[int],
     code_columns: list,
     dissolved_columns: set[str],
+    outer_depth: int,
 ) -> dict[str, dict[int, str]]:
     """Each label's source column per row depth; outer edges use the coarsest."""
-    label_levels = {lvl: lvl for lvl in levels} | {min(levels) - 1: min(levels)}
+    label_levels = {lvl: lvl for lvl in levels} | {outer_depth: min(levels)}
     if not families:
         families = {"code": dict(zip(levels, code_columns, strict=True))}
     labels = {
@@ -78,6 +96,34 @@ def _labels(
     }
     labels = {generic: by_depth for generic, by_depth in labels.items() if by_depth}
     return labels or {"code": {}}
+
+
+def _auto_detect(
+    conn: DuckDBPyConnection, table_in: str, dissolved: str, levels: list[int]
+) -> tuple[list, dict[str, dict[int, str]], bool]:
+    """Dissolve at the detected finest level; return codes, families, constant root."""
+    level_columns = detect_levels_with_root(conn, table_in)
+    constant_root = 0 in level_columns and not level_columns[0].group_by
+    for n in levels:
+        is_root = n == 0 and constant_root
+        if not level_columns[n].group_by and len(level_columns) > 1 and not is_root:
+            msg = f"no reliable group-by column detected for level {n}"
+            raise ValueError(msg)
+    code_columns = [
+        level_columns[n].group_by[0] if level_columns[n].group_by else None
+        for n in levels
+    ]
+    finest_group_by = level_columns[max(levels)].group_by
+    if finest_group_by:
+        verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
+    dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
+    families = _generic_names(
+        group_families_by_level(conn, table_in, level_columns)
+        or fallback_families(level_columns, levels),
+        levels,
+        code_columns,
+    )
+    return code_columns, families, constant_root
 
 
 def main(  # noqa: PLR0913
@@ -103,7 +149,7 @@ def main(  # noqa: PLR0913
         raise ValueError(msg)
 
     table_in = f"{name}_01"
-    finest = max(levels)
+    constant_root = False
     dissolved = f"{name}_02_dissolved"
     if schema is not None:
         code_columns = [schema.code_field.format(n=n) for n in levels]
@@ -119,30 +165,17 @@ def main(  # noqa: PLR0913
             target_schema=schema,
         )
     else:
-        level_columns = detect_level_columns_or_single(conn, table_in)
-        for n in levels:
-            if not level_columns[n].group_by and len(level_columns) > 1:
-                msg = f"no reliable group-by column detected for level {n}"
-                raise ValueError(msg)
-        code_columns = [
-            level_columns[n].group_by[0] if level_columns[n].group_by else None
-            for n in levels
-        ]
-        finest_group_by = level_columns[finest].group_by
-        if finest_group_by:
-            verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
-        dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
-        families = _generic_names(
-            group_families_by_level(conn, table_in, level_columns)
-            or fallback_families(level_columns, levels),
-            levels,
-            code_columns,
+        code_columns, families, constant_root = _auto_detect(
+            conn, table_in, dissolved, levels
         )
 
     dissolved_columns = {
         r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
     }
-    labels = _labels(families, levels, code_columns, dissolved_columns)
+    outer_depth = _outer_depth(
+        conn, table_in, levels, code_columns, constant_root=constant_root
+    )
+    labels = _labels(families, levels, code_columns, dissolved_columns, outer_depth)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_parts" AS
@@ -243,7 +276,7 @@ def main(  # noqa: PLR0913
         JOIN "{dissolved}" l ON l.fid = s.left_fid
         JOIN "{dissolved}" r ON r.fid = s.right_fid
         UNION ALL
-        SELECT left_fid, right_fid, {min(levels) - 1} AS depth, geom
+        SELECT left_fid, right_fid, {outer_depth} AS depth, geom
         FROM "{name}_02_exterior"
     """)
 

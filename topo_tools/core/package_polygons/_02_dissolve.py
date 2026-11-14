@@ -5,7 +5,7 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
-    detect_level_columns_or_single,
+    detect_levels_with_root,
     verify_functional_cluster,
 )
 from topo_tools.core.schema_map._target_schema import TargetSchema
@@ -41,15 +41,20 @@ def main(
             )
         return
 
-    level_columns: dict[int, LevelColumns] = detect_level_columns_or_single(conn, table)
+    level_columns: dict[int, LevelColumns] = detect_levels_with_root(conn, table)
     for n in levels:
         if n == finest:
             continue
         cluster = level_columns[n]
-        if not cluster.group_by:
+        # A constant root dissolves the whole layer into one unit.
+        is_root = n == 0 and cluster.identity_columns and not cluster.group_by
+        if not cluster.group_by and not is_root:
             msg = f"no reliable group-by column detected for level {n} in {table!r}"
             raise ValueError(msg)
-        verify_functional_cluster(conn, table, cluster.group_by[0], cluster.group_by)
+        if cluster.group_by:
+            verify_functional_cluster(
+                conn, table, cluster.group_by[0], cluster.group_by
+            )
         # A cardinality-only lookalike (e.g. area_sqkm) isn't in identity_columns;
         # leave it for dissolve's own numeric-sum default.
         exclude = [

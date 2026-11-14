@@ -8,8 +8,7 @@ from topo_tools.core.admin_columns import check_generic_names, generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
-    detect_level_columns_or_single,
-    detect_root_level,
+    detect_levels_with_root,
     fallback_families,
     group_families_by_level,
     level_family_names,
@@ -130,12 +129,8 @@ def main(  # noqa: PLR0913
     level_columns: dict[int, LevelColumns] | None = None
     root_injected = False
     if schema is None:
-        level_columns = detect_level_columns_or_single(conn, table_in)
-        root = detect_root_level(conn, table_in, level_columns)
-        if root is not None:
-            level_columns = {0: root, **level_columns}
-            levels = sorted({0, *levels})
-            root_injected = True
+        level_columns = detect_levels_with_root(conn, table_in)
+        root_injected = 0 in level_columns and not level_columns[0].group_by
     families = _identity_families(
         conn, table_in, schema, level_columns, levels, depth_column=depth_column
     )

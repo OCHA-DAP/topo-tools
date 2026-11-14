@@ -79,11 +79,11 @@ multi-part/archipelago fid, and a corner-only touch).
    fid's shared adjacency can itself be a `MultiLineString`), then classify
    every row: a shared row's depth is the coarsest detected level at which
    its two sides' own code columns first differ; an exterior row's depth
-   is one level coarser than the coarsest detected level (`min(levels) -
-   1`, not the coarsest detected level itself, since `levels` can include
-   a genuine level 0 for a multi-country file whose admin0 codes vary, and
-   hardcoding depth `0` for exterior rows would then collide with a real
-   international shared-boundary classification).
+   is the coarsest detected level when that level has a single unit,
+   since every outer edge is then that unit's outline, and one level
+   coarser (`min(levels) - 1`) otherwise, so it never collides with a
+   shared border between two units of the coarsest level (e.g. two adm0
+   units in a multi-country file).
 7. Raise `ValueError` if any finest-level fid is absent from every output
    row (as `left_fid` or `right_fid`), catching a fid silently dropped
    somewhere in the pipeline. A fid fully enclosed by neighbors (zero

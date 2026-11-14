@@ -20,7 +20,7 @@ from topo_tools.core.package_polygons import _01_inputs as inputs
 from topo_tools.core.package_polygons import _02_dissolve as dissolve_stage
 from topo_tools.core.package_polygons import _03_outputs as outputs
 from topo_tools.core.package_polygons._03_outputs import LevelOutput
-from topo_tools.core.schema_map._level_columns import detect_level_columns_or_single
+from topo_tools.core.schema_map._level_columns import detect_levels_with_root
 from topo_tools.core.schema_map._levels import detect_levels
 from topo_tools.core.schema_map._target_schema import (
     TargetSchema,
@@ -99,7 +99,7 @@ def _load_plan(  # noqa: PLR0913, PLR0917
     if schema is not None:
         levels = detect_levels(conn, table, schema)
     else:
-        levels = sorted(detect_level_columns_or_single(conn, table))
+        levels = sorted(detect_levels_with_root(conn, table))
     if min_level is not None:
         levels = [n for n in levels if n >= min_level]
         if not levels:

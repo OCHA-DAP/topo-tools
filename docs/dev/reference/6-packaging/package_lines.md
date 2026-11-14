@@ -16,6 +16,10 @@ sidebar:
   naming convention assumed, the default when `name_field`/`code_field`
   are omitted) or via an explicit `name_field`/`code_field` pair, raising
   `ValueError` if no level is found.
+- With auto-detection, a whole-table-constant column family sharing the
+  detected levels' own naming style (e.g. `adm0_*` beside a detected
+  `adm1_*`/`adm2_*`) MUST be treated as its own coarsest level, dissolved
+  to a single row.
 
 ## Boundary extraction
 
@@ -47,13 +51,13 @@ sidebar:
   10-character limit. There is no `boundary_type` column: a row is
   exterior exactly when every `b_*` column is `NULL`, never shared.
 - `package-lines` MUST classify every shared row by the coarsest detected
-  level at which its two sides' code columns first differ, and every
-  exterior row one level coarser than the coarsest detected level
-  (`min(levels) - 1`), into a depth column (`adm_lvl` by default,
-  overridable via `depth_column`). An outer edge (`min(levels) - 1`, e.g.
-  -1) is unclassified: it MAY be a coastline or a land border with an area
-  outside the input. When adm0 is a detected level, depth 0 is a border
-  between two adm0 units.
+  level at which its two sides' code columns first differ, into a depth
+  column (`adm_lvl` by default, overridable via `depth_column`). An
+  exterior row MUST take the coarsest detected level's depth when that
+  level has a single unit (its outline), and one level coarser
+  (`min(levels) - 1`, e.g. -1) otherwise, where it MAY be a coastline or a
+  land border with an area outside the input. When adm0 is a detected
+  level with several units, depth 0 is a border between two adm0 units.
 - `package-lines` MUST raise `ValueError` if any finest-level unit is
   absent from every output row (matched internally by `fid`, dropped from
   the output once the `a_*`/`b_*` columns resolve each side's identity).

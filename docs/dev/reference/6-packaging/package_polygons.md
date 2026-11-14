@@ -17,6 +17,10 @@ sidebar:
   shape `schema-map`/`schema-fill` take, each containing a `{n}`
   placeholder, given together or not at all), raising `ValueError` if no
   level is found.
+- With auto-detection, a whole-table-constant column family sharing the
+  detected levels' own naming style (e.g. `adm0_*` beside a detected
+  `adm1_*`/`adm2_*`) MUST be treated as its own coarsest level, dissolved
+  to a single row.
 
 ## Dissolving
 
