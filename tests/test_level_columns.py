@@ -379,6 +379,28 @@ def test_detect_root_level_ignores_constant_depth_column(conn):
     assert root[1].identity_columns == ["adm0"]
 
 
+@pytest.mark.parametrize("with_adm0", [False, True])
+def test_detect_root_level_skips_empty_finer_level(conn, with_adm0):
+    """An all-NULL adm3 never becomes the root, nor hides a real adm0 root."""
+    adm0 = "'C0' AS adm0_pcode, " if with_adm0 else ""
+    conn.execute(f"""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, {adm0}*,
+               NULL::VARCHAR AS adm3_pcode, NULL::VARCHAR AS adm3_name
+        FROM (VALUES
+            ('C01', 'C0101'), ('C01', 'C0102'), ('C02', 'C0201'), ('C02', 'C0202')
+        ) AS v(adm1_pcode, adm2_pcode)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root = detect_root_level(conn, "t_01", level_columns)
+    if with_adm0:
+        assert root is not None
+        assert root[0] == 0
+        assert root[1].identity_columns == ["adm0_pcode"]
+    else:
+        assert root is None
+
+
 @pytest.mark.parametrize(("root", "expected"), [("adm1", 1), ("adm0", 0)])
 def test_detect_root_level_numbered_by_own_digit(conn, root, expected):
     """A constant root takes its own level number, not always 0."""

@@ -262,6 +262,15 @@ def detect_level_codes(conn: DuckDBPyConnection, table: str) -> dict[int, str]:
     return {display.get(level, level): column for level, column in codes.items()}
 
 
+def _has_value(conn: DuckDBPyConnection, table: str, column: str) -> bool:
+    """Check column holds at least one non-NULL value."""
+    found = conn.execute(f"""--sql
+        SELECT 1 FROM {quote_identifier(table)}
+        WHERE {quote_identifier(column)} IS NOT NULL LIMIT 1
+    """).fetchall()
+    return bool(found)
+
+
 def root_anchor(
     conn: DuckDBPyConnection, table: str, level_columns: dict[int, LevelColumns]
 ) -> tuple[str, str, str] | None:
@@ -285,8 +294,14 @@ def root_anchor(
         and len(c) > len(prefix) + len(suffix)
     } - used_anchors
     if all(a.isdigit() for a in used_anchors):
-        # A digit-anchored hierarchy ignores stray same-prefix columns like adm_lvl.
-        candidate_anchors = {a for a in candidate_anchors if a.isdigit()}
+        # Only a coarser digit can be a root; stray columns like adm_lvl never are.
+        coarsest = min(int(a) for a in used_anchors)
+        candidate_anchors = {
+            a for a in candidate_anchors if a.isdigit() and int(a) < coarsest
+        }
+    candidate_anchors = {
+        a for a in candidate_anchors if _has_value(conn, table, prefix + a + suffix)
+    }
     if len(candidate_anchors) != 1:
         return None
     return prefix, candidate_anchors.pop(), suffix
@@ -333,7 +348,7 @@ def detect_root_level(
         f"SELECT {counts_sql} FROM {quote_identifier(table)}"
     ).fetchone()
     root_columns = [c for c, n in zip(candidates, counts, strict=True) if n <= 1]
-    if not root_columns:
+    if 1 not in counts:
         return None
     return level, LevelColumns(
         group_by=[], identity_columns=root_columns, has_code=True, is_root=True
