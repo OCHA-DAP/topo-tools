@@ -423,3 +423,24 @@ def test_cli_overwrite_false_raises_on_existing_output(admin2_input, tmp_path):
     )
     assert result.exit_code != 0
     assert "output already exists" in result.output
+
+
+def test_generic_name_clash_raises(tmp_path):
+    """Two auto-detected families reducing to one name raise, never `name_1`."""
+    rows = [
+        {
+            "adm1_pcode": parent,
+            "adm1_name": parent.lower(),
+            "adm1name": f"{parent.lower()}x",
+            "adm2_pcode": f"{parent}A{j}",
+            "adm2_name": f"n{parent}{j}",
+            "adm2name": f"n{parent}{j}x",
+            "wkt": f"POLYGON(({x} 0,{x} 10,{x + 10} 10,{x + 10} 0,{x} 0))",
+        }
+        for parent, xs in (("P1", [0, 10]), ("P2", [20, 30]))
+        for j, x in enumerate(xs)
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    with pytest.raises(ValueError, match="reduces to unusable name 'name'"):
+        package_points(input_path, tmp_path / "points.parquet")

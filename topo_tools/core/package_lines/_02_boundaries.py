@@ -2,7 +2,7 @@
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.admin_columns import generic_families
+from topo_tools.core.admin_columns import check_generic_names, generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._level_columns import (
@@ -48,19 +48,14 @@ def _generic_names(
     families: dict[str, dict[int, str]], levels: list[int], code_columns: list
 ) -> dict[str, dict[int, str]]:
     """Rekey auto-detected families by the generic name package-points uses."""
-    renamed, sources = {}, {}
+    named = []
     for kind, per_level in families.items():
         lvl = max(per_level)
         code = code_columns[levels.index(lvl)] if lvl in levels else None
         generic = level_family_names({kind: per_level}, lvl, code)[per_level[lvl]]
-        if generic in renamed:
-            msg = (
-                f"column families {sources[generic]!r} and {kind!r} "
-                f"both reduce to {generic!r}"
-            )
-            raise ValueError(msg)
-        renamed[generic], sources[generic] = per_level, kind
-    return renamed
+        named.append((kind, generic, per_level))
+    check_generic_names([(kind, generic) for kind, generic, _ in named])
+    return {generic: per_level for _, generic, per_level in named}
 
 
 def _labels(

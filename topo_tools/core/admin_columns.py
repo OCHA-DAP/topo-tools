@@ -54,6 +54,18 @@ def template_families(
     return families
 
 
+def check_generic_names(
+    names: list[tuple[str, str]], reserved: set[str] = frozenset()
+) -> None:
+    """Raise ValueError if a (source, generic) name is empty, reserved, or shared."""
+    taken = {r.lower() for r in reserved}
+    for source, name in names:
+        if not name or name.lower() in taken:
+            msg = f"column family {source!r} reduces to unusable name {name!r}"
+            raise ValueError(msg)
+        taken.add(name.lower())
+
+
 def generic_families(
     columns: list[str],
     levels: list[int],
@@ -66,8 +78,7 @@ def generic_families(
 
     Raises ValueError if a name is empty, reserved, or shared, case-insensitively.
     """
-    taken = {r.lower() for r in reserved}
-    generic: dict[str, dict[int, str]] = {}
+    named = []
     for key, per_level in template_families(
         columns, levels, name_field, code_field
     ).items():
@@ -77,12 +88,9 @@ def generic_families(
             name = "name"
         else:
             name = key.split("{n}", 1)[1].strip("_")
-        if not name or name.lower() in taken:
-            msg = f"column family {key!r} reduces to unusable name {name!r}"
-            raise ValueError(msg)
-        taken.add(name.lower())
-        generic[name] = per_level
-    return generic
+        named.append((key, name, per_level))
+    check_generic_names([(key, name) for key, name, _ in named], reserved)
+    return {name: per_level for _, name, per_level in named}
 
 
 def _family_pattern(template: str) -> re.Pattern:

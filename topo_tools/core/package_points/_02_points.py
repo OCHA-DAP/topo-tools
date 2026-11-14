@@ -4,7 +4,7 @@ from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.admin_columns import generic_families
+from topo_tools.core.admin_columns import check_generic_names, generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
@@ -170,6 +170,10 @@ def main(  # noqa: PLR0913
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
         }
         renames = level_family_names(families, n, group_by[0] if group_by else None)
+        check_generic_names(
+            [(col, renames.get(col, col)) for col in own if col in dissolved_columns],
+            reserved={"fid", "geom", "geometry", depth_column},
+        )
         identity_sql = "".join(
             f', "{col}" AS "{renames.get(col, col)}"'
             for col in own

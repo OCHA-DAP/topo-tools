@@ -414,5 +414,11 @@ def test_min_level_above_every_level_raises(tmp_path):
 
 def test_generic_name_clash_raises():
     families = {"_name": {1: "adm1_name"}, "name": {1: "name_adm1"}}
-    with pytest.raises(ValueError, match="both reduce to 'name'"):
+    with pytest.raises(ValueError, match="reduces to unusable name 'name'"):
+        _generic_names(families, [1], ["adm1_pcode"])
+
+
+def test_generic_name_clash_is_case_insensitive():
+    families = {"_pcode": {1: "adm1_pcode"}, "_PCODE": {1: "adm1_PCODE"}}
+    with pytest.raises(ValueError, match="reduces to unusable name 'PCODE'"):
         _generic_names(families, [1], ["adm1_pcode"])
