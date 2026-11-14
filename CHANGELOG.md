@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-14
+
+### Added
+
+- `--min-level` on `package`, and `min_level` on `package`, `package-polygons`,
+  `package-points` and `package-lines`, leaves out levels and line rows below
+  it, raising if no level remains.
+- `schema-detect` reports `varying-column` (error) for a non-numeric column
+  with several values within one coarsest-level unit, which packaging would
+  drop, and `unusable-column-name` (error) for a column family that would get
+  an empty, reserved or shared output name. Either one stops `package` before
+  any output is written.
+
+### Changed
+
+- `package-points` writes only geometry, each level's identity columns under
+  one level-free name (e.g. `pcode`, `name`) and `adm_lvl`, with no ancestor
+  or metadata columns.
+- `package-lines` labels each row's `a_*`/`b_*` columns at the row's own
+  depth. An outer edge takes the coarsest level's depth when that level has a
+  single unit (its outline), else one level coarser.
+- Output identity names follow the source suffix after the level number
+  (`adm{n}_pcode` gives `pcode`, `adm{n}_name1` gives `name1`), falling back to
+  `code`/`name` for a field with none.
+- With auto-detection, a whole-table-constant column family named like the
+  detected levels (e.g. `adm0_*`) is its own level, numbered by its own digit,
+  so `package-polygons` writes an `_admin0` file and `package-points` a level-0
+  point for it.
+- `edge-mosaic` and `edge-match` count a code whose overlay ties for the top
+  vote as agreeing.
+
 ## [0.21.1] - 2026-11-14
 
 ### Fixed
@@ -1014,7 +1045,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...v0.20.0
