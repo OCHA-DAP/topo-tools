@@ -671,7 +671,7 @@ def _write_overlay_pcode_only(path, rows):
 
 
 def test_match_overrides_spatial_and_reports_mismatch(tmp_path):
-    """An input feature's own file mostly overlaps overlay A, but its code says B."""
+    """An input file's spatial vote picks overlay A, but its code says B."""
     overlays_path = tmp_path / "parents.parquet"
     _write_with_code(
         overlays_path,
@@ -683,7 +683,10 @@ def test_match_overrides_spatial_and_reports_mismatch(tmp_path):
     input_path = tmp_path / "children.parquet"
     _write_with_code(
         input_path,
-        [(1, "POLYGON((1 0, 10.5 0, 10.5 1, 1 1, 1 0))", "P2")],
+        [
+            (1, "POLYGON((1 0, 10.5 0, 10.5 1, 3 1, 1 1, 1 0))", "P2"),
+            (2, "POLYGON((1 1, 3 1, 3 2, 1 2, 1 1))", "P2"),
+        ],
     )
 
     output_path = tmp_path / "out.parquet"
@@ -710,7 +713,7 @@ def test_match_overrides_spatial_and_reports_mismatch(tmp_path):
         ]
     # Clipped to overlay B's sliver (x:10-10.5), not overlay A's larger x:1-3.
     assert area == pytest.approx(0.5, abs=1e-6)
-    assert sorted(kinds) == ["code-mismatch", "gap"]
+    assert sorted(kinds) == ["clip-empty", "code-mismatch", "code-mismatch", "gap"]
 
 
 def test_match_falls_back_when_code_unmatched(tmp_path):

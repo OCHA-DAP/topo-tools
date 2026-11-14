@@ -4,12 +4,14 @@ from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.admin_columns import check_generic_names, generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
-    detect_level_columns_or_single,
-    detect_root_level,
+    detect_levels_with_root,
+    fallback_families,
     group_families_by_level,
+    level_code_columns,
     level_family_names,
     verify_functional_cluster,
 )
@@ -52,67 +54,61 @@ def _level_group_by(
     schema: TargetSchema | None,
     level_columns: dict[int, LevelColumns] | None,
     n: int,
-    levels: list[int],
-    *,
-    allow_empty_root: bool = False,
+    families: dict[str, dict[int, str]],
 ) -> tuple[list[str], list[str]]:
-    """One level's dissolve group_by/exclude, from an explicit schema or auto-detect."""
+    """One level's dissolve group_by and own identity columns."""
+    own = [per_level[n] for per_level in families.values() if n in per_level]
     if schema is not None:
-        other_levels = [lvl for lvl in levels if lvl != n]
-        exclude = [schema.code_field.format(n=lvl) for lvl in other_levels] + [
-            schema.name_field.format(n=lvl) for lvl in other_levels
-        ]
-        return [schema.code_field.format(n=n)], exclude
+        return [schema.code_field.format(n=n)], own
 
     cluster = level_columns[n]
-    if (
-        not cluster.group_by
-        and len(level_columns) > 1
-        and not (n == 0 and allow_empty_root)
-    ):
+    if not cluster.group_by and len(level_columns) > 1 and not cluster.is_root:
         msg = f"no reliable group-by column detected for level {n}"
         raise ValueError(msg)
-    # An ancestor never survives under its own numbered name: a row
-    # already carries its own level via the depth column.
-    exclude = [
-        c
-        for lvl, cols in level_columns.items()
-        if lvl != n
-        for c in cols.identity_columns
-    ]
-    return cluster.group_by, exclude
+    return cluster.group_by, own or list(
+        dict.fromkeys(cluster.group_by + cluster.identity_columns)
+    )
 
 
-def _identity_families(
+def _identity_families(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     table: str,
     schema: TargetSchema | None,
     level_columns: dict[int, LevelColumns] | None,
     levels: list[int],
+    *,
+    depth_column: str,
 ) -> dict[str, dict[int, str]]:
     """Every level's own identity columns, keyed by the file's own naming for it.
 
-    An explicit schema always uses its own fixed code/name role names instead.
+    An explicit schema keys its fields as code/name and their siblings by suffix.
     """
     if schema is not None:
-        families: dict[str, dict[int, str]] = {"code": {}, "name": {}}
-        for n in levels:
-            families["code"][n] = schema.code_field.format(n=n)
-            families["name"][n] = schema.name_field.format(n=n)
-        return families
+        columns = [r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()]
+        return generic_families(
+            columns,
+            levels,
+            schema.name_field,
+            schema.code_field,
+            reserved={"fid", "geom", "geometry", depth_column},
+        )
     if level_columns is None or not any(
         cols.group_by for cols in level_columns.values()
     ):
         return {}
-    return group_families_by_level(conn, table, level_columns)
+    return group_families_by_level(conn, table, level_columns) or fallback_families(
+        level_columns, levels
+    )
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     levels: list[int],
     schema: TargetSchema | None,
     depth_column: str,
+    *,
+    min_level: int | None = None,
 ) -> None:
     """Dissolve `{name}_01` per level and union its label points into `{name}_02`.
 
@@ -126,66 +122,67 @@ def main(
         conn.execute(f'ALTER TABLE "{table_in}" DROP "{depth_column}"')
 
     level_columns: dict[int, LevelColumns] | None = None
-    root_injected = False
     if schema is None:
-        level_columns = detect_level_columns_or_single(conn, table_in)
-        root = detect_root_level(conn, table_in, level_columns)
-        if root is not None:
-            level_columns = {0: root, **level_columns}
-            levels = sorted({0, *levels})
-            root_injected = True
-    families = _identity_families(conn, table_in, schema, level_columns, levels)
+        level_columns = detect_levels_with_root(conn, table_in)
+    families = _identity_families(
+        conn, table_in, schema, level_columns, levels, depth_column=depth_column
+    )
 
-    point_tables = []
-    generalizable: set[str] | None = None
-    for n in levels:
-        group_by, exclude = _level_group_by(
-            schema, level_columns, n, levels, allow_empty_root=root_injected
+    codes = (
+        dict(
+            zip(
+                levels,
+                level_code_columns(level_columns, families, levels),
+                strict=True,
+            )
         )
+        if level_columns is not None
+        else {}
+    )
+
+    columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
+    selected = [lvl for lvl in levels if min_level is None or lvl >= min_level]
+    if not selected:
+        msg = f"no admin level at or above min_level {min_level}"
+        raise ValueError(msg)
+    point_tables = []
+    for n in selected:
+        group_by, own = _level_group_by(schema, level_columns, n, families)
         if schema is None and group_by:
             verify_functional_cluster(conn, table_in, group_by[0], group_by)
 
+        # Points carry only their own level's identity; metadata stays on polygons.
+        keep = {*group_by, *own, "fid", "geom"}
         dissolved = f"{name}_02_tmp{n}"
         dissolve_stage.main(
             conn,
             table_in,
             dissolved,
             group_by=group_by,
-            exclude=exclude,
+            exclude=[c for c in columns if c not in keep],
             target_schema=schema,
         )
         _check_row_count(conn, dissolved, table_in, group_by)
 
-        dissolved_columns = [
+        dissolved_columns = {
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
-        ]
-        # The synthetic root has nothing coarser to compare against, so
-        # it never seeds/consults `generalizable`; real levels still do.
-        if root_injected and n == 0:
-            allowed = set(dissolved_columns)
-        else:
-            if generalizable is None:
-                generalizable = set(dissolved_columns)
-            allowed = generalizable
-        own_rename = level_family_names(families, n, group_by[0] if group_by else None)
-        own_rename = {
-            col: generic
-            for col, generic in own_rename.items()
-            if col in dissolved_columns
         }
-        # A column dropped from a coarser level's own dissolve (e.g. a
-        # finest-level-only attribute) can never generalize across levels.
-        drop_cols = [
-            c for c in dissolved_columns if c not in allowed and c not in own_rename
-        ]
-        exclude_sql = ", ".join(f'"{c}"' for c in ["geom", *drop_cols])
-        rename_sql = ", ".join(f'"{old}" AS "{new}"' for old, new in own_rename.items())
-        rename_clause = f" RENAME ({rename_sql})" if rename_sql else ""
+        code = group_by[0] if group_by else codes.get(n)
+        renames = level_family_names(families, n, code)
+        check_generic_names(
+            [(col, renames.get(col, col)) for col in own if col in dissolved_columns],
+            reserved={"fid", "geom", "geometry", depth_column},
+        )
+        identity_sql = "".join(
+            f', "{col}" AS "{renames.get(col, col)}"'
+            for col in own
+            if col in dissolved_columns
+        )
 
         points = f"{name}_02_pts{n}"
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE "{points}" AS
-            SELECT * EXCLUDE ({exclude_sql}){rename_clause}, {n} AS "{depth_column}",
+            SELECT fid{identity_sql}, {n} AS "{depth_column}",
                    (ST_MaximumInscribedCircle(geom)).center AS geom
             FROM "{dissolved}"
         """)

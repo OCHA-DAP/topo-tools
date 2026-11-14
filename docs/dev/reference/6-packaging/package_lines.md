@@ -16,6 +16,10 @@ sidebar:
   naming convention assumed, the default when `name_field`/`code_field`
   are omitted) or via an explicit `name_field`/`code_field` pair, raising
   `ValueError` if no level is found.
+- With auto-detection, a whole-table-constant column family sharing the
+  detected levels' own naming style (e.g. `adm0_*` beside a detected
+  `adm1_*`/`adm2_*`) MUST be treated as its own coarsest level, dissolved
+  to a single row.
 
 ## Boundary extraction
 
@@ -35,20 +39,26 @@ sidebar:
   into atomic `LineString` rows; a unit with multiple disjoint exterior
   segments MUST produce one row per segment, never a single
   `MultiLineString`.
-- Every output row MUST carry each side's own finest-level identity under
+- Every output row MUST carry each side's identity at the row's own depth
+  (the coarsest detected level for an outer edge) under
   single-letter-prefixed generic columns, `a_*` for one side and `b_*` for
   the other (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), one pair of
-  columns per identity kind the finest level's own naming family
-  detects (`group_families_by_level()`/`level_family_names()`, or an
-  explicit schema's fixed `code`/`name`), never a raw `fid`. Single-letter
+  columns per identity kind the detected levels' naming families
+  detect (`group_families_by_level()`/`level_family_names()`, or, for an
+  explicit schema, `generic_families()`: each family's suffix after the
+  level number, e.g. `pcode`, `name`, `name1`, falling back to
+  `code`/`name` for a field with none, e.g. `GID_{n}`), never a raw `fid`. Single-letter
   prefixes keep every generated field name within a Shapefile DBF field's
   10-character limit. There is no `boundary_type` column: a row is
   exterior exactly when every `b_*` column is `NULL`, never shared.
 - `package-lines` MUST classify every shared row by the coarsest detected
-  level at which its two sides' code columns first differ, and every
-  exterior row one level coarser than the coarsest detected level
-  (`min(levels) - 1`), into a depth column (`adm_lvl` by default,
-  overridable via `depth_column`).
+  level at which its two sides' code columns first differ, into a depth
+  column (`adm_lvl` by default, overridable via `depth_column`). An
+  exterior row MUST take the coarsest detected level's depth when that
+  level has a single unit (its outline), and one level coarser
+  (`min(levels) - 1`, e.g. -1) otherwise, where it MAY be a coastline or a
+  land border with an area outside the input. When adm0 is a detected
+  level with several units, depth 0 is a border between two adm0 units.
 - `package-lines` MUST raise `ValueError` if any finest-level unit is
   absent from every output row (matched internally by `fid`, dropped from
   the output once the `a_*`/`b_*` columns resolve each side's identity).
@@ -75,6 +85,8 @@ sidebar:
 - `name_field`/`code_field` MUST be given together, or both omitted; when
   both are omitted, `package-lines` MUST fall back to full structural
   auto-detection of every level.
+- `min_level`, if given, MUST leave out every row whose depth is below it,
+  and MUST raise `ValueError` if no level is at or above it.
 
 ## Examples
 

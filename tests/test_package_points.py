@@ -181,6 +181,33 @@ def test_word_anchored_constant_root_becomes_its_own_level_zero_row(
     assert other_levels == [("P1", None), ("P2", None)]
 
 
+@pytest.mark.parametrize("with_names", [True, False])
+def test_bare_constant_root_code_lands_under_code(tmp_path, with_names):
+    """A bare `adm0` root column pairs with the finer bare codes, never `name`."""
+    rows = [
+        {
+            "adm0": "Z",
+            **({"adm0_name": "Zed"} if with_names else {}),
+            "adm1": r["adm1_pcode"],
+            **({"adm1_name": f"n{r['adm1_pcode']}"} if with_names else {}),
+            "adm2": r["adm2_pcode"],
+            **({"adm2_name": f"n{r['adm2_pcode']}"} if with_names else {}),
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "bare.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "points.parquet"
+    package_points(input_path, output_path)
+
+    with duckdb.connect() as conn:
+        level0 = conn.execute(f"""
+            SELECT columns('^(code|name)$') FROM '{output_path}' WHERE adm_lvl = 0
+        """).fetchall()
+    assert level0 == ([("Z", "Zed")] if with_names else [("Z",)])
+
+
 def test_cli_help():
     result = CliRunner().invoke(cli, ["package-points", "--help"])
     assert result.exit_code == 0
@@ -225,7 +252,7 @@ def test_every_point_covered_by_its_own_polygon(admin2_input, tmp_path):
         uncovered = conn.execute(f"""
             SELECT COUNT(*) FROM '{output_path}' p
             JOIN '{admin2_input}' src
-              ON src.adm2_pcode IS NOT DISTINCT FROM p.code
+              ON src.adm2_pcode IS NOT DISTINCT FROM p.pcode
             WHERE p.adm_lvl = 2
               AND NOT ST_Covers(ST_SetCRS(src.geom, 'OGC:CRS84'), p.geometry)
         """).fetchone()[0]
@@ -251,9 +278,90 @@ def test_own_level_code_is_generic_no_ancestor_column(admin2_input, tmp_path):
                 f"DESCRIBE SELECT * FROM '{output_path}'"
             ).fetchall()
         }
-    assert {"code", "adm_lvl", "geometry"} <= columns
+    assert {"pcode", "adm_lvl", "geometry"} <= columns
     assert "adm1_pcode" not in columns
     assert "adm2_pcode" not in columns
+
+
+def test_explicit_schema_keeps_own_level_siblings_drops_ancestors(tmp_path):
+    """Each point carries only its own level's code/name/siblings and depth."""
+    rows = [
+        {
+            "adm0_id": "Z",
+            "adm0_name": "Zed",
+            "adm0_name1": "Zedd",
+            "adm0_pcode": "ZZ",
+            "adm1_id": r["adm1_pcode"],
+            "adm1_name": f"n{r['adm1_pcode']}",
+            "adm1_name1": f"m{r['adm1_pcode']}",
+            "adm1_pcode": f"x{r['adm1_pcode']}",
+            "adm2_id": r["adm2_pcode"],
+            "adm2_name": f"n{r['adm2_pcode']}",
+            "adm2_name1": f"m{r['adm2_pcode']}",
+            "adm2_pcode": f"x{r['adm2_pcode']}",
+            "valid_on": "2020-01-01",
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "admin2.parquet"
+    output_path = tmp_path / "points.parquet"
+    _write_synthetic(input_path, rows)
+    package_points(
+        input_path, output_path, name_field="adm{n}_name", code_field="adm{n}_id"
+    )
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        columns = [
+            r[0]
+            for r in conn.execute(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
+        ]
+        out = conn.execute(f"""
+            SELECT adm_lvl, id, name, name1, pcode FROM '{output_path}'
+            ORDER BY adm_lvl, id
+        """).fetchall()
+    assert columns == ["geometry", "id", "name", "name1", "pcode", "adm_lvl"]
+    assert out == [
+        (0, "Z", "Zed", "Zedd", "ZZ"),
+        (1, "P1", "nP1", "mP1", "xP1"),
+        (1, "P2", "nP2", "mP2", "xP2"),
+        (2, "A1", "nA1", "mA1", "xA1"),
+        (2, "A2", "nA2", "mA2", "xA2"),
+        (2, "B1", "nB1", "mB1", "xB1"),
+    ]
+
+
+def test_unanchored_level_writes_generic_code_and_name(tmp_path):
+    """A level with no naming anchor writes its code and name as code/name."""
+    rows = [
+        {
+            "adm0_pcode": "Z",
+            "adm0_name": "Zed",
+            "adm1_pcode": r["adm2_pcode"],
+            "adm1_name": f"n{r['adm2_pcode']}",
+            "valid_on": "2020",
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "admin1.parquet"
+    output_path = tmp_path / "points.parquet"
+    _write_synthetic(input_path, rows)
+    package_points(input_path, output_path)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        result = conn.execute(
+            f"SELECT * EXCLUDE geometry FROM '{output_path}' ORDER BY ALL"
+        )
+        columns = [d[0] for d in result.description]
+        out = result.fetchall()
+    assert columns == ["code", "name", "adm_lvl"]
+    assert out == [("A1", "nA1", 1), ("A2", "nA2", 1), ("B1", "nB1", 1)]
+
+
+def test_min_level_above_every_level_raises(admin2_input, tmp_path):
+    with pytest.raises(ValueError, match="no admin level at or above min_level 9"):
+        package_points(admin2_input, tmp_path / "points.parquet", min_level=9)
 
 
 def test_custom_depth_column(admin2_input, tmp_path):
@@ -292,7 +400,7 @@ def test_existing_depth_column_replaced(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         rows = conn.execute(
-            f"SELECT code, adm_lvl FROM '{output_path}' ORDER BY code"
+            f"SELECT pcode, adm_lvl FROM '{output_path}' ORDER BY pcode"
         ).fetchall()
     assert rows == [("A1", 2), ("A2", 2), ("B1", 2), ("P1", 1), ("P2", 1)]
 
@@ -342,3 +450,24 @@ def test_cli_overwrite_false_raises_on_existing_output(admin2_input, tmp_path):
     )
     assert result.exit_code != 0
     assert "output already exists" in result.output
+
+
+def test_generic_name_clash_raises(tmp_path):
+    """Two auto-detected families reducing to one name raise, never `name_1`."""
+    rows = [
+        {
+            "adm1_pcode": parent,
+            "adm1_name": parent.lower(),
+            "adm1name": f"{parent.lower()}x",
+            "adm2_pcode": f"{parent}A{j}",
+            "adm2_name": f"n{parent}{j}",
+            "adm2name": f"n{parent}{j}x",
+            "wkt": f"POLYGON(({x} 0,{x} 10,{x + 10} 10,{x + 10} 0,{x} 0))",
+        }
+        for parent, xs in (("P1", [0, 10]), ("P2", [20, 30]))
+        for j, x in enumerate(xs)
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    with pytest.raises(ValueError, match="reduces to unusable name 'name'"):
+        package_points(input_path, tmp_path / "points.parquet")

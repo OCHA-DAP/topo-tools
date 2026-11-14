@@ -54,6 +54,45 @@ def template_families(
     return families
 
 
+class ColumnNameError(ValueError):
+    """A column family reduces to an empty, reserved or shared output name."""
+
+
+def check_generic_names(
+    names: list[tuple[str, str]], reserved: set[str] = frozenset()
+) -> None:
+    """Raise ColumnNameError if a (source, generic) name is empty, reserved, shared."""
+    taken = {r.lower() for r in reserved}
+    for source, name in names:
+        if not name or name.lower() in taken:
+            msg = f"column family {source!r} reduces to unusable name {name!r}"
+            raise ColumnNameError(msg)
+        taken.add(name.lower())
+
+
+def generic_families(
+    columns: list[str],
+    levels: list[int],
+    name_field: str,
+    code_field: str,
+    *,
+    reserved: set[str] = frozenset(),
+) -> dict[str, dict[int, str]]:
+    """Key template families by their suffix (pcode, name1), else code or name.
+
+    Raises ValueError if a name is empty, reserved, or shared, case-insensitively.
+    """
+    fallback = {code_field: "code", name_field: "name"}
+    named = []
+    for key, per_level in template_families(
+        columns, levels, name_field, code_field
+    ).items():
+        name = key.split("{n}", 1)[1].strip("_") or fallback.get(key, "")
+        named.append((key, name, per_level))
+    check_generic_names([(key, name) for key, name, _ in named], reserved)
+    return {name: per_level for _, name, per_level in named}
+
+
 def _family_pattern(template: str) -> re.Pattern:
     """Match a template's own column and its siblings (`adm2_name1`, `GID_2_1`)."""
     before, _, after = template.partition("{n}")

@@ -84,6 +84,10 @@ sidebar:
 - `aggregations` (CLI: repeatable `--aggregation column=function`) MUST be
   passed through to `package-polygons` only; `package-points` and
   `package-lines` have no equivalent override.
+- `min_level` (CLI: `--min-level`), if given, MUST be passed to all three
+  sub-calls: `package-polygons` writes no level below it, and
+  `package-points`/`package-lines` write no row whose depth is below it,
+  outer edges included.
 - `output_name_field`/`output_code_field` (CLI:
   `--output-name-field`/`--output-code-field`) MUST be passed through to
   `package-polygons` only; `package-points` and `package-lines` write

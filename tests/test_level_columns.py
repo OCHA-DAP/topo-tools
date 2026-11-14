@@ -4,11 +4,13 @@ import duckdb
 import pytest
 
 from topo_tools.core.schema_map._level_columns import (
+    LevelColumns,
     detect_leaf_level,
     detect_level_columns,
     detect_root_level,
     group_families_by_level,
     is_level_identity_column,
+    level_code_columns,
     verify_functional_cluster,
 )
 
@@ -356,8 +358,84 @@ def test_detect_root_level_digit_anchored(conn):
     level_columns = detect_level_columns(conn, "t_01")
     root = detect_root_level(conn, "t_01", level_columns)
     assert root is not None
-    assert set(root.identity_columns) == {"adm0_pcode", "adm0_name"}
-    assert root.group_by == []
+    level, cols = root
+    assert level == 0
+    assert set(cols.identity_columns) == {"adm0_pcode", "adm0_name"}
+    assert cols.group_by == []
+    assert cols.is_root
+
+
+def test_detect_root_level_ignores_constant_depth_column(conn):
+    """A bare-named root is still found beside a constant adm_lvl column."""
+    conn.execute("""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, 'C0' AS adm0, 2 AS adm_lvl, *
+        FROM (VALUES
+            ('C01', 'C0101'), ('C01', 'C0102'), ('C02', 'C0201'), ('C02', 'C0202')
+        ) AS v(adm1, adm2)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root = detect_root_level(conn, "t_01", level_columns)
+    assert root is not None
+    assert root[0] == 0
+    assert root[1].identity_columns == ["adm0"]
+
+
+@pytest.mark.parametrize("with_adm0", [False, True])
+def test_detect_root_level_skips_empty_finer_level(conn, with_adm0):
+    """An all-NULL adm3 never becomes the root, nor hides a real adm0 root."""
+    adm0 = "'C0' AS adm0_pcode, " if with_adm0 else ""
+    conn.execute(f"""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, {adm0}*,
+               NULL::VARCHAR AS adm3_pcode, NULL::VARCHAR AS adm3_name
+        FROM (VALUES
+            ('C01', 'C0101'), ('C01', 'C0102'), ('C02', 'C0201'), ('C02', 'C0202')
+        ) AS v(adm1_pcode, adm2_pcode)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root = detect_root_level(conn, "t_01", level_columns)
+    if with_adm0:
+        assert root is not None
+        assert root[0] == 0
+        assert root[1].identity_columns == ["adm0_pcode"]
+    else:
+        assert root is None
+
+
+def test_level_code_columns_root_skips_next_level_name():
+    """A root's code follows the next level's code, even when its name sorts first."""
+    level_columns = {
+        0: LevelColumns(
+            group_by=[], identity_columns=["adm0", "adm0_name"], is_root=True
+        ),
+        1: LevelColumns(
+            group_by=["adm1_name", "adm1"],
+            identity_columns=["adm1_name", "adm1"],
+            name_column="adm1_name",
+        ),
+    }
+    families = {
+        "": {0: "adm0", 1: "adm1"},
+        "_name": {0: "adm0_name", 1: "adm1_name"},
+    }
+    assert level_code_columns(level_columns, families, [0, 1])[0] == "adm0"
+
+
+@pytest.mark.parametrize(("root", "expected"), [("adm1", 1), ("adm0", 0)])
+def test_detect_root_level_numbered_by_own_digit(conn, root, expected):
+    """A constant root takes its own level number, not always 0."""
+    conn.execute(f"""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, 'C0' AS {root}_pcode, *
+        FROM (VALUES
+            ('P1', 'A1'), ('P1', 'A2'), ('P2', 'B1')
+        ) AS v(adm2_pcode, adm3_pcode)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root_level = detect_root_level(conn, "t_01", level_columns)
+    assert root_level is not None
+    assert root_level[0] == expected
 
 
 def test_detect_root_level_word_anchored(conn):
@@ -372,7 +450,9 @@ def test_detect_root_level_word_anchored(conn):
     level_columns = detect_level_columns(conn, "t_01")
     root = detect_root_level(conn, "t_01", level_columns)
     assert root is not None
-    assert set(root.identity_columns) == {"country_code", "country_name"}
+    level, cols = root
+    assert level == min(level_columns) - 1
+    assert set(cols.identity_columns) == {"country_code", "country_name"}
 
 
 def test_detect_level_columns_finds_trailing_name_only_leaf(conn):

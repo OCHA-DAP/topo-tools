@@ -17,7 +17,7 @@ from topo_tools.core.io import (
 from topo_tools.core.package_lines import _01_inputs as inputs
 from topo_tools.core.package_lines import _02_boundaries as boundaries_stage
 from topo_tools.core.package_lines import _03_outputs as outputs
-from topo_tools.core.schema_map._level_columns import detect_level_columns_or_single
+from topo_tools.core.schema_map._level_columns import detect_levels_with_root
 from topo_tools.core.schema_map._levels import detect_levels
 from topo_tools.core.schema_map._target_schema import resolve_explicit_target_schema
 
@@ -39,6 +39,7 @@ def package_lines(  # noqa: PLR0913
     code_field: str | None = None,
     *,
     depth_column: str = "adm_lvl",
+    min_level: int | None = None,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
     overwrite: bool = True,
@@ -83,8 +84,10 @@ def package_lines(  # noqa: PLR0913
                 if schema is not None:
                     levels = detect_levels(conn, f"{name}_01", schema)
                 else:
-                    levels = sorted(detect_level_columns_or_single(conn, f"{name}_01"))
-                boundaries_stage.main(conn, name, levels, schema, depth_column)
+                    levels = sorted(detect_levels_with_root(conn, f"{name}_01"))
+                boundaries_stage.main(
+                    conn, name, levels, schema, depth_column, min_level=min_level
+                )
             elif s == "outputs":
                 outputs.main(conn, name, output_path, debug=debug)
         maybe_export_debug_tables(

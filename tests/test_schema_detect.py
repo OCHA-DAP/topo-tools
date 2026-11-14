@@ -86,7 +86,9 @@ def test_family_at_one_level_is_not_a_mismatch(tmp_path):
 
 def test_level_skipped(tmp_path):
     select = "SELECT * EXCLUDE (adm2_pcode, adm2_name, adm2_name1) FROM base"
-    assert ("level-skipped", "error", 2, None) in _kinds(tmp_path, select, **_FIELDS)
+    kinds = _kinds(tmp_path, select, **_FIELDS)
+    assert ("level-skipped", "error", 2, None) in kinds
+    assert "unusable-column-name" not in {kind for kind, *_ in kinds}
 
 
 def test_multiple_parents(tmp_path):
@@ -108,6 +110,42 @@ def test_orphan_child(tmp_path):
     """
     assert _kinds(tmp_path, select, **_FIELDS) == {
         ("orphan-child", "error", 2, "adm2_pcode")
+    }
+
+
+@pytest.mark.parametrize("fields", [_FIELDS, {}], ids=["explicit", "structural"])
+def test_varying_column(tmp_path, fields):
+    """Text varying within a coarsest unit is an error; constant or numeric is not."""
+    select = """--sql
+        SELECT *, 'en' AS lang, adm3_pcode AS valid_on, hash(adm3_pcode) AS n
+        FROM base
+    """
+    assert _kinds(tmp_path, select, **fields) == {
+        ("varying-column", "error", 0, "valid_on")
+    }
+
+
+def test_varying_column_skips_blank_coarsest_code(tmp_path):
+    """Rows with no coarsest code are not one unit; odd names stay quoted."""
+    select = """--sql
+        SELECT * REPLACE (CASE WHEN adm2_pcode = 'XY11' THEN NULL
+                               ELSE adm0_pcode END AS adm0_pcode),
+               CASE WHEN adm2_pcode = 'XY11' THEN adm3_pcode ELSE 'x' END
+                   AS "it's 100%"
+        FROM base
+    """
+    kinds = _kinds(tmp_path, select, **_FIELDS)
+    assert not [k for k in kinds if k[0] in {"varying-column", "check-failed"}]
+
+
+def test_varying_column_single_level(tmp_path):
+    select = """--sql
+        SELECT adm2_pcode AS adm1_pcode, adm2_name AS adm1_name,
+               adm3_pcode AS note, geom
+        FROM base
+    """
+    assert _kinds(tmp_path, select, **_FIELDS) == {
+        ("varying-column", "error", 1, "note")
     }
 
 
@@ -170,3 +208,36 @@ def test_steps(tmp_path):
     for step in ["inputs", "levels", "checks", "outputs"]:
         detect(path, out, **_FIELDS, tmp_dir=tmp_path / "work", step=step)
     assert {r["kind"] for r in _read(out)} == {"column-set-mismatch"}
+
+
+def test_unusable_column_name_explicit(tmp_path):
+    """A bare level-numbered family leaves packaging no name for its output column."""
+    select = """--sql
+        SELECT *, adm0_pcode AS adm0, adm1_pcode AS adm1, adm2_pcode AS adm2,
+               adm3_pcode AS adm3
+        FROM base
+    """
+    assert ("unusable-column-name", "error", None, None) in _kinds(
+        tmp_path, select, **_FIELDS
+    )
+
+
+def test_bare_constant_root_code_is_usable(tmp_path):
+    """A bare `adm0` root column pairs with the finer bare codes, no clash with name."""
+    select = """--sql
+        SELECT adm0_pcode AS adm0, adm0_name, adm1_pcode AS adm1, adm1_name,
+               adm2_pcode AS adm2, adm2_name, adm3_pcode AS adm3, adm3_name, geom
+        FROM base
+    """
+    kinds = {kind for kind, *_ in _kinds(tmp_path, select)}
+    assert "unusable-column-name" not in kinds
+
+
+def test_unusable_column_name_structural(tmp_path):
+    """Two auto-detected families reducing to one output name are reported."""
+    select = """--sql
+        SELECT *, adm0_name AS adm0name, adm1_name AS adm1name,
+               adm2_name AS adm2name, adm3_name AS adm3name
+        FROM base
+    """
+    assert ("unusable-column-name", "error", None, None) in _kinds(tmp_path, select)

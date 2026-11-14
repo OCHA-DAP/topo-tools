@@ -4,6 +4,7 @@ import pytest
 
 from topo_tools.core.admin_columns import (
     canonical_order,
+    generic_families,
     output_renames,
     sibling_name,
 )
@@ -113,3 +114,32 @@ def test_output_renames_rejects_collision():
             ("adm{n}_name", "adm{n}_code"),
             (None, "adm{n}_pcode"),
         )
+
+
+def test_generic_families_names_families_by_suffix():
+    columns = ["adm1_id", "adm1_name", "adm1_name1", "adm1_pcode", "other"]
+    assert generic_families(columns, [1], "adm{n}_name", "adm{n}_id") == {
+        "id": {1: "adm1_id"},
+        "name": {1: "adm1_name"},
+        "name1": {1: "adm1_name1"},
+        "pcode": {1: "adm1_pcode"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("extra", "reserved"),
+    [("ADM1_pcode", set()), ("ADM1_FID", {"fid"}), ("ADM1_", set())],
+    ids=["case-insensitive", "reserved", "empty"],
+)
+def test_generic_families_rejects_unusable_names(extra, reserved):
+    columns = ["ADM1_PCODE", "ADM1_EN", extra]
+    with pytest.raises(ValueError, match="unusable name"):
+        generic_families(columns, [1], "ADM{n}_EN", "ADM{n}_PCODE", reserved=reserved)
+
+
+def test_generic_families_falls_back_to_code_and_name_without_suffix():
+    columns = ["GID_1", "NAME_1"]
+    assert generic_families(columns, [1], "NAME_{n}", "GID_{n}") == {
+        "code": {1: "GID_1"},
+        "name": {1: "NAME_1"},
+    }

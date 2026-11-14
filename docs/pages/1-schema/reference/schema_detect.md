@@ -15,7 +15,7 @@ topo-tools schema-detect [OPTIONS] INPUT_FILE [ISSUES_FILE]
 
 ## Description
 
-Checks that admin levels can be detected with none skipped, that every level has the same set of columns named the same way, that each code sits under exactly one parent code, and that no code has a blank parent. Writes the problems found without changing the layer, even when there are none. ISSUES_FILE defaults to INPUT_FILE with a "_schema_issues" suffix, as Parquet, or CSV for a .csv name.
+Checks that admin levels can be detected with none skipped, that every level has the same set of columns named the same way, that each code sits under exactly one parent code, that no code has a blank parent, that no text column outside the levels has several values within one coarsest-level unit, and that packaging can give every level column family its own output name. Writes the problems found without changing the layer, even when there are none. ISSUES_FILE defaults to INPUT_FILE with a "_schema_issues" suffix, as Parquet, or CSV for a .csv name.
 
 ## Options
 

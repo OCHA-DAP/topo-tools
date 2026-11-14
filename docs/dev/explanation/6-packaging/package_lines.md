@@ -79,21 +79,24 @@ multi-part/archipelago fid, and a corner-only touch).
    fid's shared adjacency can itself be a `MultiLineString`), then classify
    every row: a shared row's depth is the coarsest detected level at which
    its two sides' own code columns first differ; an exterior row's depth
-   is one level coarser than the coarsest detected level (`min(levels) -
-   1`, not the coarsest detected level itself, since `levels` can include
-   a genuine level 0 for a multi-country file whose admin0 codes vary, and
-   hardcoding depth `0` for exterior rows would then collide with a real
-   international shared-boundary classification).
+   is the coarsest detected level when that level has a single unit,
+   since every outer edge is then that unit's outline, and one level
+   coarser (`min(levels) - 1`) otherwise, so it never collides with a
+   shared border between two units of the coarsest level (e.g. two adm0
+   units in a multi-country file).
 7. Raise `ValueError` if any finest-level fid is absent from every output
    row (as `left_fid` or `right_fid`), catching a fid silently dropped
    somewhere in the pipeline. A fid fully enclosed by neighbors (zero
    exterior boundary) can only ever appear as `right_fid`, since candidate
    pairs are generated with `a.fid < b.fid`; the check accepts either
    column, not `left_fid` alone.
-8. Resolve each side's `fid` to the finest level's own detected identity
-   families (`group_families_by_level()`/`level_family_names()`, the same
-   naming-anchor mechanism `package-points` uses, or an explicit schema's
-   fixed `code`/`name`), one column pair per family under `a_*`/`b_*`
+8. Resolve each side's `fid` to the detected identity families at the
+   row's own depth, the coarsest level for an outer edge
+   (`group_families_by_level()`/`level_family_names()`, the same
+   naming-anchor mechanism `package-points` uses, or, for an explicit
+   schema, `generic_families()`: each family's suffix after the level
+   number, e.g. `pcode`, `name`, `name1`, falling back to `code`/`name` for
+   a field with none, e.g. `GID_{n}`), one column pair per family under `a_*`/`b_*`
    (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), then drop
    `left_fid`/`right_fid` from the final output: `fid` is a fresh
    `row_number()` per run, not a stable identifier a caller could join

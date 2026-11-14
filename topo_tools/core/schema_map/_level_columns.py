@@ -29,6 +29,7 @@ class LevelColumns:
     identity_columns: list[str]
     has_code: bool = True
     name_column: str | None = None
+    is_root: bool = False
 
 
 def _common_prefix_suffix(names: list[str]) -> tuple[str, str]:
@@ -261,6 +262,15 @@ def detect_level_codes(conn: DuckDBPyConnection, table: str) -> dict[int, str]:
     return {display.get(level, level): column for level, column in codes.items()}
 
 
+def _has_value(conn: DuckDBPyConnection, table: str, column: str) -> bool:
+    """Check column holds at least one non-NULL value."""
+    found = conn.execute(f"""--sql
+        SELECT 1 FROM {quote_identifier(table)}
+        WHERE {quote_identifier(column)} IS NOT NULL LIMIT 1
+    """).fetchall()
+    return bool(found)
+
+
 def root_anchor(
     conn: DuckDBPyConnection, table: str, level_columns: dict[int, LevelColumns]
 ) -> tuple[str, str, str] | None:
@@ -283,6 +293,15 @@ def root_anchor(
         and c.endswith(suffix)
         and len(c) > len(prefix) + len(suffix)
     } - used_anchors
+    if all(a.isdigit() for a in used_anchors):
+        # Only a coarser digit can be a root; stray columns like adm_lvl never are.
+        coarsest = min(int(a) for a in used_anchors)
+        candidate_anchors = {
+            a for a in candidate_anchors if a.isdigit() and int(a) < coarsest
+        }
+    candidate_anchors = {
+        a for a in candidate_anchors if _has_value(conn, table, prefix + a + suffix)
+    }
     if len(candidate_anchors) != 1:
         return None
     return prefix, candidate_anchors.pop(), suffix
@@ -290,18 +309,23 @@ def root_anchor(
 
 def detect_root_level(
     conn: DuckDBPyConnection, table: str, level_columns: dict[int, LevelColumns]
-) -> LevelColumns | None:
-    """Detect a coarser, whole-table-constant level one below the finest one.
+) -> tuple[int, LevelColumns] | None:
+    """Detect a coarser, whole-table-constant level and its level number.
 
-    Completes the hierarchy via the naming style already established by
-    the detected levels; `None` if no such family exists or isn't constant.
+    Named like the detected levels, numbered by its own digit when coarser, else
+    one above the coarsest; `None` if no such family exists or isn't constant.
     """
-    if not level_columns:
+    if not level_columns or min(level_columns) < 1:
         return None
     root = root_anchor(conn, table, level_columns)
     if root is None:
         return None
     prefix, root_digits, suffix = root
+    coarsest = min(level_columns)
+    digit = _LEVEL_DIGIT_RE.search(root_digits)
+    level = int(digit.group()) if digit else coarsest - 1
+    if level >= coarsest:
+        level = coarsest - 1
 
     table_columns = [
         r[0] for r in conn.execute(f"DESCRIBE {quote_identifier(table)}").fetchall()
@@ -324,9 +348,11 @@ def detect_root_level(
         f"SELECT {counts_sql} FROM {quote_identifier(table)}"
     ).fetchone()
     root_columns = [c for c, n in zip(candidates, counts, strict=True) if n <= 1]
-    if not root_columns:
+    if 1 not in counts:
         return None
-    return LevelColumns(group_by=[], identity_columns=root_columns, has_code=True)
+    return level, LevelColumns(
+        group_by=[], identity_columns=root_columns, has_code=True, is_root=True
+    )
 
 
 def _is_parent_scoped_unique(
@@ -397,11 +423,12 @@ def group_families_by_level(
 ) -> dict[str, dict[int, str]]:
     """Group every level's identity columns by shared naming kind, across levels."""
     anchors = detect_level_anchors(conn, table)
-    if 0 in level_columns and 0 not in anchors:
-        real_levels = {k: v for k, v in level_columns.items() if k != 0}
+    root_level = next((n for n, c in level_columns.items() if c.is_root), None)
+    if root_level is not None and root_level not in anchors:
+        real_levels = {k: v for k, v in level_columns.items() if not v.is_root}
         root = root_anchor(conn, table, real_levels)
         if root is not None:
-            anchors[0] = root
+            anchors[root_level] = root
     families: dict[str, dict[int, str]] = {}
     for level, cols in level_columns.items():
         if level not in anchors:
@@ -411,6 +438,59 @@ def group_families_by_level(
             kind = _strip_anchor(column, prefix, anchor, suffix)
             families.setdefault(kind, {})[level] = column
     return families
+
+
+def detect_levels_with_root(
+    conn: DuckDBPyConnection, table: str
+) -> dict[int, LevelColumns]:
+    """detect_level_columns_or_single(), plus a whole-table-constant root as level 0."""
+    level_columns = detect_level_columns_or_single(conn, table)
+    root = detect_root_level(conn, table, level_columns)
+    if root is None:
+        return level_columns
+    level, cols = root
+    return {level: cols, **level_columns}
+
+
+def fallback_families(
+    level_columns: dict[int, LevelColumns], levels: list[int]
+) -> dict[str, dict[int, str]]:
+    """Each level's own code and name column as `code`/`name`, without anchors."""
+    families: dict[str, dict[int, str]] = {}
+    for n in levels:
+        cols = level_columns.get(n)
+        if cols is None:
+            continue
+        code = next((c for c in cols.group_by if c != cols.name_column), None)
+        if code is not None:
+            families.setdefault("code", {})[n] = code
+        if cols.name_column is not None:
+            families.setdefault("name", {})[n] = cols.name_column
+    return families
+
+
+def level_code_columns(
+    level_columns: dict[int, LevelColumns],
+    families: dict[str, dict[int, str]],
+    levels: list[int],
+) -> list[str | None]:
+    """Each level's code column; a constant root's sits in the next level's family."""
+    codes = {n: c.group_by[0] for n, c in level_columns.items() if c.group_by}
+    root = next((n for n, c in level_columns.items() if c.is_root), None)
+    if root is not None and codes:
+        below = level_columns[min(codes)]
+        next_code = next(
+            (c for c in below.group_by if c != below.name_column), codes[min(codes)]
+        )
+        codes[root] = next(
+            (
+                per_level.get(root)
+                for per_level in families.values()
+                if per_level.get(min(codes)) == next_code
+            ),
+            None,
+        )
+    return [codes.get(n) for n in levels]
 
 
 def level_family_names(

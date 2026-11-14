@@ -29,8 +29,9 @@ sidebar:
   an explicit pair. Otherwise each level MUST hold its detected identity
   columns plus any column matching its naming anchor ignoring case and
   separators, and a whole-table-constant root level
-  (`core.schema_map.detect_root_level()`) MUST be added one level above the
-  coarsest.
+  (`core.schema_map.detect_root_level()`) MUST be added at its own anchor's
+  level number when that is coarser than every detected level (`adm1_*`
+  above `adm2_*`/`adm3_*` at 1), else one level above the coarsest.
 - A level's code column MUST be the one in the naming family most levels
   use for their code.
 - `levels-undetected` MUST also be reported, with the same reason, when
@@ -48,6 +49,8 @@ sidebar:
   | `level-skipped` | error | a level number between the coarsest and finest found has no columns |
   | `multiple-parents` | error | one code under more than one code of the next coarser level |
   | `orphan-child` | error | a code whose next coarser level's code is blank |
+  | `varying-column` | error | a non-numeric column outside the level columns with more than one value within one unit of the coarsest level |
+  | `unusable-column-name` | error | a level column family packaging would give an empty, reserved or duplicate output name, e.g. bare `adm1`/`adm2` columns, or `adm1_name` beside `adm1name` |
   | `supplemental-column` | warn | a column structural detection sets aside as a coarser grouping, not a level |
   | `column-naming` | warn | a level column named unlike its match at other levels, by case, separators or the level's naming anchor |
   | `column-set-mismatch` | warn | a level lacking a column family found at two or more other levels |

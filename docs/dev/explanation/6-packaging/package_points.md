@@ -44,10 +44,11 @@ list.
    dissolved row count against the input's own distinct code-column
    count, renames that level's own identity columns to one name shared
    across every level (`group_families_by_level()`'s naming-anchor
-   stripping for auto-detection, or a fixed `code`/`name` for an explicit
-   schema), excludes any remaining column that can't generalize to a
-   coarser level (an attribute already dropped from a coarser level's own
-   dissolve), computes each dissolved unit's
+   stripping for auto-detection, or `generic_families()` for an explicit
+   schema; a level with no naming anchor keeps its own identity columns
+   under their own names, unless no level has one, in which case each
+   level's code and name columns become `code`/`name`), keeps only those
+   columns, computes each dissolved unit's
    `ST_MaximumInscribedCircle(geom).center` as its label point, stamps
    the depth column, and checks every point is `ST_Covers`-ed by its own
    source polygon. Every level's points table is combined via
@@ -67,17 +68,16 @@ a real level, so it covers a digit anchor like `adm0_*` beside `adm1_*`/
 `adm2_*` just as well as a word anchor like `country_*` beside `state_*`/
 `county_*`), constant across the whole table; it's `None` if no such
 unassigned family exists or more than one does, rather than guess. When
-found, it's treated as its own level, dissolved with an empty `group_by`
+found, it's treated as its own level, numbered by its own anchor digit when
+that is coarser than every detected level (so an `adm1_*` root above
+`adm2_*`/`adm3_*` is level 1), else one above the coarsest (a word anchor
+like `country_*`), dissolved with an empty `group_by`
 (the whole table collapses to one row), excluded from every other level's
 own dissolve like any other level, and renamed via
 `group_families_by_level()`'s naming-anchor injection into the same
 `pcode`/`name` columns every other level's own row uses, rather than
 surviving under a separate `adm0_pcode`/`adm0_name` (or `country_code`/
-`country_name`) name. The root's own iteration is also excluded from the
-coarsest-level `generalizable` set used to decide what a finer level may
-keep, since it has nothing coarser to compare against and would otherwise
-wrongly veto attributes real
-levels can keep.
+`country_name`) name.
 
 ## Why `ST_MaximumInscribedCircle`, not the centroid
 
