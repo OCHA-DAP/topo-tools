@@ -54,15 +54,19 @@ def template_families(
     return families
 
 
+class ColumnNameError(ValueError):
+    """A column family reduces to an empty, reserved or shared output name."""
+
+
 def check_generic_names(
     names: list[tuple[str, str]], reserved: set[str] = frozenset()
 ) -> None:
-    """Raise ValueError if a (source, generic) name is empty, reserved, or shared."""
+    """Raise ColumnNameError if a (source, generic) name is empty, reserved, shared."""
     taken = {r.lower() for r in reserved}
     for source, name in names:
         if not name or name.lower() in taken:
             msg = f"column family {source!r} reduces to unusable name {name!r}"
-            raise ValueError(msg)
+            raise ColumnNameError(msg)
         taken.add(name.lower())
 
 

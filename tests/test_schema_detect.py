@@ -86,7 +86,9 @@ def test_family_at_one_level_is_not_a_mismatch(tmp_path):
 
 def test_level_skipped(tmp_path):
     select = "SELECT * EXCLUDE (adm2_pcode, adm2_name, adm2_name1) FROM base"
-    assert ("level-skipped", "error", 2, None) in _kinds(tmp_path, select, **_FIELDS)
+    kinds = _kinds(tmp_path, select, **_FIELDS)
+    assert ("level-skipped", "error", 2, None) in kinds
+    assert "unusable-column-name" not in {kind for kind, *_ in kinds}
 
 
 def test_multiple_parents(tmp_path):

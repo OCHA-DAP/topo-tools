@@ -7,6 +7,7 @@ from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.admin_columns import ColumnNameError
 from topo_tools.core.constants import is_noise_column, is_numeric_duckdb_type
 from topo_tools.core.duckdb_utils import quote_identifier
 from topo_tools.core.schema_map._identity_names import check_identity_names
@@ -159,8 +160,11 @@ def _identity_names(
     try:
         if codes:
             check_identity_names(conn, f"{name}_01", schema)
-    except ValueError as e:
+    except ColumnNameError as e:
         return f"SELECT 'unusable-column-name', NULL, NULL, NULL, {_literal(str(e))}"
+    except ValueError:
+        # Levels that can't resolve are reported by the level checks.
+        pass
     return f'SELECT NULL, NULL, NULL, NULL, NULL FROM "{name}_02" WHERE false'
 
 
