@@ -74,20 +74,16 @@ def generic_families(
     *,
     reserved: set[str] = frozenset(),
 ) -> dict[str, dict[int, str]]:
-    """Key template families by a level-free name: code, name, then by suffix (pcode).
+    """Key template families by their suffix (pcode, name1), else code or name.
 
     Raises ValueError if a name is empty, reserved, or shared, case-insensitively.
     """
+    fallback = {code_field: "code", name_field: "name"}
     named = []
     for key, per_level in template_families(
         columns, levels, name_field, code_field
     ).items():
-        if key == code_field:
-            name = "code"
-        elif key == name_field:
-            name = "name"
-        else:
-            name = key.split("{n}", 1)[1].strip("_")
+        name = key.split("{n}", 1)[1].strip("_") or fallback.get(key, "")
         named.append((key, name, per_level))
     check_generic_names([(key, name) for key, name, _ in named], reserved)
     return {name: per_level for _, name, per_level in named}

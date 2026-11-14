@@ -38,7 +38,7 @@ def _fetch_lines(path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         return conn.execute(f"""
-            SELECT a_code, b_code, adm_lvl, ST_AsText(geometry)
+            SELECT a_pcode, b_pcode, adm_lvl, ST_AsText(geometry)
             FROM '{path}'
         """).fetchall()
 
@@ -107,11 +107,11 @@ def test_explicit_schema_carries_finest_siblings_no_metadata(tmp_path):
             for r in conn.execute(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
         }
         shared = conn.execute(f"""
-            SELECT a_code, a_name, a_name1, a_pcode, b_code, b_name, b_name1, b_pcode
-            FROM '{output_path}' WHERE b_code IS NOT NULL
+            SELECT a_id, a_name, a_name1, a_pcode, b_id, b_name, b_name1, b_pcode
+            FROM '{output_path}' WHERE b_id IS NOT NULL
         """).fetchall()
     assert columns == {
-        *(f"{side}_{g}" for side in "ab" for g in ("code", "name", "name1", "pcode")),
+        *(f"{side}_{g}" for side in "ab" for g in ("id", "name", "name1", "pcode")),
         "adm_lvl",
         "geometry",
     }
@@ -320,12 +320,12 @@ def test_multi_level_classification(tmp_path):
         conn.execute("LOAD spatial")
         shared = conn.execute(f"""
             SELECT ST_X(ST_PointN(geometry, 1)), ST_X(ST_PointN(geometry, 2)),
-                   adm_lvl, a_code, b_code
-            FROM '{output_path}' WHERE b_code IS NOT NULL
+                   adm_lvl, a_pcode, b_pcode
+            FROM '{output_path}' WHERE b_pcode IS NOT NULL
         """).fetchall()
         exterior = conn.execute(f"""
-            SELECT DISTINCT adm_lvl, a_code FROM '{output_path}'
-            WHERE b_code IS NULL ORDER BY a_code
+            SELECT DISTINCT adm_lvl, a_pcode FROM '{output_path}'
+            WHERE b_pcode IS NULL ORDER BY a_pcode
         """).fetchall()
     by_x = {frozenset((x1, x2)): row for x1, x2, *row in shared}
     finer_level = 2
@@ -473,6 +473,6 @@ def test_multi_country_outer_edges_are_depth_minus_one(tmp_path):
     )
     with duckdb.connect() as conn:
         depths = conn.execute(f"""
-            SELECT DISTINCT adm_lvl, b_code IS NULL FROM '{output_path}' ORDER BY ALL
+            SELECT DISTINCT adm_lvl, b_pcode IS NULL FROM '{output_path}' ORDER BY ALL
         """).fetchall()
     assert depths == [(-1, True), (0, False), (1, False), (2, False)]

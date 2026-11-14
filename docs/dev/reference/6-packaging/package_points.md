@@ -40,9 +40,9 @@ sidebar:
 - Every level's own identity columns, including a whole-table-constant
   root's, MUST land under one name shared across every level: the source
   file's own naming convention (e.g. `pcode`, `name`, derived by stripping
-  each level's own naming anchor), or, for an explicit schema,
-  `code`/`name` for its two fields and each sibling family's suffix
-  (`name1`, `pcode`). No level-numbered column (e.g. `adm1_pcode`) MUST ever
+  each level's own naming anchor), or, for an explicit schema, each
+  family's suffix after the level number (`pcode`, `name`, `name1`),
+  falling back to `code`/`name` for a field with none (`GID_{n}`). No level-numbered column (e.g. `adm1_pcode`) MUST ever
   appear in the output: an ancestor level's identity columns are excluded
   from a finer level's own dissolve, the same as any other level's, rather
   than kept as a repeated, numbered ancestor value.

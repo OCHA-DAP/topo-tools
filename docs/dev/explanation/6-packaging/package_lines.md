@@ -94,8 +94,9 @@ multi-part/archipelago fid, and a corner-only touch).
    row's own depth, the coarsest level for an outer edge
    (`group_families_by_level()`/`level_family_names()`, the same
    naming-anchor mechanism `package-points` uses, or, for an explicit
-   schema, `generic_families()`: `code`, `name` and each sibling's suffix,
-   e.g. `name1`, `pcode`), one column pair per family under `a_*`/`b_*`
+   schema, `generic_families()`: each family's suffix after the level
+   number, e.g. `pcode`, `name`, `name1`, falling back to `code`/`name` for
+   a field with none, e.g. `GID_{n}`), one column pair per family under `a_*`/`b_*`
    (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), then drop
    `left_fid`/`right_fid` from the final output: `fid` is a fresh
    `row_number()` per run, not a stable identifier a caller could join

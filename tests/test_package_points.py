@@ -225,7 +225,7 @@ def test_every_point_covered_by_its_own_polygon(admin2_input, tmp_path):
         uncovered = conn.execute(f"""
             SELECT COUNT(*) FROM '{output_path}' p
             JOIN '{admin2_input}' src
-              ON src.adm2_pcode IS NOT DISTINCT FROM p.code
+              ON src.adm2_pcode IS NOT DISTINCT FROM p.pcode
             WHERE p.adm_lvl = 2
               AND NOT ST_Covers(ST_SetCRS(src.geom, 'OGC:CRS84'), p.geometry)
         """).fetchone()[0]
@@ -251,7 +251,7 @@ def test_own_level_code_is_generic_no_ancestor_column(admin2_input, tmp_path):
                 f"DESCRIBE SELECT * FROM '{output_path}'"
             ).fetchall()
         }
-    assert {"code", "adm_lvl", "geometry"} <= columns
+    assert {"pcode", "adm_lvl", "geometry"} <= columns
     assert "adm1_pcode" not in columns
     assert "adm2_pcode" not in columns
 
@@ -290,10 +290,10 @@ def test_explicit_schema_keeps_own_level_siblings_drops_ancestors(tmp_path):
             for r in conn.execute(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
         ]
         out = conn.execute(f"""
-            SELECT adm_lvl, code, name, name1, pcode FROM '{output_path}'
-            ORDER BY adm_lvl, code
+            SELECT adm_lvl, id, name, name1, pcode FROM '{output_path}'
+            ORDER BY adm_lvl, id
         """).fetchall()
-    assert columns == ["geometry", "code", "name", "name1", "pcode", "adm_lvl"]
+    assert columns == ["geometry", "id", "name", "name1", "pcode", "adm_lvl"]
     assert out == [
         (0, "Z", "Zed", "Zedd", "ZZ"),
         (1, "P1", "nP1", "mP1", "xP1"),
@@ -373,7 +373,7 @@ def test_existing_depth_column_replaced(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         rows = conn.execute(
-            f"SELECT code, adm_lvl FROM '{output_path}' ORDER BY code"
+            f"SELECT pcode, adm_lvl FROM '{output_path}' ORDER BY pcode"
         ).fetchall()
     assert rows == [("A1", 2), ("A2", 2), ("B1", 2), ("P1", 1), ("P2", 1)]
 
