@@ -68,6 +68,8 @@ sidebar:
 - `name_field`/`code_field` MUST be given together, or both omitted; when
   both are omitted, `package-polygons` MUST fall back to full structural
   auto-detection of every level.
+- `min_level`, if given, MUST leave out every level whose depth is below it,
+  and MUST raise `ValueError` if no level is at or above it.
 - `aggregations` (CLI: repeatable `--aggregation column=function`) MUST map
   a column name to one of `sum`, `min`, `max`, `avg`, `first`, overriding
   `dissolve`'s default of summing a numeric column that varies within a

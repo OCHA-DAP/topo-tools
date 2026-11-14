@@ -68,6 +68,8 @@ sidebar:
 - `name_field`/`code_field` MUST be given together, or both omitted; when
   both are omitted, `package-points` MUST fall back to full structural
   auto-detection of every level.
+- `min_level`, if given, MUST leave out every level whose depth is below it,
+  and MUST raise `ValueError` if no level is at or above it.
 
 ## Examples
 

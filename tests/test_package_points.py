@@ -304,8 +304,8 @@ def test_explicit_schema_keeps_own_level_siblings_drops_ancestors(tmp_path):
     ]
 
 
-def test_unanchored_level_keeps_identity_under_own_names(tmp_path):
-    """A level with no naming anchor keeps its own columns, never metadata."""
+def test_unanchored_level_writes_generic_code_and_name(tmp_path):
+    """A level with no naming anchor writes its code and name as code/name."""
     rows = [
         {
             "adm0_pcode": "Z",
@@ -323,10 +323,18 @@ def test_unanchored_level_keeps_identity_under_own_names(tmp_path):
     package_points(input_path, output_path)
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        out = conn.execute(
+        result = conn.execute(
             f"SELECT * EXCLUDE geometry FROM '{output_path}' ORDER BY ALL"
-        ).fetchall()
+        )
+        columns = [d[0] for d in result.description]
+        out = result.fetchall()
+    assert columns == ["code", "name", "adm_lvl"]
     assert out == [("A1", "nA1", 1), ("A2", "nA2", 1), ("B1", "nB1", 1)]
+
+
+def test_min_level_above_every_level_raises(admin2_input, tmp_path):
+    with pytest.raises(ValueError, match="no admin level at or above min_level 9"):
+        package_points(admin2_input, tmp_path / "points.parquet", min_level=9)
 
 
 def test_custom_depth_column(admin2_input, tmp_path):

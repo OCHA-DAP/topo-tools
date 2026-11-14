@@ -7,6 +7,7 @@ from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._level_columns import (
     detect_level_columns_or_single,
+    fallback_families,
     group_families_by_level,
     level_family_names,
     verify_functional_cluster,
@@ -47,12 +48,18 @@ def _generic_names(
     families: dict[str, dict[int, str]], levels: list[int], code_columns: list
 ) -> dict[str, dict[int, str]]:
     """Rekey auto-detected families by the generic name package-points uses."""
-    renamed = {}
+    renamed, sources = {}, {}
     for kind, per_level in families.items():
         lvl = max(per_level)
         code = code_columns[levels.index(lvl)] if lvl in levels else None
         generic = level_family_names({kind: per_level}, lvl, code)[per_level[lvl]]
-        renamed[generic] = per_level
+        if generic in renamed:
+            msg = (
+                f"column families {sources[generic]!r} and {kind!r} "
+                f"both reduce to {generic!r}"
+            )
+            raise ValueError(msg)
+        renamed[generic], sources[generic] = per_level, kind
     return renamed
 
 
@@ -96,6 +103,10 @@ def main(  # noqa: PLR0913
         msg = f"depth_column {depth_column!r} collides with a fixed output column"
         raise ValueError(msg)
 
+    if min_level is not None and min_level > max(levels):
+        msg = f"no admin level at or above min_level {min_level}"
+        raise ValueError(msg)
+
     table_in = f"{name}_01"
     finest = max(levels)
     dissolved = f"{name}_02_dissolved"
@@ -127,7 +138,8 @@ def main(  # noqa: PLR0913
             verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
         dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
         families = _generic_names(
-            group_families_by_level(conn, table_in, level_columns),
+            group_families_by_level(conn, table_in, level_columns)
+            or fallback_families(level_columns, levels),
             levels,
             code_columns,
         )

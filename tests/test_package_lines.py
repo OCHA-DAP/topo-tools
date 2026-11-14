@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from topo_tools.api.package_lines import package_lines
 from topo_tools.cli.main import cli
+from topo_tools.core.package_lines._02_boundaries import _generic_names
 
 
 def _sql_literal(value: object) -> str:
@@ -359,3 +360,59 @@ def test_cli_default_naming(tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert input_path.with_stem(input_path.stem + "_lines").exists()
+
+
+def test_single_level_auto_detect_writes_code_and_name(tmp_path):
+    """A single unanchored level labels each side with generic code/name."""
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            {
+                "adm2_pcode": "SN0101",
+                "adm2_name": "Dakar",
+                "wkt": "POLYGON((0 0,0 10,10 10,10 0,0 0))",
+            },
+            {
+                "adm2_pcode": "SN0102",
+                "adm2_name": "Pikine",
+                "wkt": "POLYGON((10 0,10 10,20 10,20 0,10 0))",
+            },
+        ],
+    )
+    output_path = tmp_path / "lines.parquet"
+    package_lines(input_path, output_path)
+    with duckdb.connect() as conn:
+        result = conn.execute(
+            f"SELECT * EXCLUDE geometry FROM '{output_path}' WHERE b_code IS NOT NULL"
+        )
+        columns = [d[0] for d in result.description]
+        out = result.fetchall()
+    assert columns == ["a_code", "a_name", "b_code", "b_name", "adm_lvl"]
+    assert len(out) == 1
+    assert {out[0][:2], out[0][2:4]} == {
+        ("SN0101", "Dakar"),
+        ("SN0102", "Pikine"),
+    }
+
+
+def test_min_level_above_every_level_raises(tmp_path):
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(
+        input_path,
+        [{"adm1_pcode": "A", "wkt": "POLYGON((0 0,0 10,10 10,10 0,0 0))"}],
+    )
+    with pytest.raises(ValueError, match="no admin level at or above min_level 9"):
+        package_lines(
+            input_path,
+            tmp_path / "lines.parquet",
+            name_field="adm{n}_name",
+            code_field="adm{n}_pcode",
+            min_level=9,
+        )
+
+
+def test_generic_name_clash_raises():
+    families = {"_name": {1: "adm1_name"}, "name": {1: "name_adm1"}}
+    with pytest.raises(ValueError, match="both reduce to 'name'"):
+        _generic_names(families, [1], ["adm1_pcode"])

@@ -413,6 +413,23 @@ def group_families_by_level(
     return families
 
 
+def fallback_families(
+    level_columns: dict[int, LevelColumns], levels: list[int]
+) -> dict[str, dict[int, str]]:
+    """Each level's own code and name column as `code`/`name`, without anchors."""
+    families: dict[str, dict[int, str]] = {}
+    for n in levels:
+        cols = level_columns.get(n)
+        if cols is None:
+            continue
+        code = next((c for c in cols.group_by if c != cols.name_column), None)
+        if code is not None:
+            families.setdefault("code", {})[n] = code
+        if cols.name_column is not None:
+            families.setdefault("name", {})[n] = cols.name_column
+    return families
+
+
 def level_family_names(
     families: dict[str, dict[int, str]], level: int, code_column: str | None
 ) -> dict[str, str]:

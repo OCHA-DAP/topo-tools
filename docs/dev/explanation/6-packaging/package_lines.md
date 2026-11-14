@@ -90,8 +90,9 @@ multi-part/archipelago fid, and a corner-only touch).
    exterior boundary) can only ever appear as `right_fid`, since candidate
    pairs are generated with `a.fid < b.fid`; the check accepts either
    column, not `left_fid` alone.
-8. Resolve each side's `fid` to the finest level's own detected identity
-   families (`group_families_by_level()`/`level_family_names()`, the same
+8. Resolve each side's `fid` to the detected identity families at the
+   row's own depth, the coarsest level for an outer edge
+   (`group_families_by_level()`/`level_family_names()`, the same
    naming-anchor mechanism `package-points` uses, or, for an explicit
    schema, `generic_families()`: `code`, `name` and each sibling's suffix,
    e.g. `name1`, `pcode`), one column pair per family under `a_*`/`b_*`

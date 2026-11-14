@@ -10,6 +10,7 @@ from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
     detect_level_columns_or_single,
     detect_root_level,
+    fallback_families,
     group_families_by_level,
     level_family_names,
     verify_functional_cluster,
@@ -101,7 +102,9 @@ def _identity_families(  # noqa: PLR0913
         cols.group_by for cols in level_columns.values()
     ):
         return {}
-    return group_families_by_level(conn, table, level_columns)
+    return group_families_by_level(conn, table, level_columns) or fallback_families(
+        level_columns, levels
+    )
 
 
 def main(  # noqa: PLR0913
@@ -138,8 +141,12 @@ def main(  # noqa: PLR0913
     )
 
     columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
+    selected = [lvl for lvl in levels if min_level is None or lvl >= min_level]
+    if not selected:
+        msg = f"no admin level at or above min_level {min_level}"
+        raise ValueError(msg)
     point_tables = []
-    for n in [lvl for lvl in levels if min_level is None or lvl >= min_level]:
+    for n in selected:
         group_by, own = _level_group_by(
             schema, level_columns, n, families, allow_empty_root=root_injected
         )

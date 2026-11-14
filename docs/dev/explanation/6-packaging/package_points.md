@@ -46,7 +46,9 @@ list.
    across every level (`group_families_by_level()`'s naming-anchor
    stripping for auto-detection, or `generic_families()` for an explicit
    schema; a level with no naming anchor keeps its own identity columns
-   under their own names), keeps only those columns, computes each dissolved unit's
+   under their own names, unless no level has one, in which case each
+   level's code and name columns become `code`/`name`), keeps only those
+   columns, computes each dissolved unit's
    `ST_MaximumInscribedCircle(geom).center` as its label point, stamps
    the depth column, and checks every point is `ST_Covers`-ed by its own
    source polygon. Every level's points table is combined via

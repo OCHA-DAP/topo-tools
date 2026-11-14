@@ -52,8 +52,8 @@ sidebar:
   (`min(levels) - 1`), into a depth column (`adm_lvl` by default,
   overridable via `depth_column`). An outer edge (`min(levels) - 1`, e.g.
   -1) is unclassified: it MAY be a coastline or a land border with an area
-  outside the input. With adm0 present, depth 0 is a border between two
-  adm0 units.
+  outside the input. When adm0 is a detected level, depth 0 is a border
+  between two adm0 units.
 - `package-lines` MUST raise `ValueError` if any finest-level unit is
   absent from every output row (matched internally by `fid`, dropped from
   the output once the `a_*`/`b_*` columns resolve each side's identity).
@@ -80,6 +80,8 @@ sidebar:
 - `name_field`/`code_field` MUST be given together, or both omitted; when
   both are omitted, `package-lines` MUST fall back to full structural
   auto-detection of every level.
+- `min_level`, if given, MUST leave out every row whose depth is below it,
+  and MUST raise `ValueError` if no level is at or above it.
 
 ## Examples
 
