@@ -284,6 +284,9 @@ def root_anchor(
         and c.endswith(suffix)
         and len(c) > len(prefix) + len(suffix)
     } - used_anchors
+    if all(a.isdigit() for a in used_anchors):
+        # A digit-anchored hierarchy ignores stray same-prefix columns like adm_lvl.
+        candidate_anchors = {a for a in candidate_anchors if a.isdigit()}
     if len(candidate_anchors) != 1:
         return None
     return prefix, candidate_anchors.pop(), suffix

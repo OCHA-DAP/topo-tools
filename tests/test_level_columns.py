@@ -363,6 +363,22 @@ def test_detect_root_level_digit_anchored(conn):
     assert cols.is_root
 
 
+def test_detect_root_level_ignores_constant_depth_column(conn):
+    """A bare-named root is still found beside a constant adm_lvl column."""
+    conn.execute("""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, 'C0' AS adm0, 2 AS adm_lvl, *
+        FROM (VALUES
+            ('C01', 'C0101'), ('C01', 'C0102'), ('C02', 'C0201'), ('C02', 'C0202')
+        ) AS v(adm1, adm2)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root = detect_root_level(conn, "t_01", level_columns)
+    assert root is not None
+    assert root[0] == 0
+    assert root[1].identity_columns == ["adm0"]
+
+
 @pytest.mark.parametrize(("root", "expected"), [("adm1", 1), ("adm0", 0)])
 def test_detect_root_level_numbered_by_own_digit(conn, root, expected):
     """A constant root takes its own level number, not always 0."""
