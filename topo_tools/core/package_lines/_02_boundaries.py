@@ -105,8 +105,8 @@ def main(
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_parts" AS
-        SELECT fid, (dump).geom AS geom, {bbox_columns_sql("(dump).geom")}
-        FROM (SELECT fid, UNNEST(ST_Dump(geom)) AS dump FROM "{dissolved}")
+        SELECT fid, geom, {bbox_columns_sql("geom")}
+        FROM (SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom FROM "{dissolved}")
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_pairs" AS
@@ -122,8 +122,11 @@ def main(
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_boundary_parts" AS
-        SELECT fid, (dump).geom AS geom, {bbox_columns_sql("(dump).geom")}
-        FROM (SELECT fid, UNNEST(ST_Dump(boundary)) AS dump FROM "{name}_02_boundary")
+        SELECT fid, geom, {bbox_columns_sql("geom")}
+        FROM (
+            SELECT fid, UNNEST(ST_Dump(boundary)).geom AS geom
+            FROM "{name}_02_boundary"
+        )
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_touching" AS
@@ -174,18 +177,21 @@ def main(
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_shared_atomic" AS
-        SELECT left_fid, right_fid, (dump).geom AS geom
+        SELECT left_fid, right_fid, geom
         FROM (
-            SELECT left_fid, right_fid, UNNEST(ST_Dump(geom)) AS dump
+            SELECT left_fid, right_fid, UNNEST(ST_Dump(geom)).geom AS geom
             FROM "{name}_02_shared"
         )
-        WHERE NOT ST_IsEmpty((dump).geom)
+        WHERE NOT ST_IsEmpty(geom)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_exterior" AS
-        SELECT fid AS left_fid, NULL::BIGINT AS right_fid, (dump).geom AS geom
-        FROM (SELECT fid, UNNEST(ST_Dump(geom)) AS dump FROM "{name}_02_exterior_raw")
-        WHERE NOT ST_IsEmpty((dump).geom)
+        SELECT fid AS left_fid, NULL::BIGINT AS right_fid, geom
+        FROM (
+            SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom
+            FROM "{name}_02_exterior_raw"
+        )
+        WHERE NOT ST_IsEmpty(geom)
     """)
 
     classification = _classification_sql(levels, code_columns)

@@ -66,7 +66,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                    AND ST_Area(ST_Intersection(r.geom, i.geom)) > 0
              ),
              notch_hits AS (
-                 SELECT DISTINCT i.key
+                 SELECT i.key
                  FROM "{name}_02" i
                  JOIN "{remaining}" r
                    ON least(r.unit_a, r.unit_b) = least(i.unit_a, i.unit_b)
