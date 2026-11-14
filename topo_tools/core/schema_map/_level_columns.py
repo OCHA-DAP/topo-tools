@@ -478,7 +478,10 @@ def level_code_columns(
     codes = {n: c.group_by[0] for n, c in level_columns.items() if c.group_by}
     root = next((n for n, c in level_columns.items() if c.is_root), None)
     if root is not None and codes:
-        next_code = codes[min(codes)]
+        below = level_columns[min(codes)]
+        next_code = next(
+            (c for c in below.group_by if c != below.name_column), codes[min(codes)]
+        )
         codes[root] = next(
             (
                 per_level.get(root)

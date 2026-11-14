@@ -4,11 +4,13 @@ import duckdb
 import pytest
 
 from topo_tools.core.schema_map._level_columns import (
+    LevelColumns,
     detect_leaf_level,
     detect_level_columns,
     detect_root_level,
     group_families_by_level,
     is_level_identity_column,
+    level_code_columns,
     verify_functional_cluster,
 )
 
@@ -399,6 +401,25 @@ def test_detect_root_level_skips_empty_finer_level(conn, with_adm0):
         assert root[1].identity_columns == ["adm0_pcode"]
     else:
         assert root is None
+
+
+def test_level_code_columns_root_skips_next_level_name():
+    """A root's code follows the next level's code, even when its name sorts first."""
+    level_columns = {
+        0: LevelColumns(
+            group_by=[], identity_columns=["adm0", "adm0_name"], is_root=True
+        ),
+        1: LevelColumns(
+            group_by=["adm1_name", "adm1"],
+            identity_columns=["adm1_name", "adm1"],
+            name_column="adm1_name",
+        ),
+    }
+    families = {
+        "": {0: "adm0", 1: "adm1"},
+        "_name": {0: "adm0_name", 1: "adm1_name"},
+    }
+    assert level_code_columns(level_columns, families, [0, 1])[0] == "adm0"
 
 
 @pytest.mark.parametrize(("root", "expected"), [("adm1", 1), ("adm0", 0)])
