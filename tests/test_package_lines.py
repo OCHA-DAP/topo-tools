@@ -73,6 +73,54 @@ def test_two_adjacent_squares_one_shared_row(tmp_path):
     assert {shared[0][0], shared[0][1]} == {"A", "B"}
 
 
+def test_explicit_schema_carries_finest_siblings_no_metadata(tmp_path):
+    """Each side carries the finest level's code/name/siblings, nothing else."""
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            {
+                "adm0_id": "Z",
+                "adm0_name": "Zed",
+                "adm1_id": code,
+                "adm1_name": f"n{code}",
+                "adm1_name1": f"m{code}",
+                "adm1_pcode": f"x{code}",
+                "valid_on": "2020-01-01",
+                "wkt": wkt,
+            }
+            for code, wkt in [
+                ("A", "POLYGON((0 0,0 10,10 10,10 0,0 0))"),
+                ("B", "POLYGON((10 0,10 10,20 10,20 0,10 0))"),
+            ]
+        ],
+    )
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path, output_path, name_field="adm{n}_name", code_field="adm{n}_id"
+    )
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        columns = {
+            r[0]
+            for r in conn.execute(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
+        }
+        shared = conn.execute(f"""
+            SELECT a_code, a_name, a_name1, a_pcode, b_code, b_name, b_name1, b_pcode
+            FROM '{output_path}' WHERE b_code IS NOT NULL
+        """).fetchall()
+    assert columns == {
+        *(f"{side}_{g}" for side in "ab" for g in ("code", "name", "name1", "pcode")),
+        "adm_lvl",
+        "geometry",
+    }
+    assert [sorted(r[i] for i in (0, 4)) for r in shared] == [["A", "B"]]
+    assert {r[0]: r[1:4] for r in shared} | {r[4]: r[5:] for r in shared} == {
+        "A": ("nA", "mA", "xA"),
+        "B": ("nB", "mB", "xB"),
+    }
+
+
 def test_depth_column_collision_with_output_column_raises(
     tmp_path,
 ):

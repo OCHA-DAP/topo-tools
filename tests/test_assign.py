@@ -210,14 +210,21 @@ def test_assign_one_code_join_precedence_and_fallback():
     conn = _connect_with_overlays()
     conn.execute("""--sql
         CREATE TABLE t_input_01 AS SELECT * FROM (VALUES
-            -- fileA: both children mostly overlap P1 but code agrees on P2,
-            -- which they both also overlap, so the whole file moves to P2
+            -- fileA: P1 wins the spatial vote 3 to 2 but code agrees on P2,
+            -- which two children also overlap, so the whole file moves to P2
             (10, ST_GeomFromText(
                 'POLYGON((1 0, 10.5 0, 10.5 1, 1 1, 1 0))'
             ), 'P2', 'fileA'),
             (11, ST_GeomFromText(
                 'POLYGON((1 1, 10.5 1, 10.5 2, 1 2, 1 1))'
             ), 'P2', 'fileA'),
+            (12, ST_GeomFromText(
+                'POLYGON((0.2 2.2, 0.8 2.2, 0.8 2.8, 0.2 2.8, 0.2 2.2))'
+            ), 'P2', 'fileA'),
+            -- fileC: P1 and P2 tie the spatial vote, code picks P2, so they agree
+            (30, ST_GeomFromText(
+                'POLYGON((1 0, 10.5 0, 10.5 1, 1 1, 1 0))'
+            ), 'P2', 'fileC'),
             -- fileB: no code match at all, falls back to its spatial winner (P1)
             (20, ST_GeomFromText(
                 'POLYGON((1.5 0.2, 2 0.2, 2 0.6, 1.5 0.6, 1.5 0.2))'
@@ -236,6 +243,8 @@ def test_assign_one_code_join_precedence_and_fallback():
     }
     assert rows[10] == (2, "code", False)
     assert rows[11] == (2, "code", False)
+    assert rows[12] == (2, "code", False)
+    assert rows[30] == (2, "code", True)
     assert rows[20] == (1, "spatial_fallback", None)
 
     unassigned = conn.execute('SELECT COUNT(*) FROM "t_02_unassigned"').fetchone()[0]

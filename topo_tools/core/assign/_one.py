@@ -311,10 +311,17 @@ def assign_one(  # noqa: PLR0913
                 COALESCE(code.overlay_fid, spatial.overlay_fid) AS overlay_fid,
                 CASE WHEN code.overlay_fid IS NOT NULL THEN 'code'
                      ELSE 'spatial_fallback' END AS assignment_method,
+                -- A code overlay tied for the top spatial vote agrees with it.
                 CASE WHEN code.overlay_fid IS NOT NULL
-                     THEN code.overlay_fid = spatial.overlay_fid END AS spatial_agrees
+                     THEN coalesce(cv.n_inputs = top.n_max, FALSE) END AS spatial_agrees
             FROM "{name}_02_tmp4" code
             FULL OUTER JOIN "{name}_02_file_winner" spatial USING (source_file)
+            LEFT JOIN "{name}_02_file_votes" cv
+              ON cv.source_file = code.source_file AND cv.overlay_fid = code.overlay_fid
+            LEFT JOIN (
+                SELECT source_file, max(n_inputs) AS n_max
+                FROM "{name}_02_file_votes" GROUP BY source_file
+            ) top ON top.source_file = code.source_file
         """)
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp3"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp4"')

@@ -256,6 +256,54 @@ def test_own_level_code_is_generic_no_ancestor_column(admin2_input, tmp_path):
     assert "adm2_pcode" not in columns
 
 
+def test_explicit_schema_keeps_own_level_siblings_drops_ancestors(tmp_path):
+    """Each point carries only its own level's code/name/siblings and depth."""
+    rows = [
+        {
+            "adm0_id": "Z",
+            "adm0_name": "Zed",
+            "adm0_name1": "Zedd",
+            "adm0_pcode": "ZZ",
+            "adm1_id": r["adm1_pcode"],
+            "adm1_name": f"n{r['adm1_pcode']}",
+            "adm1_name1": f"m{r['adm1_pcode']}",
+            "adm1_pcode": f"x{r['adm1_pcode']}",
+            "adm2_id": r["adm2_pcode"],
+            "adm2_name": f"n{r['adm2_pcode']}",
+            "adm2_name1": f"m{r['adm2_pcode']}",
+            "adm2_pcode": f"x{r['adm2_pcode']}",
+            "valid_on": "2020-01-01",
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "admin2.parquet"
+    output_path = tmp_path / "points.parquet"
+    _write_synthetic(input_path, rows)
+    package_points(
+        input_path, output_path, name_field="adm{n}_name", code_field="adm{n}_id"
+    )
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        columns = [
+            r[0]
+            for r in conn.execute(f"DESCRIBE SELECT * FROM '{output_path}'").fetchall()
+        ]
+        out = conn.execute(f"""
+            SELECT adm_lvl, code, name, name1, pcode FROM '{output_path}'
+            ORDER BY adm_lvl, code
+        """).fetchall()
+    assert columns == ["geometry", "code", "name", "name1", "pcode", "adm_lvl"]
+    assert out == [
+        (0, "Z", "Zed", "Zedd", "ZZ"),
+        (1, "P1", "nP1", "mP1", "xP1"),
+        (1, "P2", "nP2", "mP2", "xP2"),
+        (2, "A1", "nA1", "mA1", "xA1"),
+        (2, "A2", "nA2", "mA2", "xA2"),
+        (2, "B1", "nB1", "mB1", "xB1"),
+    ]
+
+
 def test_custom_depth_column(admin2_input, tmp_path):
     output_path = tmp_path / "points.parquet"
     package_points(

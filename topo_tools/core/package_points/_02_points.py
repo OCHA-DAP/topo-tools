@@ -4,6 +4,7 @@ from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.admin_columns import generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.schema_map._level_columns import (
     LevelColumns,
@@ -52,15 +53,17 @@ def _level_group_by(
     schema: TargetSchema | None,
     level_columns: dict[int, LevelColumns] | None,
     n: int,
-    levels: list[int],
+    families: dict[str, dict[int, str]],
     *,
     allow_empty_root: bool = False,
 ) -> tuple[list[str], list[str]]:
     """One level's dissolve group_by/exclude, from an explicit schema or auto-detect."""
     if schema is not None:
-        other_levels = [lvl for lvl in levels if lvl != n]
-        exclude = [schema.code_field.format(n=lvl) for lvl in other_levels] + [
-            schema.name_field.format(n=lvl) for lvl in other_levels
+        exclude = [
+            col
+            for per_level in families.values()
+            for lvl, col in per_level.items()
+            if lvl != n
         ]
         return [schema.code_field.format(n=n)], exclude
 
@@ -92,14 +95,11 @@ def _identity_families(
 ) -> dict[str, dict[int, str]]:
     """Every level's own identity columns, keyed by the file's own naming for it.
 
-    An explicit schema always uses its own fixed code/name role names instead.
+    An explicit schema keys its fields as code/name and their siblings by suffix.
     """
     if schema is not None:
-        families: dict[str, dict[int, str]] = {"code": {}, "name": {}}
-        for n in levels:
-            families["code"][n] = schema.code_field.format(n=n)
-            families["name"][n] = schema.name_field.format(n=n)
-        return families
+        columns = [r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()]
+        return generic_families(columns, levels, schema.name_field, schema.code_field)
     if level_columns is None or not any(
         cols.group_by for cols in level_columns.values()
     ):
@@ -137,10 +137,9 @@ def main(
     families = _identity_families(conn, table_in, schema, level_columns, levels)
 
     point_tables = []
-    generalizable: set[str] | None = None
     for n in levels:
         group_by, exclude = _level_group_by(
-            schema, level_columns, n, levels, allow_empty_root=root_injected
+            schema, level_columns, n, families, allow_empty_root=root_injected
         )
         if schema is None and group_by:
             verify_functional_cluster(conn, table_in, group_by[0], group_by)
@@ -156,36 +155,21 @@ def main(
         )
         _check_row_count(conn, dissolved, table_in, group_by)
 
-        dissolved_columns = [
+        dissolved_columns = {
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
-        ]
-        # The synthetic root has nothing coarser to compare against, so
-        # it never seeds/consults `generalizable`; real levels still do.
-        if root_injected and n == 0:
-            allowed = set(dissolved_columns)
-        else:
-            if generalizable is None:
-                generalizable = set(dissolved_columns)
-            allowed = generalizable
+        }
         own_rename = level_family_names(families, n, group_by[0] if group_by else None)
-        own_rename = {
-            col: generic
+        # Points carry only their own level's identity; metadata stays on polygons.
+        identity_sql = "".join(
+            f', "{col}" AS "{generic}"'
             for col, generic in own_rename.items()
             if col in dissolved_columns
-        }
-        # A column dropped from a coarser level's own dissolve (e.g. a
-        # finest-level-only attribute) can never generalize across levels.
-        drop_cols = [
-            c for c in dissolved_columns if c not in allowed and c not in own_rename
-        ]
-        exclude_sql = ", ".join(f'"{c}"' for c in ["geom", *drop_cols])
-        rename_sql = ", ".join(f'"{old}" AS "{new}"' for old, new in own_rename.items())
-        rename_clause = f" RENAME ({rename_sql})" if rename_sql else ""
+        )
 
         points = f"{name}_02_pts{n}"
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE "{points}" AS
-            SELECT * EXCLUDE ({exclude_sql}){rename_clause}, {n} AS "{depth_column}",
+            SELECT fid{identity_sql}, {n} AS "{depth_column}",
                    (ST_MaximumInscribedCircle(geom)).center AS geom
             FROM "{dissolved}"
         """)

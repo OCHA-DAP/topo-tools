@@ -54,6 +54,30 @@ def template_families(
     return families
 
 
+def generic_families(
+    columns: list[str], levels: list[int], name_field: str, code_field: str
+) -> dict[str, dict[int, str]]:
+    """Key template families by a level-free name: code, name, then by suffix (pcode).
+
+    Raises ValueError if two families reduce to the same name.
+    """
+    generic: dict[str, dict[int, str]] = {}
+    for key, per_level in template_families(
+        columns, levels, name_field, code_field
+    ).items():
+        if key == code_field:
+            name = "code"
+        elif key == name_field:
+            name = "name"
+        else:
+            name = key.split("{n}", 1)[1].strip("_")
+        if name in generic:
+            msg = f"two column families both reduce to {name!r}"
+            raise ValueError(msg)
+        generic[name] = per_level
+    return generic
+
+
 def _family_pattern(template: str) -> re.Pattern:
     """Match a template's own column and its siblings (`adm2_name1`, `GID_2_1`)."""
     before, _, after = template.partition("{n}")

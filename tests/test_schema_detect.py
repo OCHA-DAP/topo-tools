@@ -111,6 +111,18 @@ def test_orphan_child(tmp_path):
     }
 
 
+@pytest.mark.parametrize("fields", [_FIELDS, {}], ids=["explicit", "structural"])
+def test_varying_column(tmp_path, fields):
+    """Text varying within a coarsest unit is an error; constant or numeric is not."""
+    select = """--sql
+        SELECT *, 'en' AS lang, adm3_pcode AS valid_on, hash(adm3_pcode) AS n
+        FROM base
+    """
+    assert _kinds(tmp_path, select, **fields) == {
+        ("varying-column", "error", 0, "valid_on")
+    }
+
+
 def test_levels_undetected_is_reported_not_raised(tmp_path):
     fields = {"name_field": "lvl{n}_name", "code_field": "lvl{n}_code"}
     assert _kinds(tmp_path, "SELECT * FROM base", **fields) == {

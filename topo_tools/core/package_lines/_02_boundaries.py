@@ -2,6 +2,7 @@
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.admin_columns import generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._level_columns import (
@@ -63,9 +64,13 @@ def main(
     dissolved = f"{name}_02_dissolved"
     if schema is not None:
         code_columns = [schema.code_field.format(n=n) for n in levels]
+        columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
         finest_generics = {
-            "code": code_columns[-1],
-            "name": schema.name_field.format(n=finest),
+            generic: per_level[finest]
+            for generic, per_level in generic_families(
+                columns, levels, schema.name_field, schema.code_field
+            ).items()
+            if finest in per_level
         }
         dissolve_stage.main(
             conn,

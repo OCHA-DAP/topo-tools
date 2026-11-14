@@ -1,11 +1,13 @@
 """Finds column-naming, column-set and hierarchy-nesting defects, one row each."""
 
 from collections.abc import Callable
+from functools import partial
 from itertools import pairwise
 from logging import getLogger
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.constants import is_noise_column, is_numeric_duckdb_type
 from topo_tools.core.duckdb_utils import quote_identifier
 
 logger = getLogger(__name__)
@@ -115,6 +117,26 @@ def _orphan(name: str, parents: list) -> str:
     return _pairs_sql(name, parents, select)
 
 
+def _varying(name: str, _parents: list, codes: list, metadata: list[str]) -> str:
+    # Packaging drops a text column with several values in one coarsest unit.
+    if not codes or not metadata:
+        return f'SELECT NULL, NULL, NULL, NULL, NULL FROM "{name}_02" WHERE false'
+    level, code = codes[0]
+    c = quote_identifier(code)
+    return " UNION ALL ".join(
+        f"""--sql
+        SELECT 'varying-column', {level}, {_literal(column)}, min(unit),
+               printf('several values within %d unit(s) of {code}', count(*))
+        FROM (
+            SELECT {c}::VARCHAR AS unit FROM "{name}_01"
+            GROUP BY {c} HAVING count(DISTINCT {quote_identifier(column)}) > 1
+        )
+        HAVING count(*) > 0
+        """
+        for column in metadata
+    )
+
+
 _CHECKS = {
     "problems": _problems,
     "column-naming": _naming,
@@ -124,20 +146,46 @@ _CHECKS = {
 }
 
 
-def _parents(conn: DuckDBPyConnection, name: str) -> list[tuple[int, str, str]]:
-    """Each level's (level, code column, next coarser level's code column)."""
-    codes = conn.execute(f"""--sql
+def _codes(conn: DuckDBPyConnection, name: str) -> list[tuple[int, str]]:
+    """Each level's (level, code column), coarsest first."""
+    return conn.execute(f"""--sql
         SELECT level, column_name FROM "{name}_02"
         WHERE is_code AND problem IS NULL ORDER BY level
     """).fetchall()
-    return [(level, child, parent) for (_, parent), (level, child) in pairwise(codes)]
+
+
+def _metadata(conn: DuckDBPyConnection, name: str) -> list[str]:
+    """Every non-numeric column outside the level and supplemental columns."""
+    known = {
+        r[0]
+        for r in conn.execute(
+            f'SELECT column_name FROM "{name}_02" WHERE column_name IS NOT NULL'
+        ).fetchall()
+    }
+    return [
+        column
+        for column, dtype, *_ in conn.execute(f'DESCRIBE "{name}_01"').fetchall()
+        if column not in {*known, "fid", "geom"}
+        and not is_noise_column(column)
+        and not is_numeric_duckdb_type(dtype)
+        and not dtype.startswith("GEOMETRY")
+    ]
 
 
 def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
     """Write `{name}_03`: every finding, one row per column, level or unit."""
-    parents = _parents(conn, name)
+    codes = _codes(conn, name)
+    parents = [
+        (level, child, parent) for (_, parent), (level, child) in pairwise(codes)
+    ]
+    checks = {
+        **_CHECKS,
+        "varying-column": partial(
+            _varying, codes=codes, metadata=_metadata(conn, name)
+        ),
+    }
     tmps = []
-    for i, (kind, build) in enumerate(_CHECKS.items(), start=1):
+    for i, (kind, build) in enumerate(checks.items(), start=1):
         tmp = f"{name}_03_tmp{i}"
         tmps.append(tmp)
         try:
