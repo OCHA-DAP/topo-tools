@@ -6,7 +6,7 @@ from click.testing import CliRunner
 
 from topo_tools.api.package_lines import package_lines
 from topo_tools.cli.main import cli
-from topo_tools.core.package_lines._02_boundaries import _generic_names
+from topo_tools.core.schema_map._identity_names import generic_names_by_family
 
 
 def _sql_literal(value: object) -> str:
@@ -415,13 +415,13 @@ def test_min_level_above_every_level_raises(tmp_path):
 def test_generic_name_clash_raises():
     families = {"_name": {1: "adm1_name"}, "name": {1: "name_adm1"}}
     with pytest.raises(ValueError, match="reduces to unusable name 'name'"):
-        _generic_names(families, [1], ["adm1_pcode"])
+        generic_names_by_family(families, [1], ["adm1_pcode"])
 
 
 def test_generic_name_clash_is_case_insensitive():
     families = {"_pcode": {1: "adm1_pcode"}, "_PCODE": {1: "adm1_PCODE"}}
     with pytest.raises(ValueError, match="reduces to unusable name 'PCODE'"):
-        _generic_names(families, [1], ["adm1_pcode"])
+        generic_names_by_family(families, [1], ["adm1_pcode"])
 
 
 def _country_rows(countries: list[str]) -> list[dict]:

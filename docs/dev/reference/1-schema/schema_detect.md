@@ -49,6 +49,7 @@ sidebar:
   | `multiple-parents` | error | one code under more than one code of the next coarser level |
   | `orphan-child` | error | a code whose next coarser level's code is blank |
   | `varying-column` | error | a non-numeric column outside the level columns with more than one value within one unit of the coarsest level |
+  | `unusable-column-name` | error | a level column family packaging would give an empty, reserved or duplicate output name, e.g. bare `adm1`/`adm2` columns, or `adm1_name` beside `adm1name` |
   | `supplemental-column` | warn | a column structural detection sets aside as a coarser grouping, not a level |
   | `column-naming` | warn | a level column named unlike its match at other levels, by case, separators or the level's naming anchor |
   | `column-set-mismatch` | warn | a level lacking a column family found at two or more other levels |

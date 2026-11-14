@@ -84,7 +84,13 @@ def detect(  # noqa: PLR0913
             elif s == "levels":
                 levels.main(conn, name, name_field=name_field, code_field=code_field)
             elif s == "checks":
-                checks.main(conn, name, debug=debug)
+                checks.main(
+                    conn,
+                    name,
+                    name_field=name_field,
+                    code_field=code_field,
+                    debug=debug,
+                )
             elif s == "outputs":
                 outputs.main(conn, name, issues_path, debug=debug)
         maybe_export_debug_tables(

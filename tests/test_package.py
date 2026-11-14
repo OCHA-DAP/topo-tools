@@ -223,3 +223,25 @@ def test_raises_on_overlapping_input(tool, tmp_path):
     _write_synthetic(path, [*_ROWS, {**_ROWS[0], "adm2_pcode": "A9"}])
     with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
         tool(path, tmp_path / "out.parquet")
+
+
+def test_unusable_column_name_blocks_before_any_output(tmp_path):
+    """A name packaging can't give an output column stops it before polygons."""
+    rows = [
+        {
+            "adm1": r["adm1_pcode"],
+            "adm1_pcode": r["adm1_pcode"],
+            "adm1_name": f"n{r['adm1_pcode']}",
+            "adm2": r["adm2_pcode"],
+            "adm2_pcode": r["adm2_pcode"],
+            "adm2_name": f"n{r['adm2_pcode']}",
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    with pytest.raises(ValueError, match="validation found errors"):
+        package(input_path, name_field="adm{n}_name", code_field="adm{n}_pcode")
+    assert not list(tmp_path.glob("in_admin*.parquet"))
+    assert not list(tmp_path.glob("in_points*")) + list(tmp_path.glob("in_lines*"))

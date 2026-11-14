@@ -9,6 +9,11 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import is_noise_column, is_numeric_duckdb_type
 from topo_tools.core.duckdb_utils import quote_identifier
+from topo_tools.core.schema_map._identity_names import check_identity_names
+from topo_tools.core.schema_map._target_schema import (
+    TargetSchema,
+    resolve_explicit_target_schema,
+)
 
 logger = getLogger(__name__)
 
@@ -143,6 +148,22 @@ def _varying(name: str, _parents: list, codes: list, metadata: list[str]) -> str
     """
 
 
+def _identity_names(
+    name: str,
+    _parents: list,
+    conn: DuckDBPyConnection,
+    schema: TargetSchema | None,
+    codes: list,
+) -> str:
+    # Packaging names each identity family without its level; two must not share one.
+    try:
+        if codes:
+            check_identity_names(conn, f"{name}_01", schema)
+    except ValueError as e:
+        return f"SELECT 'unusable-column-name', NULL, NULL, NULL, {_literal(str(e))}"
+    return f'SELECT NULL, NULL, NULL, NULL, NULL FROM "{name}_02" WHERE false'
+
+
 _CHECKS = {
     "problems": _problems,
     "column-naming": _naming,
@@ -178,7 +199,14 @@ def _metadata(conn: DuckDBPyConnection, name: str) -> list[str]:
     ]
 
 
-def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
+def main(
+    conn: DuckDBPyConnection,
+    name: str,
+    *,
+    name_field: str | None = None,
+    code_field: str | None = None,
+    debug: bool = False,
+) -> None:
     """Write `{name}_03`: every finding, one row per column, level or unit."""
     codes = _codes(conn, name)
     parents = [
@@ -188,6 +216,12 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
         **_CHECKS,
         "varying-column": partial(
             _varying, codes=codes, metadata=_metadata(conn, name)
+        ),
+        "unusable-column-name": partial(
+            _identity_names,
+            conn=conn,
+            schema=resolve_explicit_target_schema(name_field, code_field),
+            codes=codes,
         ),
     }
     tmps = []

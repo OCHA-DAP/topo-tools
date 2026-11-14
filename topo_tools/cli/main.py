@@ -2461,9 +2461,10 @@ def schema_detect(  # noqa: PLR0913, PLR0917
     Checks that admin levels can be detected with none skipped, that every
     level has the same set of columns named the same way, that each code
     sits under exactly one parent code, that no code has a blank parent,
-    and that no text column outside the levels has several values within
-    one coarsest-level unit. Writes the problems found without changing the layer, even
-    when there are none. ISSUES_FILE defaults to INPUT_FILE with a
+    that no text column outside the levels has several values within one
+    coarsest-level unit, and that packaging can give every level column
+    family its own output name. Writes the problems found without changing
+    the layer, even when there are none. ISSUES_FILE defaults to INPUT_FILE with a
     "_schema_issues" suffix, as Parquet, or CSV for a .csv name.
 
     \b

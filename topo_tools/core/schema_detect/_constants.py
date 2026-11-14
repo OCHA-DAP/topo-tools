@@ -10,6 +10,7 @@ SEVERITY = {
     "multiple-parents": ERROR,
     "orphan-child": ERROR,
     "varying-column": ERROR,
+    "unusable-column-name": ERROR,
     "supplemental-column": WARN,
     "column-naming": WARN,
     "column-set-mismatch": WARN,

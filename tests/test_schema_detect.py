@@ -206,3 +206,25 @@ def test_steps(tmp_path):
     for step in ["inputs", "levels", "checks", "outputs"]:
         detect(path, out, **_FIELDS, tmp_dir=tmp_path / "work", step=step)
     assert {r["kind"] for r in _read(out)} == {"column-set-mismatch"}
+
+
+def test_unusable_column_name_explicit(tmp_path):
+    """A bare level-numbered family leaves packaging no name for its output column."""
+    select = """--sql
+        SELECT *, adm0_pcode AS adm0, adm1_pcode AS adm1, adm2_pcode AS adm2,
+               adm3_pcode AS adm3
+        FROM base
+    """
+    assert ("unusable-column-name", "error", None, None) in _kinds(
+        tmp_path, select, **_FIELDS
+    )
+
+
+def test_unusable_column_name_structural(tmp_path):
+    """Two auto-detected families reducing to one output name are reported."""
+    select = """--sql
+        SELECT *, adm0_name AS adm0name, adm1_name AS adm1name,
+               adm2_name AS adm2name, adm3_name AS adm3name
+        FROM base
+    """
+    assert ("unusable-column-name", "error", None, None) in _kinds(tmp_path, select)

@@ -2,14 +2,14 @@
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.admin_columns import check_generic_names, generic_families
+from topo_tools.core.admin_columns import generic_families
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
+from topo_tools.core.schema_map._identity_names import generic_names_by_family
 from topo_tools.core.schema_map._level_columns import (
     detect_levels_with_root,
     fallback_families,
     group_families_by_level,
-    level_family_names,
     verify_functional_cluster,
 )
 from topo_tools.core.schema_map._target_schema import TargetSchema
@@ -43,20 +43,6 @@ def _check_every_fid_present(
         fids = [m[0] for m in missing]
         msg = f"{lines}: fid(s) missing from every boundary row: {fids}"
         raise ValueError(msg)
-
-
-def _generic_names(
-    families: dict[str, dict[int, str]], levels: list[int], code_columns: list
-) -> dict[str, dict[int, str]]:
-    """Rekey auto-detected families by the generic name package-points uses."""
-    named = []
-    for kind, per_level in families.items():
-        lvl = max(per_level)
-        code = code_columns[levels.index(lvl)] if lvl in levels else None
-        generic = level_family_names({kind: per_level}, lvl, code)[per_level[lvl]]
-        named.append((kind, generic, per_level))
-    check_generic_names([(kind, generic) for kind, generic, _ in named])
-    return {generic: per_level for _, generic, per_level in named}
 
 
 def _outer_depth(
@@ -117,7 +103,7 @@ def _auto_detect(
     if finest_group_by:
         verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
     dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
-    families = _generic_names(
+    families = generic_names_by_family(
         group_families_by_level(conn, table_in, level_columns)
         or fallback_families(level_columns, levels),
         levels,
