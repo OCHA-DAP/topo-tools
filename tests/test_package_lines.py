@@ -463,6 +463,24 @@ def test_single_country_outline_is_depth_zero(tmp_path, explicit):
     assert outer == [(0, "SEN", "nSEN")]
 
 
+def test_bare_constant_root_outline_labelled_as_code(tmp_path):
+    """A bare `adm0` root column labels the outline under `a_code`, like adm1/adm2."""
+    rows = [
+        {k.removesuffix("_pcode"): v for k, v in r.items()}
+        for r in _country_rows(["SEN"])
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "lines.parquet"
+    package_lines(input_path, output_path)
+    with duckdb.connect() as conn:
+        outer = conn.execute(f"""
+            SELECT DISTINCT adm_lvl, a_code, a_name FROM '{output_path}'
+            WHERE b_code IS NULL
+        """).fetchall()
+    assert outer == [(0, "SEN", "nSEN")]
+
+
 def test_multi_country_outer_edges_are_depth_minus_one(tmp_path):
     """Several adm0 units: outer edges at -1, a border between two at 0."""
     input_path = tmp_path / "in.parquet"

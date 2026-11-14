@@ -8,6 +8,7 @@ from topo_tools.core.schema_map._level_columns import (
     detect_levels_with_root,
     fallback_families,
     group_families_by_level,
+    level_code_columns,
     level_family_names,
 )
 from topo_tools.core.schema_map._levels import detect_levels
@@ -47,13 +48,10 @@ def check_identity_names(
         return
     level_columns = detect_levels_with_root(conn, table)
     levels = sorted(level_columns)
-    codes = [
-        level_columns[n].group_by[0] if level_columns[n].group_by else None
-        for n in levels
-    ]
     families = group_families_by_level(conn, table, level_columns) or fallback_families(
         level_columns, levels
     )
+    codes = level_code_columns(level_columns, families, levels)
     for n, code in zip(levels, codes, strict=True):
         renames = level_family_names(families, n, code)
         check_generic_names(list(renames.items()), reserved)

@@ -441,6 +441,27 @@ def fallback_families(
     return families
 
 
+def level_code_columns(
+    level_columns: dict[int, LevelColumns],
+    families: dict[str, dict[int, str]],
+    levels: list[int],
+) -> list[str | None]:
+    """Each level's code column; a constant root's sits in the next level's family."""
+    codes = {n: c.group_by[0] for n, c in level_columns.items() if c.group_by}
+    root = level_columns.get(0)
+    if root is not None and not root.group_by and codes:
+        next_code = codes[min(codes)]
+        codes[0] = next(
+            (
+                per_level.get(0)
+                for per_level in families.values()
+                if per_level.get(min(codes)) == next_code
+            ),
+            None,
+        )
+    return [codes.get(n) for n in levels]
+
+
 def level_family_names(
     families: dict[str, dict[int, str]], level: int, code_column: str | None
 ) -> dict[str, str]:

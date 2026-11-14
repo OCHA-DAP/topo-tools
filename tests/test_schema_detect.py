@@ -220,6 +220,17 @@ def test_unusable_column_name_explicit(tmp_path):
     )
 
 
+def test_bare_constant_root_code_is_usable(tmp_path):
+    """A bare `adm0` root column pairs with the finer bare codes, no clash with name."""
+    select = """--sql
+        SELECT adm0_pcode AS adm0, adm0_name, adm1_pcode AS adm1, adm1_name,
+               adm2_pcode AS adm2, adm2_name, adm3_pcode AS adm3, adm3_name, geom
+        FROM base
+    """
+    kinds = {kind for kind, *_ in _kinds(tmp_path, select)}
+    assert "unusable-column-name" not in kinds
+
+
 def test_unusable_column_name_structural(tmp_path):
     """Two auto-detected families reducing to one output name are reported."""
     select = """--sql

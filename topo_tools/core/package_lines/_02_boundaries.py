@@ -10,6 +10,7 @@ from topo_tools.core.schema_map._level_columns import (
     detect_levels_with_root,
     fallback_families,
     group_families_by_level,
+    level_code_columns,
     verify_functional_cluster,
 )
 from topo_tools.core.schema_map._target_schema import TargetSchema
@@ -95,20 +96,15 @@ def _auto_detect(
         if not level_columns[n].group_by and len(level_columns) > 1 and not is_root:
             msg = f"no reliable group-by column detected for level {n}"
             raise ValueError(msg)
-    code_columns = [
-        level_columns[n].group_by[0] if level_columns[n].group_by else None
-        for n in levels
-    ]
+    families = group_families_by_level(
+        conn, table_in, level_columns
+    ) or fallback_families(level_columns, levels)
+    code_columns = level_code_columns(level_columns, families, levels)
     finest_group_by = level_columns[max(levels)].group_by
     if finest_group_by:
         verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
     dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
-    families = generic_names_by_family(
-        group_families_by_level(conn, table_in, level_columns)
-        or fallback_families(level_columns, levels),
-        levels,
-        code_columns,
-    )
+    families = generic_names_by_family(families, levels, code_columns)
     return code_columns, families, constant_root
 
 

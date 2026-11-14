@@ -181,6 +181,33 @@ def test_word_anchored_constant_root_becomes_its_own_level_zero_row(
     assert other_levels == [("P1", None), ("P2", None)]
 
 
+@pytest.mark.parametrize("with_names", [True, False])
+def test_bare_constant_root_code_lands_under_code(tmp_path, with_names):
+    """A bare `adm0` root column pairs with the finer bare codes, never `name`."""
+    rows = [
+        {
+            "adm0": "Z",
+            **({"adm0_name": "Zed"} if with_names else {}),
+            "adm1": r["adm1_pcode"],
+            **({"adm1_name": f"n{r['adm1_pcode']}"} if with_names else {}),
+            "adm2": r["adm2_pcode"],
+            **({"adm2_name": f"n{r['adm2_pcode']}"} if with_names else {}),
+            "wkt": r["wkt"],
+        }
+        for r in _ROWS
+    ]
+    input_path = tmp_path / "bare.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "points.parquet"
+    package_points(input_path, output_path)
+
+    with duckdb.connect() as conn:
+        level0 = conn.execute(f"""
+            SELECT columns('^(code|name)$') FROM '{output_path}' WHERE adm_lvl = 0
+        """).fetchall()
+    assert level0 == ([("Z", "Zed")] if with_names else [("Z",)])
+
+
 def test_cli_help():
     result = CliRunner().invoke(cli, ["package-points", "--help"])
     assert result.exit_code == 0

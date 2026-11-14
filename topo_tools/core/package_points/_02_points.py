@@ -11,6 +11,7 @@ from topo_tools.core.schema_map._level_columns import (
     detect_levels_with_root,
     fallback_families,
     group_families_by_level,
+    level_code_columns,
     level_family_names,
     verify_functional_cluster,
 )
@@ -135,6 +136,10 @@ def main(  # noqa: PLR0913
         conn, table_in, schema, level_columns, levels, depth_column=depth_column
     )
 
+    root_code = (
+        level_code_columns(level_columns, families, [0])[0] if root_injected else None
+    )
+
     columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
     selected = [lvl for lvl in levels if min_level is None or lvl >= min_level]
     if not selected:
@@ -164,7 +169,8 @@ def main(  # noqa: PLR0913
         dissolved_columns = {
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
         }
-        renames = level_family_names(families, n, group_by[0] if group_by else None)
+        code = group_by[0] if group_by else root_code
+        renames = level_family_names(families, n, code)
         check_generic_names(
             [(col, renames.get(col, col)) for col in own if col in dissolved_columns],
             reserved={"fid", "geom", "geometry", depth_column},
