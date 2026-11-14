@@ -1674,23 +1674,28 @@ def _fill_enclosed_notch_gaps(conn: DuckDBPyConnection, ua: int, ub: int) -> Non
             FROM _notch_all a, _notch_all b, nbr WHERE a.rnid = {ua} AND b.rnid = {ub}
         ),
         parts AS (SELECT before, UNNEST(ST_Dump(g)).geom AS p FROM u),
-        holes AS (
-            SELECT before, UNNEST(ST_Dump(
-                ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
-            )).geom AS h
-            FROM parts
+        holes AS MATERIALIZED (
+            SELECT row_number() OVER () AS hid, *
+            FROM (
+                SELECT before, UNNEST(ST_Dump(
+                    ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
+                )).geom AS h
+                FROM parts
+            )
         )
         SELECT h FROM holes n
         WHERE NOT n.before AND NOT ST_IsEmpty(n.h)
-          AND NOT EXISTS (
-              SELECT 1 FROM holes o
-              WHERE o.before AND ST_Intersects(o.h, ST_PointOnSurface(n.h))
+          AND n.hid NOT IN (
+              SELECT n2.hid FROM holes n2
+              JOIN holes o ON ST_Intersects(o.h, ST_PointOnSurface(n2.h))
+              WHERE o.before AND NOT n2.before
           )
     """)
     conn.execute(f"""--sql
-        DELETE FROM _notch_holes n WHERE EXISTS (
-            SELECT 1 FROM _notch_all x
-            WHERE x.rnid NOT IN ({ua}, {ub}) AND ST_Intersects(x.geom, n.h)
+        DELETE FROM _notch_holes WHERE rowid IN (
+            SELECT n.rowid FROM _notch_holes n
+            JOIN _notch_all x ON ST_Intersects(x.geom, n.h)
+            WHERE x.rnid NOT IN ({ua}, {ub})
               AND ST_Area(ST_Intersection(x.geom, n.h)) > 0
         )
     """)

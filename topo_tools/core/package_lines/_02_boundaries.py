@@ -106,7 +106,7 @@ def main(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_parts" AS
         SELECT fid, (dump).geom AS geom, {bbox_columns_sql("(dump).geom")}
-        FROM "{dissolved}", UNNEST(ST_Dump(geom)) AS d(dump)
+        FROM (SELECT fid, UNNEST(ST_Dump(geom)) AS dump FROM "{dissolved}")
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_pairs" AS
@@ -123,7 +123,7 @@ def main(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_boundary_parts" AS
         SELECT fid, (dump).geom AS geom, {bbox_columns_sql("(dump).geom")}
-        FROM "{name}_02_boundary", UNNEST(ST_Dump(boundary)) AS d(dump)
+        FROM (SELECT fid, UNNEST(ST_Dump(boundary)) AS dump FROM "{name}_02_boundary")
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_touching" AS
@@ -175,13 +175,16 @@ def main(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_shared_atomic" AS
         SELECT left_fid, right_fid, (dump).geom AS geom
-        FROM "{name}_02_shared", UNNEST(ST_Dump(geom)) AS d(dump)
+        FROM (
+            SELECT left_fid, right_fid, UNNEST(ST_Dump(geom)) AS dump
+            FROM "{name}_02_shared"
+        )
         WHERE NOT ST_IsEmpty((dump).geom)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_exterior" AS
         SELECT fid AS left_fid, NULL::BIGINT AS right_fid, (dump).geom AS geom
-        FROM "{name}_02_exterior_raw", UNNEST(ST_Dump(geom)) AS d(dump)
+        FROM (SELECT fid, UNNEST(ST_Dump(geom)) AS dump FROM "{name}_02_exterior_raw")
         WHERE NOT ST_IsEmpty((dump).geom)
     """)
 

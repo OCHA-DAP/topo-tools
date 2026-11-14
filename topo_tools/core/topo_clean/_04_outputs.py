@@ -57,6 +57,22 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                    ON f.xmax >= g.xmin AND f.xmin <= g.xmax
                   AND f.ymax >= g.ymin AND f.ymin <= g.ymax
                  GROUP BY g.key
+             ),
+             gap_hits AS (
+                 SELECT i.key AS issue_key, r.key AS open_key
+                 FROM "{name}_02" i
+                 JOIN "{open_gaps}" r ON ST_Intersects(r.geom, i.geom)
+                 WHERE i.kind = 'gap'
+                   AND ST_Area(ST_Intersection(r.geom, i.geom)) > 0
+             ),
+             notch_hits AS (
+                 SELECT DISTINCT i.key
+                 FROM "{name}_02" i
+                 JOIN "{remaining}" r
+                   ON least(r.unit_a, r.unit_b) = least(i.unit_a, i.unit_b)
+                  AND greatest(r.unit_a, r.unit_b) = greatest(i.unit_a, i.unit_b)
+                  AND ST_Intersects(r.geom, i.geom)
+                 WHERE i.kind = 'notch'
              )
         SELECT
             i.key, i.kind, i.area_m2, i.max_width_m, i.thinness_ratio,
@@ -68,18 +84,9 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                  THEN ST_Area(ST_Intersection(i.geom, gu.geom)) * {m2_per_deg2}
             END AS filled_area_m2,
             CASE WHEN i.kind = 'gap'
-                 THEN NOT EXISTS (
-                     SELECT 1 FROM "{open_gaps}" r
-                     WHERE ST_Intersects(r.geom, i.geom)
-                       AND ST_Area(ST_Intersection(r.geom, i.geom)) > 0
-                 )
+                 THEN i.key NOT IN (SELECT issue_key FROM gap_hits)
                  WHEN i.kind = 'notch'
-                 THEN NOT EXISTS (
-                     SELECT 1 FROM "{remaining}" r
-                     WHERE least(r.unit_a, r.unit_b) = least(i.unit_a, i.unit_b)
-                       AND greatest(r.unit_a, r.unit_b) = greatest(i.unit_a, i.unit_b)
-                       AND ST_Intersects(r.geom, i.geom)
-                 )
+                 THEN i.key NOT IN (SELECT key FROM notch_hits)
                  ELSE TRUE
             END AS fixed,
             NULL::BIGINT AS overlay_fid, NULL::VARCHAR AS reason,
@@ -100,11 +107,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
             'gap opened by the fix' AS reason
         )
         FROM "{open_gaps}" r
-        WHERE NOT EXISTS (
-            SELECT 1 FROM "{name}_02" i
-            WHERE i.kind = 'gap' AND ST_Intersects(r.geom, i.geom)
-              AND ST_Area(ST_Intersection(r.geom, i.geom)) > 0
-        )
+        WHERE r.key NOT IN (SELECT open_key FROM gap_hits)
     """)
     conn.execute(f'DROP TABLE IF EXISTS "{remaining}"')
     conn.execute(f'DROP TABLE IF EXISTS "{open_gaps}"')
