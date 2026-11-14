@@ -51,13 +51,11 @@ def _outer_depth(
     table: str,
     levels: list[int],
     code_columns: list,
-    *,
-    constant_root: bool,
 ) -> int:
     """Return the coarsest level if it has one unit (its outline), else one less."""
     code = code_columns[0]
     if code is None:
-        return min(levels) if constant_root else min(levels) - 1
+        return min(levels)
     units = conn.execute(f'SELECT COUNT(DISTINCT "{code}") FROM "{table}"').fetchall()
     return min(levels) if units[0][0] <= 1 else min(levels) - 1
 
@@ -87,13 +85,12 @@ def _labels(
 
 def _auto_detect(
     conn: DuckDBPyConnection, table_in: str, dissolved: str, levels: list[int]
-) -> tuple[list, dict[str, dict[int, str]], bool]:
-    """Dissolve at the detected finest level; return codes, families, constant root."""
+) -> tuple[list, dict[str, dict[int, str]]]:
+    """Dissolve at the detected finest level; return codes and families."""
     level_columns = detect_levels_with_root(conn, table_in)
-    constant_root = 0 in level_columns and not level_columns[0].group_by
     for n in levels:
-        is_root = n == 0 and constant_root
-        if not level_columns[n].group_by and len(level_columns) > 1 and not is_root:
+        cols = level_columns[n]
+        if not cols.group_by and len(level_columns) > 1 and not cols.is_root:
             msg = f"no reliable group-by column detected for level {n}"
             raise ValueError(msg)
     families = group_families_by_level(
@@ -105,7 +102,7 @@ def _auto_detect(
         verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
     dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
     families = generic_names_by_family(families, levels, code_columns)
-    return code_columns, families, constant_root
+    return code_columns, families
 
 
 def main(  # noqa: PLR0913
@@ -131,7 +128,6 @@ def main(  # noqa: PLR0913
         raise ValueError(msg)
 
     table_in = f"{name}_01"
-    constant_root = False
     dissolved = f"{name}_02_dissolved"
     if schema is not None:
         code_columns = [schema.code_field.format(n=n) for n in levels]
@@ -147,16 +143,12 @@ def main(  # noqa: PLR0913
             target_schema=schema,
         )
     else:
-        code_columns, families, constant_root = _auto_detect(
-            conn, table_in, dissolved, levels
-        )
+        code_columns, families = _auto_detect(conn, table_in, dissolved, levels)
 
     dissolved_columns = {
         r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
     }
-    outer_depth = _outer_depth(
-        conn, table_in, levels, code_columns, constant_root=constant_root
-    )
+    outer_depth = _outer_depth(conn, table_in, levels, code_columns)
     labels = _labels(families, levels, code_columns, dissolved_columns, outer_depth)
 
     conn.execute(f"""--sql

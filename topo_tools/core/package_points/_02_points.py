@@ -55,8 +55,6 @@ def _level_group_by(
     level_columns: dict[int, LevelColumns] | None,
     n: int,
     families: dict[str, dict[int, str]],
-    *,
-    allow_empty_root: bool = False,
 ) -> tuple[list[str], list[str]]:
     """One level's dissolve group_by and own identity columns."""
     own = [per_level[n] for per_level in families.values() if n in per_level]
@@ -64,11 +62,7 @@ def _level_group_by(
         return [schema.code_field.format(n=n)], own
 
     cluster = level_columns[n]
-    if (
-        not cluster.group_by
-        and len(level_columns) > 1
-        and not (n == 0 and allow_empty_root)
-    ):
+    if not cluster.group_by and len(level_columns) > 1 and not cluster.is_root:
         msg = f"no reliable group-by column detected for level {n}"
         raise ValueError(msg)
     return cluster.group_by, own or list(
@@ -128,16 +122,22 @@ def main(  # noqa: PLR0913
         conn.execute(f'ALTER TABLE "{table_in}" DROP "{depth_column}"')
 
     level_columns: dict[int, LevelColumns] | None = None
-    root_injected = False
     if schema is None:
         level_columns = detect_levels_with_root(conn, table_in)
-        root_injected = 0 in level_columns and not level_columns[0].group_by
     families = _identity_families(
         conn, table_in, schema, level_columns, levels, depth_column=depth_column
     )
 
-    root_code = (
-        level_code_columns(level_columns, families, [0])[0] if root_injected else None
+    codes = (
+        dict(
+            zip(
+                levels,
+                level_code_columns(level_columns, families, levels),
+                strict=True,
+            )
+        )
+        if level_columns is not None
+        else {}
     )
 
     columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
@@ -147,9 +147,7 @@ def main(  # noqa: PLR0913
         raise ValueError(msg)
     point_tables = []
     for n in selected:
-        group_by, own = _level_group_by(
-            schema, level_columns, n, families, allow_empty_root=root_injected
-        )
+        group_by, own = _level_group_by(schema, level_columns, n, families)
         if schema is None and group_by:
             verify_functional_cluster(conn, table_in, group_by[0], group_by)
 
@@ -169,7 +167,7 @@ def main(  # noqa: PLR0913
         dissolved_columns = {
             r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
         }
-        code = group_by[0] if group_by else root_code
+        code = group_by[0] if group_by else codes.get(n)
         renames = level_family_names(families, n, code)
         check_generic_names(
             [(col, renames.get(col, col)) for col in own if col in dissolved_columns],

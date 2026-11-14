@@ -356,8 +356,27 @@ def test_detect_root_level_digit_anchored(conn):
     level_columns = detect_level_columns(conn, "t_01")
     root = detect_root_level(conn, "t_01", level_columns)
     assert root is not None
-    assert set(root.identity_columns) == {"adm0_pcode", "adm0_name"}
-    assert root.group_by == []
+    level, cols = root
+    assert level == 0
+    assert set(cols.identity_columns) == {"adm0_pcode", "adm0_name"}
+    assert cols.group_by == []
+    assert cols.is_root
+
+
+@pytest.mark.parametrize(("root", "expected"), [("adm1", 1), ("adm0", 0)])
+def test_detect_root_level_numbered_by_own_digit(conn, root, expected):
+    """A constant root takes its own level number, not always 0."""
+    conn.execute(f"""--sql
+        CREATE TABLE t_01 AS
+        SELECT row_number() OVER () AS fid, 'C0' AS {root}_pcode, *
+        FROM (VALUES
+            ('P1', 'A1'), ('P1', 'A2'), ('P2', 'B1')
+        ) AS v(adm2_pcode, adm3_pcode)
+    """)
+    level_columns = detect_level_columns(conn, "t_01")
+    root_level = detect_root_level(conn, "t_01", level_columns)
+    assert root_level is not None
+    assert root_level[0] == expected
 
 
 def test_detect_root_level_word_anchored(conn):
@@ -372,7 +391,9 @@ def test_detect_root_level_word_anchored(conn):
     level_columns = detect_level_columns(conn, "t_01")
     root = detect_root_level(conn, "t_01", level_columns)
     assert root is not None
-    assert set(root.identity_columns) == {"country_code", "country_name"}
+    level, cols = root
+    assert level == min(level_columns) - 1
+    assert set(cols.identity_columns) == {"country_code", "country_name"}
 
 
 def test_detect_level_columns_finds_trailing_name_only_leaf(conn):

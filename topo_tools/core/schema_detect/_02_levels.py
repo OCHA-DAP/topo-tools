@@ -194,10 +194,11 @@ def _root_rows(
     anchor = root_anchor(conn, table, detected)
     if root is None or anchor is None or coarsest < 1:
         return []
+    level, root_columns = root
     code_family = next(r.family for r in rows if r.is_code and r.level == coarsest)
     found = [
-        _column_row(coarsest - 1, c, anchor, is_code=False)
-        for c in root.identity_columns
+        _column_row(level, c, anchor, is_code=False)
+        for c in root_columns.identity_columns
     ]
     return [_Row(**{**r.__dict__, "is_code": r.family == code_family}) for r in found]
 

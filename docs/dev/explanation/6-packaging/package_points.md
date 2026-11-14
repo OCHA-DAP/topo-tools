@@ -68,7 +68,10 @@ a real level, so it covers a digit anchor like `adm0_*` beside `adm1_*`/
 `adm2_*` just as well as a word anchor like `country_*` beside `state_*`/
 `county_*`), constant across the whole table; it's `None` if no such
 unassigned family exists or more than one does, rather than guess. When
-found, it's treated as its own level, dissolved with an empty `group_by`
+found, it's treated as its own level, numbered by its own anchor digit when
+that is coarser than every detected level (so an `adm1_*` root above
+`adm2_*`/`adm3_*` is level 1), else one above the coarsest (a word anchor
+like `country_*`), dissolved with an empty `group_by`
 (the whole table collapses to one row), excluded from every other level's
 own dissolve like any other level, and renamed via
 `group_families_by_level()`'s naming-anchor injection into the same

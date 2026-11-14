@@ -29,8 +29,9 @@ sidebar:
   an explicit pair. Otherwise each level MUST hold its detected identity
   columns plus any column matching its naming anchor ignoring case and
   separators, and a whole-table-constant root level
-  (`core.schema_map.detect_root_level()`) MUST be added one level above the
-  coarsest.
+  (`core.schema_map.detect_root_level()`) MUST be added at its own anchor's
+  level number when that is coarser than every detected level (`adm1_*`
+  above `adm2_*`/`adm3_*` at 1), else one level above the coarsest.
 - A level's code column MUST be the one in the naming family most levels
   use for their code.
 - `levels-undetected` MUST also be reported, with the same reason, when

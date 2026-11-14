@@ -303,3 +303,25 @@ def test_auto_detected_constant_root_writes_admin0(tmp_path):
             f"SELECT adm0_pcode, adm0_name FROM '{tmp_path / 'out_0.parquet'}'"
         ).fetchall()
     assert admin0 == [("SEN", "Senegal")]
+
+
+def test_constant_root_takes_its_own_level_number(tmp_path):
+    """A constant adm1 root above adm2/adm3 writes admin1, never admin0."""
+    rows = [
+        {
+            "adm1_pcode": "SN01",
+            "adm2_pcode": r["adm1_pcode"],
+            "adm3_pcode": r["adm2_pcode"],
+            "wkt": r["wkt"],
+        }
+        for r in _BASE_ROWS
+    ]
+    input_path = tmp_path / "admin3.parquet"
+    _write_synthetic(input_path, rows)
+    package_polygons(input_path, tmp_path / "out_{n}.parquet")
+    assert not (tmp_path / "out_0.parquet").exists()
+    with duckdb.connect() as conn:
+        admin1 = conn.execute(
+            f"SELECT adm1_pcode FROM '{tmp_path / 'out_1.parquet'}'"
+        ).fetchall()
+    assert admin1 == [("SN01",)]

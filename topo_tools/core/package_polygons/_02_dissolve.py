@@ -47,8 +47,7 @@ def main(
             continue
         cluster = level_columns[n]
         # A constant root dissolves the whole layer into one unit.
-        is_root = n == 0 and cluster.identity_columns and not cluster.group_by
-        if not cluster.group_by and not is_root:
+        if not cluster.group_by and not cluster.is_root:
             msg = f"no reliable group-by column detected for level {n} in {table!r}"
             raise ValueError(msg)
         if cluster.group_by:
