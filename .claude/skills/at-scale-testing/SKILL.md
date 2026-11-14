@@ -42,11 +42,11 @@ mid-scale stress test without the full global run's cost).
 
 ## Picking an overlay layer (`edge-match` / `edge-mosaic`)
 
-Use `/Users/computer/GitHub/fieldmaps/adm0-generator/outputs/adm0/osm/intl/adm0_polygons.parquet`
+Use `/Users/computer/GitHub/fieldmaps/international/catalog/odbl/humanitarian/adm0-polygons/adm0_polygons.parquet`
 as the global admin0 overlay layer; it's outside the portolan catalog
 so it's safe to pass directly as `OVERLAY_FILE`. Also available at
-`https://data.fieldmaps.io/adm0/osm/intl/adm0_polygons.parquet` for anyone
-without local repo access.
+`https://data.source.coop/fieldmaps/international/odbl/humanitarian/adm0-polygons/adm0_polygons.parquet`
+for anyone without local repo access.
 
 ## Picking an old/new pair (`change`)
 
