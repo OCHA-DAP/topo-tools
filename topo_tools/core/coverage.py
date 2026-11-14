@@ -1680,19 +1680,14 @@ def _fill_enclosed_notch_gaps(conn: DuckDBPyConnection, ua: int, ub: int) -> Non
             )).geom AS h
             FROM parts
         )
-        SELECT h FROM holes n
-        WHERE NOT n.before AND NOT ST_IsEmpty(n.h)
-          AND NOT EXISTS (
-              SELECT 1 FROM holes o
-              WHERE o.before AND ST_Intersects(o.h, ST_PointOnSurface(n.h))
-          )
+        SELECT n.h FROM holes n
+        LEFT JOIN holes o ON o.before AND ST_Intersects(o.h, ST_PointOnSurface(n.h))
+        WHERE NOT n.before AND NOT ST_IsEmpty(n.h) AND o.h IS NULL
     """)
     conn.execute(f"""--sql
-        DELETE FROM _notch_holes n WHERE EXISTS (
-            SELECT 1 FROM _notch_all x
-            WHERE x.rnid NOT IN ({ua}, {ub}) AND ST_Intersects(x.geom, n.h)
-              AND ST_Area(ST_Intersection(x.geom, n.h)) > 0
-        )
+        DELETE FROM _notch_holes n USING _notch_all x
+        WHERE x.rnid NOT IN ({ua}, {ub}) AND ST_Intersects(x.geom, n.h)
+          AND ST_Area(ST_Intersection(x.geom, n.h)) > 0
     """)
     conn.execute("""--sql
         UPDATE _notch_one o SET

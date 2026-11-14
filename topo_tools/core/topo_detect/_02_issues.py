@@ -182,14 +182,15 @@ def main(
                unit_a, unit_b, geom
         FROM "{notches_tmp}" t
         -- A thin gap or overlap's own tips read as a notch; report it once.
-        WHERE NOT EXISTS (
-            SELECT 1 FROM "{gaps_tmp}" g WHERE ST_Intersects(t.geom, g.geom)
-        )
-          AND NOT EXISTS (
-            SELECT 1 FROM "{overlaps_tmp}" o
-            WHERE least(o.unit_a, o.unit_b) = least(t.unit_a, t.unit_b)
-              AND greatest(o.unit_a, o.unit_b) = greatest(t.unit_a, t.unit_b)
-              AND ST_Intersects(t.geom, o.geom)
+        WHERE t.n NOT IN (
+            SELECT t2.n FROM "{notches_tmp}" t2
+            JOIN "{gaps_tmp}" g ON ST_Intersects(t2.geom, g.geom)
+            UNION ALL
+            SELECT t2.n FROM "{notches_tmp}" t2
+            JOIN "{overlaps_tmp}" o
+              ON least(o.unit_a, o.unit_b) = least(t2.unit_a, t2.unit_b)
+             AND greatest(o.unit_a, o.unit_b) = greatest(t2.unit_a, t2.unit_b)
+             AND ST_Intersects(t2.geom, o.geom)
         )
     """)
 
