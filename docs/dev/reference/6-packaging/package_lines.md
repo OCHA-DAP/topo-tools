@@ -39,8 +39,9 @@ sidebar:
   single-letter-prefixed generic columns, `a_*` for one side and `b_*` for
   the other (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), one pair of
   columns per identity kind the finest level's own naming family
-  detects (`group_families_by_level()`/`level_family_names()`, or an
-  explicit schema's fixed `code`/`name`), never a raw `fid`. Single-letter
+  detects (`group_families_by_level()`/`level_family_names()`, or, for an
+  explicit schema, `generic_families()`: `code`, `name` and each sibling's
+  suffix, e.g. `name1`, `pcode`), never a raw `fid`. Single-letter
   prefixes keep every generated field name within a Shapefile DBF field's
   10-character limit. There is no `boundary_type` column: a row is
   exterior exactly when every `b_*` column is `NULL`, never shared.

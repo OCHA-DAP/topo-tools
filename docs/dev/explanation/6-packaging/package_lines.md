@@ -92,8 +92,9 @@ multi-part/archipelago fid, and a corner-only touch).
    column, not `left_fid` alone.
 8. Resolve each side's `fid` to the finest level's own detected identity
    families (`group_families_by_level()`/`level_family_names()`, the same
-   naming-anchor mechanism `package-points` uses, or an explicit schema's
-   fixed `code`/`name`), one column pair per family under `a_*`/`b_*`
+   naming-anchor mechanism `package-points` uses, or, for an explicit
+   schema, `generic_families()`: `code`, `name` and each sibling's suffix,
+   e.g. `name1`, `pcode`), one column pair per family under `a_*`/`b_*`
    (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), then drop
    `left_fid`/`right_fid` from the final output: `fid` is a fresh
    `row_number()` per run, not a stable identifier a caller could join

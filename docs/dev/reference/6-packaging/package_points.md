@@ -40,8 +40,9 @@ sidebar:
 - Every level's own identity columns, including a whole-table-constant
   root's, MUST land under one name shared across every level: the source
   file's own naming convention (e.g. `pcode`, `name`, derived by stripping
-  each level's own naming anchor), or an explicit schema's fixed
-  `code`/`name`. No level-numbered column (e.g. `adm1_pcode`) MUST ever
+  each level's own naming anchor), or, for an explicit schema,
+  `code`/`name` for its two fields and each sibling family's suffix
+  (`name1`, `pcode`). No level-numbered column (e.g. `adm1_pcode`) MUST ever
   appear in the output: an ancestor level's identity columns are excluded
   from a finer level's own dissolve, the same as any other level's, rather
   than kept as a repeated, numbered ancestor value.
@@ -51,11 +52,10 @@ sidebar:
 - `package-points` performs no topology hard gate; it is a derived
   cartographic layer, not a coverage layer.
 - `package-points` MUST combine every level's points into one output file.
-  A column that cannot generalize to every level combined into the output
-  (a finer level's own identity column, or an attribute that would only
-  ever be `NULL` on a coarser level's rows) MUST be excluded from the
-  combined output entirely, never carried through as an always-`NULL`
-  column; the combine MUST NOT assume a fixed column set across levels.
+  Every output row MUST carry only geometry, its own level's generic
+  identity columns and the depth column. No other input column MUST appear
+  in the output: metadata stays on the polygons, joined back by `code` and
+  the depth column.
 
 ## Configuration (`api.package_points.package_points()` / CLI)
 

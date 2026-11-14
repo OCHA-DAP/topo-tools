@@ -48,6 +48,7 @@ sidebar:
   | `level-skipped` | error | a level number between the coarsest and finest found has no columns |
   | `multiple-parents` | error | one code under more than one code of the next coarser level |
   | `orphan-child` | error | a code whose next coarser level's code is blank |
+  | `varying-column` | error | a non-numeric column outside the level columns with more than one value within one unit of the coarsest level |
   | `supplemental-column` | warn | a column structural detection sets aside as a coarser grouping, not a level |
   | `column-naming` | warn | a level column named unlike its match at other levels, by case, separators or the level's naming anchor |
   | `column-set-mismatch` | warn | a level lacking a column family found at two or more other levels |

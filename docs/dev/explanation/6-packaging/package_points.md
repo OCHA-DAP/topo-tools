@@ -44,10 +44,8 @@ list.
    dissolved row count against the input's own distinct code-column
    count, renames that level's own identity columns to one name shared
    across every level (`group_families_by_level()`'s naming-anchor
-   stripping for auto-detection, or a fixed `code`/`name` for an explicit
-   schema), excludes any remaining column that can't generalize to a
-   coarser level (an attribute already dropped from a coarser level's own
-   dissolve), computes each dissolved unit's
+   stripping for auto-detection, or `generic_families()` for an explicit
+   schema), keeps only those columns, computes each dissolved unit's
    `ST_MaximumInscribedCircle(geom).center` as its label point, stamps
    the depth column, and checks every point is `ST_Covers`-ed by its own
    source polygon. Every level's points table is combined via
@@ -73,11 +71,7 @@ own dissolve like any other level, and renamed via
 `group_families_by_level()`'s naming-anchor injection into the same
 `pcode`/`name` columns every other level's own row uses, rather than
 surviving under a separate `adm0_pcode`/`adm0_name` (or `country_code`/
-`country_name`) name. The root's own iteration is also excluded from the
-coarsest-level `generalizable` set used to decide what a finer level may
-keep, since it has nothing coarser to compare against and would otherwise
-wrongly veto attributes real
-levels can keep.
+`country_name`) name.
 
 ## Why `ST_MaximumInscribedCircle`, not the centroid
 
