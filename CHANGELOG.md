@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-14
+
+### Fixed
+
+- `package-lines` and `package` handle admin units with thousands of parts
+  without running out of memory, at about a third of the peak memory on
+  island-heavy layers. Output is unchanged.
+
 ## [0.21.0] - 2026-11-13
 
 ### Added
@@ -1006,7 +1014,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.19.0...v0.19.1
