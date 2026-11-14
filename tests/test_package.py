@@ -154,6 +154,31 @@ def test_overwrite_and_name_field_code_field_passed_through(admin2_input, tmp_pa
         )
 
 
+def test_min_level_leaves_out_coarser_levels(admin2_input, tmp_path):
+    """min_level=2 writes no admin1 polygons, points or lines below level 2."""
+    out = tmp_path / "out"
+    package(
+        admin2_input,
+        str(out / "{x}.parquet"),
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+        min_level=2,
+        block=False,
+    )
+    assert not (out / "admin1.parquet").exists()
+    assert (out / "admin2.parquet").exists()
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        point_levels = conn.execute(
+            f"SELECT DISTINCT adm_lvl FROM '{out / 'points.parquet'}'"
+        ).fetchall()
+        line_levels = conn.execute(
+            f"SELECT DISTINCT adm_lvl FROM '{out / 'lines.parquet'}'"
+        ).fetchall()
+    assert point_levels == [(2,)]
+    assert line_levels == [(2,)]
+
+
 def test_cli_default_naming(admin2_input):
     result = CliRunner().invoke(
         cli,

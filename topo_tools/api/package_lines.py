@@ -39,6 +39,7 @@ def package_lines(  # noqa: PLR0913
     code_field: str | None = None,
     *,
     depth_column: str = "adm_lvl",
+    min_level: int | None = None,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
     overwrite: bool = True,
@@ -84,7 +85,9 @@ def package_lines(  # noqa: PLR0913
                     levels = detect_levels(conn, f"{name}_01", schema)
                 else:
                     levels = sorted(detect_level_columns_or_single(conn, f"{name}_01"))
-                boundaries_stage.main(conn, name, levels, schema, depth_column)
+                boundaries_stage.main(
+                    conn, name, levels, schema, depth_column, min_level=min_level
+                )
             elif s == "outputs":
                 outputs.main(conn, name, output_path, debug=debug)
         maybe_export_debug_tables(

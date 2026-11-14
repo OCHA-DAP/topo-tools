@@ -25,6 +25,7 @@ Coverage-cleans INPUT_FILE, then runs schema-detect, topo-detect, code-detect an
 - `--output-name-field TEXT`: Rename the `--name-field` columns to this pattern in every output, e.g. 'adm{n}_label'. Needs `--name-field` and `--code-field`.
 - `--output-code-field TEXT`: Rename the `--code-field` columns to this pattern in every output, e.g. 'adm{n}_pcode'. Needs `--name-field` and `--code-field`.
 - `--aggregation TEXT`: How package-polygons combines a column whose values differ inside one unit, as 'column=function', where function is sum, min, max, avg or first. By default numbers are summed and other columns dropped. Repeat for more columns.
+- `--min-level INTEGER`: Lowest admin level to write in every output, e.g. 1 to leave out the admin0 polygons and points, and the outer edges and admin0 borders in lines. Without it, every level is written.
 - `--no-clean`: Skip the coverage clean and the topology check, writing invalid edges to the package-polygons issues files instead of stopping. For inputs too large to clean, such as a global layer.
 - `--no-block`: Package even when the schema, topology, code or name checks find errors. The reports are still written.
 - `--overwrite BOOLEAN`: Replace output files that already exist. Pass `--overwrite=false` to stop with an error instead. [default: True]
@@ -50,4 +51,10 @@ A global layer too large to clean, invalid edges reported instead:
 
 ```sh
 topo-tools package global_admin2.parquet --no-clean
+```
+
+Leave out admin0, e.g. when it comes from another layer:
+
+```sh
+topo-tools package global_admin2.parquet --min-level 1
 ```

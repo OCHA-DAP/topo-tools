@@ -104,12 +104,14 @@ def _identity_families(  # noqa: PLR0913
     return group_families_by_level(conn, table, level_columns)
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     levels: list[int],
     schema: TargetSchema | None,
     depth_column: str,
+    *,
+    min_level: int | None = None,
 ) -> None:
     """Dissolve `{name}_01` per level and union its label points into `{name}_02`.
 
@@ -137,7 +139,7 @@ def main(
 
     columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
     point_tables = []
-    for n in levels:
+    for n in [lvl for lvl in levels if min_level is None or lvl >= min_level]:
         group_by, own = _level_group_by(
             schema, level_columns, n, families, allow_empty_root=root_injected
         )

@@ -92,6 +92,7 @@ def _load_plan(  # noqa: PLR0913, PLR0917
     schema: TargetSchema | None,
     *,
     overwrite: bool,
+    min_level: int | None = None,
 ) -> tuple[TargetSchema | None, list[int], list[LevelOutput]]:
     """Detect levels (explicit schema, or structural auto-detect) and resolve plan."""
     table = f"{name}_01"
@@ -99,6 +100,11 @@ def _load_plan(  # noqa: PLR0913, PLR0917
         levels = detect_levels(conn, table, schema)
     else:
         levels = sorted(detect_level_columns_or_single(conn, table))
+    if min_level is not None:
+        levels = [n for n in levels if n >= min_level]
+        if not levels:
+            msg = f"no admin level at or above min_level {min_level}"
+            raise ValueError(msg)
     plan = _plan_levels(
         name, input_path, output_path, issues_path, levels, overwrite=overwrite
     )
@@ -145,6 +151,7 @@ def package_polygons(  # noqa: PLR0913
     output_name_field: str | None = None,
     output_code_field: str | None = None,
     aggregations: dict[str, str] | None = None,
+    min_level: int | None = None,
     threads: int | None = None,
     tmp_dir: str | Path | None = None,
     overwrite: bool = True,
@@ -195,6 +202,7 @@ def package_polygons(  # noqa: PLR0913
                     issues_path,
                     schema,
                     overwrite=overwrite,
+                    min_level=min_level,
                 )
                 dissolve_stage.main(
                     conn, name, levels, schema, aggregations=aggregations
@@ -209,6 +217,7 @@ def package_polygons(  # noqa: PLR0913
                         issues_path,
                         schema,
                         overwrite=overwrite,
+                        min_level=min_level,
                     )
                 outputs.main(
                     conn,

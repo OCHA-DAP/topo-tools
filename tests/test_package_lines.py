@@ -318,15 +318,23 @@ def test_multi_level_classification(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         shared = conn.execute(f"""
-            SELECT ST_X(ST_PointN(geometry, 1)), ST_X(ST_PointN(geometry, 2)), adm_lvl
+            SELECT ST_X(ST_PointN(geometry, 1)), ST_X(ST_PointN(geometry, 2)),
+                   adm_lvl, a_code, b_code
             FROM '{output_path}' WHERE b_code IS NOT NULL
         """).fetchall()
-    by_x = {frozenset((x1, x2)): lvl for x1, x2, lvl in shared}
+        exterior = conn.execute(f"""
+            SELECT DISTINCT adm_lvl, a_code FROM '{output_path}'
+            WHERE b_code IS NULL ORDER BY a_code
+        """).fetchall()
+    by_x = {frozenset((x1, x2)): row for x1, x2, *row in shared}
     finer_level = 2
-    coarser_level = 1
-    assert by_x[frozenset((10.0, 10.0))] == finer_level  # X1-X2, same P1
-    assert by_x[frozenset((30.0, 30.0))] == finer_level  # Y1-Y2, same P2
-    assert by_x[frozenset((20.0, 20.0))] == coarser_level  # X2-Y1, P1 vs P2
+    # Each row is labelled with the units at its own level.
+    assert by_x[frozenset((10.0, 10.0))][0] == finer_level  # X1-X2, same P1
+    assert set(by_x[frozenset((10.0, 10.0))][1:]) == {"X1", "X2"}
+    assert by_x[frozenset((30.0, 30.0))][0] == finer_level  # Y1-Y2, same P2
+    assert by_x[frozenset((20.0, 20.0))][0] == 1  # X2-Y1, P1 vs P2
+    assert set(by_x[frozenset((20.0, 20.0))][1:]) == {"P1", "P2"}
+    assert exterior == [(0, "P1"), (0, "P2")]
 
 
 def test_cli_default_naming(tmp_path):

@@ -35,11 +35,12 @@ sidebar:
   into atomic `LineString` rows; a unit with multiple disjoint exterior
   segments MUST produce one row per segment, never a single
   `MultiLineString`.
-- Every output row MUST carry each side's own finest-level identity under
+- Every output row MUST carry each side's identity at the row's own depth
+  (the coarsest detected level for an outer edge) under
   single-letter-prefixed generic columns, `a_*` for one side and `b_*` for
   the other (e.g. `a_pcode`/`b_pcode`, `a_name`/`b_name`), one pair of
-  columns per identity kind the finest level's own naming family
-  detects (`group_families_by_level()`/`level_family_names()`, or, for an
+  columns per identity kind the detected levels' naming families
+  detect (`group_families_by_level()`/`level_family_names()`, or, for an
   explicit schema, `generic_families()`: `code`, `name` and each sibling's
   suffix, e.g. `name1`, `pcode`), never a raw `fid`. Single-letter
   prefixes keep every generated field name within a Shapefile DBF field's
@@ -49,7 +50,10 @@ sidebar:
   level at which its two sides' code columns first differ, and every
   exterior row one level coarser than the coarsest detected level
   (`min(levels) - 1`), into a depth column (`adm_lvl` by default,
-  overridable via `depth_column`).
+  overridable via `depth_column`). An outer edge (`min(levels) - 1`, e.g.
+  -1) is unclassified: it MAY be a coastline or a land border with an area
+  outside the input. With adm0 present, depth 0 is a border between two
+  adm0 units.
 - `package-lines` MUST raise `ValueError` if any finest-level unit is
   absent from every output row (matched internally by `fid`, dropped from
   the output once the `a_*`/`b_*` columns resolve each side's identity).

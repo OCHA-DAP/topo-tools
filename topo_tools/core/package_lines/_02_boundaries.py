@@ -43,12 +43,49 @@ def _check_every_fid_present(
         raise ValueError(msg)
 
 
-def main(
+def _generic_names(
+    families: dict[str, dict[int, str]], levels: list[int], code_columns: list
+) -> dict[str, dict[int, str]]:
+    """Rekey auto-detected families by the generic name package-points uses."""
+    renamed = {}
+    for kind, per_level in families.items():
+        lvl = max(per_level)
+        code = code_columns[levels.index(lvl)] if lvl in levels else None
+        generic = level_family_names({kind: per_level}, lvl, code)[per_level[lvl]]
+        renamed[generic] = per_level
+    return renamed
+
+
+def _labels(
+    families: dict[str, dict[int, str]],
+    levels: list[int],
+    code_columns: list,
+    dissolved_columns: set[str],
+) -> dict[str, dict[int, str]]:
+    """Each label's source column per row depth; outer edges use the coarsest."""
+    label_levels = {lvl: lvl for lvl in levels} | {min(levels) - 1: min(levels)}
+    if not families:
+        families = {"code": dict(zip(levels, code_columns, strict=True))}
+    labels = {
+        generic: {
+            depth: per_level[lvl]
+            for depth, lvl in label_levels.items()
+            if per_level.get(lvl) in dissolved_columns
+        }
+        for generic, per_level in families.items()
+    }
+    labels = {generic: by_depth for generic, by_depth in labels.items() if by_depth}
+    return labels or {"code": {}}
+
+
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     levels: list[int],
     schema: TargetSchema | None,
     depth_column: str,
+    *,
+    min_level: int | None = None,
 ) -> None:
     """Dissolve at the finest level, then extract and classify its boundary network.
 
@@ -65,13 +102,9 @@ def main(
     if schema is not None:
         code_columns = [schema.code_field.format(n=n) for n in levels]
         columns = [r[0] for r in conn.execute(f'DESCRIBE "{table_in}"').fetchall()]
-        finest_generics = {
-            generic: per_level[finest]
-            for generic, per_level in generic_families(
-                columns, levels, schema.name_field, schema.code_field
-            ).items()
-            if finest in per_level
-        }
+        families = generic_families(
+            columns, levels, schema.name_field, schema.code_field
+        )
         dissolve_stage.main(
             conn,
             table_in,
@@ -93,20 +126,16 @@ def main(
         if finest_group_by:
             verify_functional_cluster(conn, table_in, code_columns[-1], finest_group_by)
         dissolve_stage.main(conn, table_in, dissolved, group_by=finest_group_by)
-        families = group_families_by_level(conn, table_in, level_columns)
-        renamed = level_family_names(families, finest, code_columns[-1])
-        finest_generics = {renamed.get(col, col): col for col in finest_group_by}
+        families = _generic_names(
+            group_families_by_level(conn, table_in, level_columns),
+            levels,
+            code_columns,
+        )
 
     dissolved_columns = {
         r[0] for r in conn.execute(f'DESCRIBE "{dissolved}"').fetchall()
     }
-    finest_generics = {
-        generic: col
-        for generic, col in finest_generics.items()
-        if col in dissolved_columns
-    }
-    if not finest_generics:
-        finest_generics = {"code": None}
+    labels = _labels(families, levels, code_columns, dissolved_columns)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_parts" AS
@@ -200,35 +229,35 @@ def main(
     """)
 
     classification = _classification_sql(levels, code_columns)
-
-    def _side_expr(table: str, col: str | None) -> str:
-        return f'{table}."{col}"' if col else "NULL"
-
-    a_cols = ", ".join(
-        f'{{table}}."{col}" AS "a_{generic}"' if col else f'NULL AS "a_{generic}"'
-        for generic, col in finest_generics.items()
-    )
-    shared_b_cols = ", ".join(
-        f'{_side_expr("r", col)} AS "b_{generic}"'
-        for generic, col in finest_generics.items()
-    )
-    exterior_b_cols = ", ".join(f'NULL AS "b_{generic}"' for generic in finest_generics)
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02" AS
-        SELECT s.left_fid, s.right_fid,
-               {a_cols.format(table="l")}, {shared_b_cols},
-               {classification} AS "{depth_column}", s.geom
+        CREATE OR REPLACE TABLE "{name}_02_rows" AS
+        SELECT s.left_fid, s.right_fid, {classification} AS depth, s.geom
         FROM "{name}_02_shared_atomic" s
         JOIN "{dissolved}" l ON l.fid = s.left_fid
         JOIN "{dissolved}" r ON r.fid = s.right_fid
+        UNION ALL
+        SELECT left_fid, right_fid, {min(levels) - 1} AS depth, geom
+        FROM "{name}_02_exterior"
+    """)
 
-        UNION ALL BY NAME
+    def _label(side: str, by_depth: dict[int, str]) -> str:
+        cases = "".join(
+            f'WHEN {depth} THEN {side}."{col}" ' for depth, col in by_depth.items()
+        )
+        return f"CASE s.depth {cases}END" if cases else "NULL"
 
-        SELECT e.left_fid, e.right_fid,
-               {a_cols.format(table="d")}, {exterior_b_cols},
-               {min(levels) - 1} AS "{depth_column}", e.geom
-        FROM "{name}_02_exterior" e
-        JOIN "{dissolved}" d ON d.fid = e.left_fid
+    label_sql = ", ".join(
+        f'{_label(side, by_depth)} AS "{side}_{generic}"'
+        for side in ("a", "b")
+        for generic, by_depth in labels.items()
+    )
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02" AS
+        SELECT s.left_fid, s.right_fid, {label_sql},
+               s.depth AS "{depth_column}", s.geom
+        FROM "{name}_02_rows" s
+        JOIN "{dissolved}" a ON a.fid = s.left_fid
+        LEFT JOIN "{dissolved}" b ON b.fid = s.right_fid
     """)
 
     _check_every_fid_present(conn, dissolved, f"{name}_02")
@@ -238,6 +267,7 @@ def main(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02" AS
         SELECT * EXCLUDE (left_fid, right_fid) FROM "{name}_02"
+        {f'WHERE "{depth_column}" >= {min_level}' if min_level is not None else ""}
         ORDER BY left_fid, right_fid NULLS LAST, hash(geom)
     """)
 
@@ -252,5 +282,6 @@ def main(
         "exterior_raw",
         "shared_atomic",
         "exterior",
+        "rows",
     ]:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_{table}"')

@@ -953,6 +953,15 @@ def package_lines(  # noqa: PLR0913, PLR0917
     "for more columns.",
 )
 @click.option(
+    "--min-level",
+    envvar="MIN_LEVEL",
+    type=int,
+    default=None,
+    help="Lowest admin level to write in every output, e.g. 1 to leave out "
+    "the admin0 polygons and points, and the outer edges and admin0 borders "
+    "in lines. Without it, every level is written.",
+)
+@click.option(
     "--no-clean",
     envvar="NO_CLEAN",
     is_flag=True,
@@ -1005,6 +1014,7 @@ def package(  # noqa: PLR0913, PLR0917
     output_name_field: str | None,
     output_code_field: str | None,
     aggregations: tuple[str, ...],
+    min_level: int | None,
     no_clean: bool,  # noqa: FBT001
     no_block: bool,  # noqa: FBT001
     overwrite: bool,  # noqa: FBT001
@@ -1032,6 +1042,10 @@ def package(  # noqa: PLR0913, PLR0917
     \b
       # A global layer too large to clean, invalid edges reported instead
       topo-tools package global_admin2.parquet --no-clean
+
+    \b
+      # Leave out admin0, e.g. when it comes from another layer
+      topo-tools package global_admin2.parquet --min-level 1
     """
     logger.info("--debug=%s", debug)
     try:
@@ -1043,6 +1057,7 @@ def package(  # noqa: PLR0913, PLR0917
             output_name_field=output_name_field,
             output_code_field=output_code_field,
             aggregations=_parse_pairs(aggregations, "--aggregation", "column=function"),
+            min_level=min_level,
             clean=not no_clean,
             block=not no_block,
             threads=threads,
