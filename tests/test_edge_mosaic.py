@@ -9,7 +9,12 @@ from click.testing import CliRunner
 import topo_tools.core.edge_extend.attempt as attempt_module
 from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
-from topo_tools.api.edge_mosaic import _load_nearby_originals, _paired_original, mosaic
+from topo_tools.api.edge_mosaic import (
+    _load_nearby_originals,
+    _needs_originals,
+    _paired_original,
+    mosaic,
+)
 from topo_tools.cli.main import cli
 from topo_tools.core.assign._inputs import load_input, load_original
 from topo_tools.core.coverage import has_invalid_edges
@@ -1682,7 +1687,7 @@ def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows)
     assert output_path.exists()
     assert "runs without originals" in caplog.text
     if original_rows:
-        assert "no detectable code column" in caplog.text
+        assert f"no detectable code column, so pairs nothing in {inputs}" in caplog.text
 
 
 @pytest.mark.parametrize("multi", [False, True], ids=["single", "multi"])
@@ -1702,7 +1707,7 @@ def test_one_feature_input_pairs_no_original_quietly(tmp_path, caplog, multi):
     assert "original" not in caplog.text
 
 
-def test_far_unkeyed_original_warns_only_not_near(tmp_path, caplog):
+def test_far_unkeyed_original_skips_code_warning(tmp_path, caplog):
     inputs = tmp_path / "in.parquet"
     _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
     far = tmp_path / "missing.parquet"
@@ -1714,6 +1719,20 @@ def test_far_unkeyed_original_warns_only_not_near(tmp_path, caplog):
         )
     assert "none is near it" in caplog.text
     assert "no detectable code column" not in caplog.text
+
+
+def test_one_feature_input_drops_previous_original_view(tmp_path):
+    pair, single = tmp_path / "pair.parquet", tmp_path / "single.parquet"
+    _write_synthetic(pair, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(single, _INPUT_WKT[2:3], codes=True)
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [pair])
+        load_original(conn, "t", {pair: "adm1_pcode"})
+        assert _paired_original(conn, "t") is not None
+        load_input(conn, "t", [single])
+        assert not _needs_originals(conn, "t", single)
+        assert _paired_original(conn, "t") is None
 
 
 @pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])
