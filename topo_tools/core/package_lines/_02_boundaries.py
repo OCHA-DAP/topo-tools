@@ -163,13 +163,13 @@ def main(  # noqa: PLR0913
     """)
     parts = f"{name}_02_parts"
     grid_pairs(
-        conn, parts, parts, f"{parts}_pairs", on="l.fid < r.fid", tol=0, key="fid"
+        conn, parts, parts, f"{name}_02_tmp1", on="l.fid < r.fid", tol=0, key="fid"
     )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_pairs" AS
-        SELECT DISTINCT pid AS left_fid, near_pid AS right_fid FROM "{parts}_pairs"
+        SELECT DISTINCT pid AS left_fid, near_pid AS right_fid FROM "{name}_02_tmp1"
     """)
-    conn.execute(f'DROP TABLE IF EXISTS "{parts}_pairs"')
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp1"')
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_boundary" AS
         SELECT fid, ST_Boundary(geom) AS boundary FROM "{dissolved}"
