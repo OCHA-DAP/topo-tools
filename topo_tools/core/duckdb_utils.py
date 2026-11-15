@@ -132,6 +132,8 @@ def get_connection(
     conn.execute("SET enable_progress_bar = false")
     conn.execute("SET geometry_always_xy = true")
     conn.execute("SET preserve_insertion_order = false")
+    # DuckDB 2.0.0 drops rows when a WHERE on ST_* scans a shredded geometry column.
+    conn.execute("SET geometry_minimum_shredding_size = -1")
     if threads is not None:
         conn.execute(f"SET threads = {threads}")
     return ProfiledConnection(conn, debug=debug)
@@ -178,6 +180,23 @@ def quote_identifier(name: str) -> str:
 def quote_literal(value: str) -> str:
     """Single-quote a SQL string literal, escaping any embedded single-quote."""
     return "'" + value.replace("'", "''") + "'"
+
+
+def create_lookup_copy(conn: DuckDBPyConnection, source: str, target: str) -> None:
+    """Copy source into target with geom uncompressed, for repeated per-fid reads.
+
+    A compressed geom column is decompressed whole to read even one row.
+    """
+    columns = conn.execute(f"DESCRIBE {quote_identifier(source)}").fetchall()
+    ddl = ", ".join(
+        f"{quote_identifier(c)} {t}"
+        + (" USING COMPRESSION uncompressed" if c == "geom" else "")
+        for c, t, *_ in columns
+    )
+    src, dst = quote_identifier(source), quote_identifier(target)
+    conn.execute(f"DROP TABLE IF EXISTS {dst}")
+    conn.execute(f"CREATE TABLE {dst} ({ddl})")
+    conn.execute(f"INSERT INTO {dst} SELECT * FROM {src}")
 
 
 def bbox_columns_sql(geom_expr: str) -> str:

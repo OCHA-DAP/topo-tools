@@ -3,6 +3,8 @@
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import generic_families
+from topo_tools.core.constants import SUBDIVIDE_MAX_VERTICES, SUBDIVIDE_MIN_VERTICES
+from topo_tools.core.coverage import grid_pairs
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
@@ -160,14 +162,15 @@ def main(  # noqa: PLR0913
         SELECT fid, geom, {bbox_columns_sql("geom")}
         FROM (SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom FROM "{dissolved}")
     """)
+    parts = f"{name}_02_parts"
+    grid_pairs(
+        conn, parts, parts, f"{name}_02_tmp1", on="l.fid < r.fid", tol=0, key="fid"
+    )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_pairs" AS
-        SELECT DISTINCT a.fid AS left_fid, b.fid AS right_fid
-        FROM "{name}_02_parts" a JOIN "{name}_02_parts" b
-          ON a.fid < b.fid
-          AND a.xmin <= b.xmax AND a.xmax >= b.xmin
-          AND a.ymin <= b.ymax AND a.ymax >= b.ymin
+        SELECT DISTINCT pid AS left_fid, near_pid AS right_fid FROM "{name}_02_tmp1"
     """)
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp1"')
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_boundary" AS
         SELECT fid, ST_Boundary(geom) AS boundary FROM "{dissolved}"
@@ -188,14 +191,15 @@ def main(  # noqa: PLR0913
         JOIN "{dissolved}" wr ON wr.fid = p.right_fid
         WHERE ST_Touches(wl.geom, wr.geom)
     """)
+    _split_long_parts(conn, f"{name}_02_boundary_parts", f"{name}_02_tmp2")
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_shared" AS
         WITH pieces AS (
             SELECT t.left_fid, t.right_fid,
                    ST_CollectionExtract(ST_Intersection(lp.geom, rp.geom), 2) AS geom
             FROM "{name}_02_touching" t
-            JOIN "{name}_02_boundary_parts" lp ON lp.fid = t.left_fid
-            JOIN "{name}_02_boundary_parts" rp ON rp.fid = t.right_fid
+            JOIN "{name}_02_tmp2" lp ON lp.fid = t.left_fid
+            JOIN "{name}_02_tmp2" rp ON rp.fid = t.right_fid
               AND lp.xmin <= rp.xmax AND lp.xmax >= rp.xmin
               AND lp.ymin <= rp.ymax AND lp.ymax >= rp.ymin
         ),
@@ -208,6 +212,7 @@ def main(  # noqa: PLR0913
         SELECT left_fid, right_fid, geom FROM merged
         WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
     """)
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp2"')
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_shared_by_fid" AS
         SELECT fid, ST_Union_Agg(geom) AS geom
@@ -310,3 +315,38 @@ def main(  # noqa: PLR0913
         "rows",
     ]:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_{table}"')
+
+
+def _split_long_parts(conn: DuckDBPyConnection, table_in: str, table_out: str) -> None:
+    """Split long lines into runs of their own vertices, sharing each run's ends.
+
+    A join row carries both geometries, so one huge ring repeats per candidate.
+    """
+    step = SUBDIVIDE_MAX_VERTICES - 1
+    long = f"ST_NPoints(geom) >= {SUBDIVIDE_MIN_VERTICES}"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{table_out}" AS
+        WITH parts AS (
+            SELECT fid, row_number() OVER () AS part, geom
+            FROM "{table_in}" WHERE {long}
+        ),
+        points AS (
+            SELECT fid, part, d.path[1] AS i, d.geom
+            FROM (SELECT fid, part, UNNEST(ST_Dump(ST_Points(geom))) AS d FROM parts)
+        ),
+        runs AS (
+            SELECT fid, ST_MakeLine(list(geom ORDER BY i)) AS geom
+            FROM (
+                SELECT fid, part, i, geom, UNNEST(
+                    CASE WHEN i > 1 AND (i - 1) % {step} = 0
+                    THEN [(i - 1) // {step} - 1, (i - 1) // {step}]
+                    ELSE [(i - 1) // {step}] END
+                ) AS run
+                FROM points
+            )
+            GROUP BY fid, part, run HAVING count(*) > 1
+        )
+        SELECT fid, geom, {bbox_columns_sql("geom")} FROM runs
+        UNION ALL BY NAME
+        SELECT fid, geom, xmin, xmax, ymin, ymax FROM "{table_in}" WHERE NOT {long}
+    """)

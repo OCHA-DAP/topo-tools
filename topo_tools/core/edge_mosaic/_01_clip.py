@@ -61,6 +61,7 @@ def main(  # noqa: PLR0913
         threads=threads,
         debug=debug,
         original_table=original_table,
+        original_owner="input_fid" if original_table else None,
         tiles=tiles,
     )
     if not debug:

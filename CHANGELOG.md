@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `edge-mosaic` pairs each `--original` feature with the input feature
+  sharing its finest-level code, detected from the original file's own
+  columns. A feature whose code is NULL or matches no input feature pairs with
+  the input files its own file's other codes pair with, and a warning counts
+  each file's unmatched codes. An input that no original lies near or pairs
+  with runs without originals, with a warning.
+- Clip-detached pieces, original ownership and notch holes test containment
+  at the inscribed-circle center.
+- Dissolved rows are numbered after the union, in group-by order.
+- `edge-mosaic` and `package-lines` run faster and read each `--original` once
+  per input file.
+
+### Fixed
+
+- `package-lines` splits boundary rings of 5,000 or more vertices before
+  matching shared edges, so layers with very long rings (e.g. Canada's) fit in
+  memory.
+- Every DuckDB connection turns off geometry shredding. On DuckDB 2.0.0, a
+  `WHERE` filter on an `ST_*` function of a stored CRS-typed geometry column
+  dropped rows.
+
 ## [0.22.0] - 2026-11-14
 
 ### Added

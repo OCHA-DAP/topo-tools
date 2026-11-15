@@ -70,6 +70,9 @@ time. Each file's clip result and its assign/drop/detached tables are
 written to Parquet under `tmp_dir` and combined once after the loop
 (`read_parquet(..., union_by_name = true)`), and each iteration's original
 layer covers only the original files whose extent overlaps that input file,
+with each original feature paired to the input feature sharing its
+finest-level code, and a feature whose code is NULL or matches nothing
+paired to the input files its own file's other codes pair with,
 keeping peak memory to roughly one overlay layer plus one input file at a
 time, not one overlay layer plus every input file. `fid` is kept
 globally unique across the whole run via a running offset applied right

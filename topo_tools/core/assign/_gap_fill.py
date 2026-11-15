@@ -14,8 +14,7 @@ def fill_unmatched_overlays(  # noqa: PLR0913
 ) -> None:
     """Append each unmatched overlay polygon's own row (unclipped) onto result_table.
 
-    One INSERT per fid, not one bulk copy: a true global overlay polygon can leave
-    most of its rows unmatched, so this avoids materializing them all at once.
+    One streaming INSERT: a per-fid lookup decompresses the whole geometry column.
     """
     carry_sql = "".join(f', "{c}"' for c in (carry_columns or []))
     # result_table's clip output may lack overlay_fid/a carry column entirely;
@@ -46,10 +45,11 @@ def fill_unmatched_overlays(  # noqa: PLR0913
         SELECT fid FROM "{overlay_snapshot_table}"
         WHERE fid NOT IN (SELECT DISTINCT overlay_fid FROM "{name}_02_assign")
     """).fetchall()
-    for (fid,) in fids:
-        conn.execute(f"""--sql
-            INSERT INTO "{result_table}" BY NAME
-            SELECT fid AS overlay_fid, geom{carry_sql}
-            FROM "{overlay_snapshot_table}"
-            WHERE fid = {fid}
-        """)
+    if not fids:
+        return
+    conn.execute(f"""--sql
+        INSERT INTO "{result_table}" BY NAME
+        SELECT fid AS overlay_fid, geom{carry_sql}
+        FROM "{overlay_snapshot_table}"
+        WHERE fid IN ({",".join(str(f) for (f,) in fids)})
+    """)

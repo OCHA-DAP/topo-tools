@@ -50,14 +50,44 @@ def load_overlay(
 
 
 def load_original(
-    conn: DuckDBPyConnection, name: str, original_paths: list[Path | str]
-) -> None:
-    """Expose the original layer's unvalidated geometry as view `{name}_original_01`."""
-    union_sql = " UNION ALL ".join(
-        f"(SELECT geom FROM ({reproject_select_sql(conn, path, make_valid=False)}))"
-        for path in original_paths
-    )
+    conn: DuckDBPyConnection, name: str, original_keys: dict[Path | str, str]
+) -> dict[Path | str, tuple[int, int]]:
+    """Expose the original layer as view `{name}_original_01`; return row counts.
+
+    Rows pair with input fids sharing their key, else with the file's paired files;
+    counts are (paired, unmatched) per file.
+    """
+    counts: dict[Path | str, tuple[int, int]] = {}
+    selects = []
+    for path, key in original_keys.items():
+        paired, unmatched, files = conn.execute(f"""--sql
+            WITH o AS (SELECT "{key}"::VARCHAR AS k
+                       FROM ({reproject_select_sql(conn, path, make_valid=False)})),
+            i AS (SELECT "{key}"::VARCHAR AS k, source_file FROM "{name}_input_01")
+            SELECT count(ik.k), count(*) - count(ik.k),
+                   (SELECT list(DISTINCT source_file ORDER BY source_file)
+                    FROM i SEMI JOIN o ON i.k = o.k)
+            FROM o LEFT JOIN (SELECT DISTINCT k FROM i) ik ON ik.k = o.k
+        """).fetchall()[0]
+        counts[path] = (paired, unmatched)
+        if not paired:
+            continue
+        files_sql = ", ".join("'" + f.replace("'", "''") + "'" for f in files)
+        selects.append(f"""(SELECT geom, input_fid, UNNEST(CASE WHEN input_fid IS NULL
+                THEN [{files_sql}] ELSE [NULL::VARCHAR] END) AS source_file
+            FROM (SELECT o.geom, i.fid AS input_fid
+                  FROM ({reproject_select_sql(conn, path, make_valid=False)}) o
+                  LEFT JOIN (SELECT fid, "{key}"::VARCHAR AS k
+                             FROM "{name}_input_01") i
+                  ON i.k = o."{key}"::VARCHAR))""")
+    if not selects:
+        selects = [
+            """(SELECT NULL::GEOMETRY AS geom, NULL::BIGINT AS input_fid,
+            NULL::VARCHAR AS source_file WHERE FALSE)"""
+        ]
     conn.execute(f"""--sql
         CREATE OR REPLACE VIEW "{name}_original_01" AS
-        SELECT row_number() OVER () AS fid, geom FROM ({union_sql})
+        SELECT row_number() OVER () AS fid, geom, input_fid, source_file
+        FROM ({" UNION ALL ".join(selects)})
     """)
+    return counts

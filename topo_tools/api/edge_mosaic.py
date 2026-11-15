@@ -30,6 +30,7 @@ from topo_tools.core.coverage import check_no_overlaps
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
     collect_spilled,
+    create_lookup_copy,
     maybe_export_debug_tables,
     pipeline_connection,
     resolve_tmp_dir,
@@ -46,6 +47,7 @@ from topo_tools.core.io import (
     resolve_input_path,
     sort_paths_by_column_count_desc,
 )
+from topo_tools.core.schema_map._level_columns import detect_level_codes
 
 logger = getLogger(__name__)
 
@@ -161,8 +163,6 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         if single_path is not None
         else output_path.name.replace(".", "_") + "_edge_mosaic"
     )
-    original_table = f"{name}_original_01" if originals else None
-
     with (
         resolve_tmp_dir(tmp_dir, debug=debug) as tmp_dir_path,
         pipeline_connection(
@@ -211,12 +211,13 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     check_input(conn, name, single_path)
                     load_overlay(conn, name, overlay_path, require_coverage=True)
                     if originals:
-                        load_original(conn, name, originals)
+                        _load_keyed_originals(
+                            conn, name, _original_keys(conn, originals), single_path
+                        )
                     if passthrough:
-                        conn.execute(f"""--sql
-                            CREATE OR REPLACE TABLE "{name}_overlay_full" AS
-                            SELECT * FROM "{name}_overlay_01"
-                        """)
+                        create_lookup_copy(
+                            conn, f"{name}_overlay_01", f"{name}_overlay_full"
+                        )
                 elif s == "assign":
                     if not merge_resolved:
                         resolved_overlay_columns, resolved_input_columns = (
@@ -268,7 +269,9 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         passthrough=passthrough,
                         result_table=f"{name}_03",
                         raise_if_empty=False,
-                        original_table=original_table,
+                        original_table=_paired_original(conn, name)
+                        if originals
+                        else None,
                     )
                     if passthrough:
                         fill_unmatched_overlays(
@@ -333,10 +336,70 @@ def _original_bboxes(
     return result
 
 
+def _original_keys(
+    conn: DuckDBPyConnection, originals: list[Path | str]
+) -> dict[Path | str, str | None]:
+    """Return each original file's own finest-level code column, None if undetected."""
+    keys: dict[Path | str, str | None] = {}
+    for path in originals:
+        source = reproject_select_sql(conn, path, make_valid=False)
+        conn.execute(
+            f"CREATE OR REPLACE TEMP TABLE _original_attrs AS "
+            f"SELECT * EXCLUDE (geom) FROM ({source})"
+        )
+        try:
+            codes = detect_level_codes(conn, "_original_attrs")
+            keys[path] = codes[max(codes)]
+        except ValueError as e:
+            logger.warning("original %s has no detectable code column: %s", path, e)
+            keys[path] = None
+        conn.execute("DROP TABLE _original_attrs")
+    return keys
+
+
+def _load_keyed_originals(
+    conn: DuckDBPyConnection,
+    name: str,
+    original_keys: dict[Path | str, str | None],
+    input_path: Path | str,
+) -> None:
+    """Pair originals with `{name}_input_01` by each one's own code, if any pair."""
+    conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
+    # A key the input lacks marks another input's original, so none of it pairs.
+    usable = {p: k for p, k in original_keys.items() if k in columns}
+    counts = load_original(conn, name, usable)
+    for path, (paired, unmatched) in counts.items():
+        # An original pairing nothing belongs to another input, so stays quiet.
+        if paired and unmatched:
+            logger.warning(
+                "original %s: %d %s codes match no input feature in %s",
+                path,
+                unmatched,
+                usable[path],
+                input_path,
+            )
+    if not any(paired for paired, _ in counts.values()):
+        conn.execute(f'DROP VIEW "{name}_original_01"')
+        logger.warning(
+            "input %s runs without originals: none pairs by code", input_path
+        )
+
+
+def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
+    """Return the original view's name if originals paired with the input, else None."""
+    found = conn.execute(
+        f"SELECT 1 FROM duckdb_views() WHERE view_name = '{name}_original_01'"
+    ).fetchall()
+    return f"{name}_original_01" if found else None
+
+
 def _load_nearby_originals(
     conn: DuckDBPyConnection,
     name: str,
     original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
+    original_keys: dict[Path | str, str | None],
+    input_path: Path | str,
 ) -> None:
     """Expose only the originals overlapping `{name}_input_01` as the original view."""
     bbox = input_bbox_extent(conn, name)
@@ -347,8 +410,11 @@ def _load_nearby_originals(
         and obox is not None
         and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
     ]
-    # One far-away file keeps the view's schema when none is nearby.
-    load_original(conn, name, nearby or [original_bboxes[0][0]])
+    if not nearby:
+        conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+        logger.warning("input %s runs without originals: none is near it", input_path)
+        return
+    _load_keyed_originals(conn, name, {p: original_keys[p] for p in nearby}, input_path)
 
 
 def _check_shared_winner(
@@ -415,9 +481,8 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     """Assign/clip one input file at a time against one already-loaded overlay layer."""
     load_overlay(conn, name, overlay_path, require_coverage=True)
     original_bboxes = _original_bboxes(conn, originals) if originals else []
-    conn.execute(f"""--sql
-        CREATE TABLE "{name}_overlay_full" AS SELECT * FROM "{name}_overlay_01"
-    """)
+    original_keys = _original_keys(conn, originals)
+    create_lookup_copy(conn, f"{name}_overlay_01", f"{name}_overlay_full")
     paths = sort_paths_by_column_count_desc(conn, paths)
 
     combined_bbox: tuple[float, float, float, float] | None = None
@@ -508,7 +573,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 SELECT * FROM read_parquet('{path}')
             """)
         if originals:
-            _load_nearby_originals(conn, name, original_bboxes)
+            _load_nearby_originals(conn, name, original_bboxes, original_keys, paths[i])
         clip.main(
             conn,
             name,
@@ -520,7 +585,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             passthrough=passthrough,
             result_table=f"{name}_03_iter",
             raise_if_empty=False,
-            original_table=f"{name}_original_01" if originals else None,
+            original_table=_paired_original(conn, name) if originals else None,
             tiles=tiles,
         )
 

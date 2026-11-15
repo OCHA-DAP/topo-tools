@@ -20,7 +20,7 @@ Like edge-match, but skips the extending step, for input already run through edg
 ## Options
 
 - `--input TEXT`: Another input file to process together with INPUT_FILE. Repeat it or separate files with commas.
-- `--original TEXT`: The original layer before extension. It decides whether a piece cut off by clipping is merged into a neighbor. Without it, such pieces are only reported. Repeat it or separate files with commas.
+- `--original TEXT`: The original layer before extension. It decides whether a piece cut off by clipping is merged into a neighbor. Without it, such pieces are only reported. Each original feature is paired with the input feature sharing its finest-level code. The original and input layers should share the original's finest-level code column. Repeat it or separate files with commas.
 - `--issues-file TEXT`: Path for the issues report. Defaults to OUTPUT_FILE with an "_issues" suffix.
 - `--overwrite BOOLEAN`: Replace output files that already exist. Pass `--overwrite=false` to stop with an error instead. [default: True]
 - `--threads INTEGER`: Number of threads DuckDB uses (default: all CPU cores).

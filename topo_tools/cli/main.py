@@ -2194,7 +2194,10 @@ def edge_match(  # noqa: PLR0913, PLR0917
     help=(
         "The original layer before extension. It decides whether a piece "
         "cut off by clipping is merged into a neighbor. Without it, such pieces "
-        "are only reported. Repeat it or separate files with commas."
+        "are only reported. Each original feature is paired with the input "
+        "feature sharing its finest-level code. The original and input layers "
+        "should share the original's finest-level code column. Repeat it or "
+        "separate files with commas."
     ),
 )
 @click.option(

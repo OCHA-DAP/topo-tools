@@ -9,8 +9,9 @@ from click.testing import CliRunner
 import topo_tools.core.edge_extend.attempt as attempt_module
 from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
-from topo_tools.api.edge_mosaic import mosaic
+from topo_tools.api.edge_mosaic import _load_nearby_originals, _paired_original, mosaic
 from topo_tools.cli.main import cli
+from topo_tools.core.assign._inputs import load_input, load_original
 from topo_tools.core.coverage import has_invalid_edges
 
 _LEVEL_1, _LEVEL_2 = 1, 2
@@ -33,13 +34,17 @@ _OVERLAY_A_AREA = 9.0
 _STEPS = ["inputs", "assign", "clip", "clean", "outputs"]
 
 
-def _write_synthetic(path, wkt_rows):
+def _write_synthetic(path, wkt_rows, *, codes=False, ids=False, keep_id=True):
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt}'))" for fid, wkt in wkt_rows)
+    code_sql = ", 'C' || id AS adm1_pcode, 'N' || id AS adm1_name" if codes else ""
+    code_sql += ", 'X' || id AS adm1_id" if ids else ""
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
-        conn.execute(
-            f"CREATE TABLE synth AS SELECT * FROM (VALUES {values}) AS t(id, geom)"
-        )
+        conn.execute(f"""--sql
+            CREATE TABLE synth AS
+            SELECT {"id" if keep_id else "NULL AS _"}{code_sql}, geom
+            FROM (VALUES {values}) AS t(id, geom)
+        """)
         conn.execute(f"COPY synth TO '{path}'")
 
 
@@ -460,24 +465,24 @@ def test_mosaic_multi_file_merge_untagged_inputs_tagged_overlay(
     assert count == len(paths) + 1
 
 
-def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
+@pytest.mark.parametrize("own_code_field", [False, True])
+def test_mosaic_multi_file_detached_keys_are_unique(tmp_path, own_code_field):
     notch = (
         "POLYGON(({x0} 0, {x2} 0, {x2} 0.008, {x1} 0.008, {x1} 0.009, "
         "{x3} 0.009, {x3} 0.0091, {x1} 0.0091, {x1} 0.01, {x0} 0.01, {x0} 0))"
     )
-    overlays, paths = [], []
+    overlays, paths, originals = [], [], []
     for i, dx in enumerate((0, 1)):
         x0, x1, x2, x3 = dx - 0.005, dx, dx + 0.01, dx + 0.00005
         overlays.append((i + 1, notch.format(x0=x0, x1=x1, x2=x2, x3=x3)))
-        path = tmp_path / f"children_{i}.parquet"
-        _write_synthetic(
-            path,
-            [
-                (2 * i + 1, f"POLYGON(({x1} 0, {x2} 0, {x2} 0.01, {x1} 0.01, {x1} 0))"),
-                (2 * i + 2, f"POLYGON(({x0} 0, {x1} 0, {x1} 0.01, {x0} 0.01, {x0} 0))"),
-            ],
-        )
-        paths.append(path)
+        rows = [
+            (2 * i + 1, f"POLYGON(({x1} 0, {x2} 0, {x2} 0.01, {x1} 0.01, {x1} 0))"),
+            (2 * i + 2, f"POLYGON(({x0} 0, {x1} 0, {x1} 0.01, {x0} 0.01, {x0} 0))"),
+        ]
+        paths.append(tmp_path / f"children_{i}.parquet")
+        _write_synthetic(paths[-1], rows, codes=True, ids=own_code_field)
+        originals.append(tmp_path / f"original_{i}.parquet")
+        _write_synthetic(originals[-1], rows, codes=True, keep_id=False)
     overlays_path = tmp_path / "parents.parquet"
     _write_synthetic(overlays_path, overlays)
     output_path = tmp_path / "out.parquet"
@@ -488,7 +493,10 @@ def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
         output_path,
         issues_path,
         overwrite=True,
-        original_paths=paths,
+        original_paths=originals,
+        fill_schema=own_code_field,
+        name_field="adm{n}_name" if own_code_field else None,
+        code_field="adm{n}_id" if own_code_field else None,
     )
 
     with duckdb.connect() as conn:
@@ -1652,3 +1660,95 @@ def test_mosaic_fill_errors(tmp_path, kwargs, match):
     input_path, overlays_path = _write_fill_layers(tmp_path)
     with pytest.raises(ValueError, match=match):
         mosaic(input_path, overlays_path, tmp_path / "out.parquet", **kwargs)
+
+
+@pytest.mark.parametrize("original_rows", [None, [(9, _INPUT_WKT[0][1])]])
+def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(
+        originals, original_rows or _INPUT_WKT[:2], codes=original_rows is not None
+    )
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    output_path = tmp_path / "out.parquet"
+    with caplog.at_level(logging.WARNING):
+        mosaic(
+            inputs,
+            overlays,
+            output_path,
+            original_paths=originals,
+        )
+    assert output_path.exists()
+    assert "runs without originals" in caplog.text
+
+
+@pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])
+def test_unkeyed_originals_pair_by_file(tmp_path, second_id):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(
+        originals, [(1, _INPUT_WKT[0][1]), (second_id, _INPUT_WKT[1][1])], codes=True
+    )
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        load_original(conn, "t", {originals: "adm1_pcode"})
+        rows = conn.execute(
+            "SELECT input_fid, source_file FROM t_original_01 ORDER BY 1"
+        ).fetchall()
+    assert rows == [(1, None), (None, str(inputs))]
+
+
+def test_mosaic_warns_on_unmatched_original_codes(tmp_path, caplog):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    rows = [(1, _INPUT_WKT[0][1]), (9, _INPUT_WKT[1][1])]
+    _write_synthetic(originals, rows, codes=True, keep_id=False)
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with caplog.at_level(logging.WARNING):
+        mosaic(inputs, overlays, tmp_path / "out.parquet", original_paths=originals)
+    assert "runs without originals" not in caplog.text
+    assert "1 adm1_pcode codes match no input feature" in caplog.text
+
+
+@pytest.mark.parametrize("odd_id", [1, "NULL", 9], ids=["keyed", "null", "unmatched"])
+def test_unkeyed_original_keeps_detached_piece(tmp_path, odd_id):
+    notch = (
+        "POLYGON((-0.01 0, 0.01 0, 0.01 0.008, 0 0.008, 0 0.009, 0.00005 0.009, "
+        "0.00005 0.0091, 0 0.0091, 0 0.01, -0.01 0.01, -0.01 0))"
+    )
+    odd = "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"
+    even = "POLYGON((-0.005 0, 0 0, 0 0.01, -0.005 0.01, -0.005 0))"
+    third = "POLYGON((-0.01 0, -0.005 0, -0.005 0.01, -0.01 0.01, -0.01 0))"
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, [(1, odd), (2, even), (3, third)], codes=True)
+    odd_original = (
+        "MULTIPOLYGON(((0 0, 0.01 0, 0.01 0.008, 0 0.008, 0 0)), "
+        "((0 0.009, 0.00005 0.009, 0.00005 0.0091, 0 0.0091, 0 0.009)))"
+    )
+    rows = [(odd_id, odd_original), (2, even), (3, third)]
+    _write_synthetic(originals, rows, codes=True, keep_id=False)
+    overlays, issues = tmp_path / "overlays.parquet", tmp_path / "issues.parquet"
+    _write_synthetic(overlays, [(1, notch)])
+    mosaic(inputs, overlays, tmp_path / "out.parquet", issues, original_paths=originals)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(
+            f"SELECT fixed, reason FROM '{issues}' WHERE kind = 'detached-part'"
+        ).fetchall()
+    assert rows == [(False, "kept: matches original shape")]
+
+
+def test_no_nearby_original_loads_none(tmp_path):
+    inputs = tmp_path / "in.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    far = tmp_path / "missing.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        _load_nearby_originals(
+            conn, "t", [(far, (100, 60, 101, 61))], {far: "adm1_pcode"}, inputs
+        )
+        assert _paired_original(conn, "t") is None

@@ -821,6 +821,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     overlay_source: str,
     original_table: str | None,
     issues_table: str,
+    original_owner: str | None = None,
 ) -> int:
     """Merge small clip-detached pieces the original layer shows as clip artefacts.
 
@@ -871,7 +872,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     conn.execute("""--sql
         CREATE OR REPLACE TABLE _det_pts AS
         SELECT pid, fid, pt, ST_X(pt) AS px, ST_Y(pt) AS py
-        FROM (SELECT pid, fid, ST_PointOnSurface(geom) AS pt
+        FROM (SELECT pid, fid, (ST_MaximumInscribedCircle(geom)).center AS pt
               FROM _det_parts WHERE multi)
     """)
     conn.execute("""--sql
@@ -895,7 +896,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
             FROM _det_parts p JOIN _det_q q USING (pid)
             WHERE q.qid IN (SELECT qid FROM _det_q GROUP BY qid HAVING count(*) > 1)
         """)
-        _load_owned_original(conn, original_table, "_det_split")
+        _load_owned_original(conn, original_table, "_det_split", original_owner)
         conn.execute("""--sql
             CREATE OR REPLACE TABLE _det_probe AS
             SELECT pid, s.fid, t.pt AS geom, t.px AS xmin, t.px AS xmax,
@@ -1107,13 +1108,30 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
 
 
 def _load_owned_original(
-    conn: DuckDBPyConnection, original_table: str, probe_table: str
+    conn: DuckDBPyConnection,
+    original_table: str,
+    probe_table: str,
+    original_owner: str | None,
 ) -> None:
     """Write _det_oparts: raw original parts near a probe, with their owning fid.
 
-    Ownership is by interior point, so no key column is shared with the input.
+    Ownership is by interior point, limited to the original_owner fid if given,
+    else to the row's source_file.
     """
     tol = SNAP_TOLERANCE
+    owner_sql = f'"{original_owner}"' if original_owner else "NULL::BIGINT"
+    file_sql = '"source_file"' if original_owner else "NULL::VARCHAR"
+    point_on = """q.xmin <= f.px AND q.xmax >= f.px
+             AND q.ymin <= f.py AND q.ymax >= f.py AND ST_Intersects(q.geom, f.pos)"""
+    candidates = f"SELECT f.oid, q.qid, q.fid FROM f JOIN _det_pre q ON {point_on}"
+    if original_owner:
+        candidates = f"""{candidates} AND q.fid = f.owner_fid
+            UNION ALL
+            SELECT f.oid, q.qid, q.fid FROM f
+            JOIN (SELECT DISTINCT fid, source_file FROM _det_parts) m
+              ON m.source_file = f.owner_file
+            JOIN _det_pre q ON q.fid = m.fid AND {point_on}
+            WHERE f.owner_fid IS NULL"""
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_obox AS
         SELECT {bbox_columns_sql("geom")} FROM "{original_table}"
@@ -1128,20 +1146,27 @@ def _load_owned_original(
     # Re-reading by exact bbox streams the original and needs no stable row order.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_ofeat AS
-        WITH r AS (SELECT geom, {bbox_columns_sql("geom")} FROM "{original_table}")
-        SELECT row_number() OVER () AS oid, r.geom
+        WITH r AS (
+            SELECT geom, {owner_sql} AS owner_fid, {file_sql} AS owner_file,
+                   {bbox_columns_sql("geom")}
+            FROM "{original_table}"
+        )
+        SELECT row_number() OVER () AS oid, r.geom, r.owner_fid, r.owner_file
         FROM r SEMI JOIN _det_ohit h USING (xmin, xmax, ymin, ymax)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_oparts AS
-        WITH owner AS (
-            SELECT f.oid, q.fid FROM (
-                SELECT oid, pos, ST_X(pos) AS px, ST_Y(pos) AS py
-                FROM (SELECT oid, ST_PointOnSurface(geom) AS pos FROM _det_ofeat)
-            ) f JOIN _det_pre q
-              ON q.xmin <= f.px AND q.xmax >= f.px
-             AND q.ymin <= f.py AND q.ymax >= f.py AND ST_Intersects(q.geom, f.pos)
-            QUALIFY row_number() OVER (PARTITION BY f.oid ORDER BY q.qid) = 1
+        WITH f AS (
+            SELECT oid, owner_fid, owner_file, ST_X(pos) AS px, ST_Y(pos) AS py, pos
+            FROM (
+                SELECT oid, owner_fid, owner_file,
+                       (ST_MaximumInscribedCircle(geom)).center AS pos
+                FROM _det_ofeat
+            )
+        ),
+        owner AS (
+            SELECT oid, fid FROM ({candidates})
+            QUALIFY row_number() OVER (PARTITION BY oid ORDER BY qid) = 1
         ),
         parts AS (
             SELECT o.fid, UNNEST(ST_Dump(f.geom)).geom AS geom
@@ -1675,14 +1700,17 @@ def _fill_enclosed_notch_gaps(conn: DuckDBPyConnection, ua: int, ub: int) -> Non
         ),
         parts AS (SELECT before, UNNEST(ST_Dump(g)).geom AS p FROM u),
         holes AS (
-            SELECT before, UNNEST(ST_Dump(
-                ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
-            )).geom AS h
-            FROM parts
+            SELECT before, h FROM (
+                SELECT before, UNNEST(ST_Dump(
+                    ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
+                )).geom AS h
+                FROM parts
+            ) WHERE NOT ST_IsEmpty(h)
         )
         SELECT n.h FROM holes n
-        LEFT JOIN holes o ON o.before AND ST_Intersects(o.h, ST_PointOnSurface(n.h))
-        WHERE NOT n.before AND NOT ST_IsEmpty(n.h) AND o.h IS NULL
+        LEFT JOIN holes o
+          ON o.before AND ST_Intersects(o.h, (ST_MaximumInscribedCircle(n.h)).center)
+        WHERE NOT n.before AND o.h IS NULL
     """)
     conn.execute(f"""--sql
         DELETE FROM _notch_holes n USING _notch_all x

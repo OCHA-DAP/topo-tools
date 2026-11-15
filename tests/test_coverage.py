@@ -259,22 +259,30 @@ PIECE_1 = _rect(0, 9, 0.05, 9.1)
 LEFT_2 = "POLYGON" + _rect(-5, 0, 0, 10)
 
 
-def _detach(clipped, pre, original=None):
+def _detach(clipped, pre, original=None, *, owned=False, source_files=None):
     """Run merge_detached_parts on (fid, wkt) rows; return count/out/issues/conn."""
     conn = duckdb.connect()
     conn.execute("INSTALL spatial; LOAD spatial;")
 
     def load(table, rows, cols):
-        values = ", ".join(str(r) for r in rows)
+        values = ", ".join(
+            "(" + ", ".join("NULL" if v is None else repr(v) for v in r) + ")"
+            for r in rows
+        )
         conn.execute(
             f"CREATE TABLE {table} AS SELECT * EXCLUDE (wkt), "
             f"ST_GeomFromText(wkt) AS geom FROM (VALUES {values}) v({cols}, wkt)"
         )
 
     load("clipped", clipped, "fid")
+    if source_files:
+        conn.execute("ALTER TABLE clipped ADD COLUMN source_file VARCHAR")
+        for fid, path in source_files.items():
+            conn.execute(f"UPDATE clipped SET source_file = '{path}' WHERE fid = {fid}")
     load("pre", pre, "fid, overlay_fid")
     if original is not None:
-        load("original", original, "fid")
+        cols = "fid, input_fid, source_file" if owned else "fid"
+        load("original", original, cols)
     conn.execute("""
         CREATE TABLE overlay AS
         SELECT p.overlay_fid AS fid, ST_Union_Agg(c.geom) AS geom
@@ -288,6 +296,7 @@ def _detach(clipped, pre, original=None):
         overlay_source="overlay",
         original_table="original" if original is not None else None,
         issues_table="issues",
+        original_owner="input_fid" if owned else None,
     )
     out = dict(
         conn.execute(
@@ -333,6 +342,41 @@ def test_detached_piece_drawn_as_original_lobe_is_kept():
     assert count == 0
     assert out == {1: 2, 2: 1}
     assert issues == [(1, 2, "kept: matches original shape", False)]
+
+
+@pytest.mark.parametrize(
+    ("lobe_owner", "reason"),
+    [(1, "kept: matches original shape"), (99, "merged into neighbouring polygon")],
+)
+def test_detached_piece_follows_only_its_own_original(lobe_owner, reason):
+    ring = [(0, 0), (10, 0), (10, 8), (4e-4, 8), (4e-4, 9), (0.05, 9), (0.05, 9.1)]
+    ring += [(0, 9.1), (0, 0)]
+    lobe = "POLYGON((" + ", ".join(f"{x * S} {y * S}" for x, y in ring) + "))"
+    _, _, issues, _ = _detach(
+        [(1, _multi(MAIN_1, PIECE_1)), (2, LEFT_2)],
+        [(1, 1, PRE_1), (2, 1, LEFT_2)],
+        original=[(1, lobe_owner, None, lobe), (2, 2, None, LEFT_2)],
+        owned=True,
+    )
+    assert [r[2] for r in issues] == [reason]
+
+
+@pytest.mark.parametrize(
+    ("lobe_file", "reason"),
+    [("a", "kept: matches original shape"), ("b", "merged into neighbouring polygon")],
+)
+def test_unkeyed_original_follows_only_its_paired_file(lobe_file, reason):
+    ring = [(0, 0), (10, 0), (10, 8), (4e-4, 8), (4e-4, 9), (0.05, 9), (0.05, 9.1)]
+    ring += [(0, 9.1), (0, 0)]
+    lobe = "POLYGON((" + ", ".join(f"{x * S} {y * S}" for x, y in ring) + "))"
+    _, _, issues, _ = _detach(
+        [(1, _multi(MAIN_1, PIECE_1)), (2, LEFT_2)],
+        [(1, 1, PRE_1), (2, 1, LEFT_2)],
+        original=[(1, None, lobe_file, lobe), (2, 2, None, LEFT_2)],
+        owned=True,
+        source_files={1: "a", 2: "b"},
+    )
+    assert [r[2] for r in issues] == [reason]
 
 
 def test_detached_piece_over_ratio_is_kept_and_reported():
