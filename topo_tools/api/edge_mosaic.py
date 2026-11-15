@@ -210,7 +210,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     load_input(conn, name, paths)
                     check_input(conn, name, single_path)
                     load_overlay(conn, name, overlay_path, require_coverage=True)
-                    if originals:
+                    if originals and _needs_originals(conn, name, single_path):
                         _load_keyed_originals(
                             conn, name, _original_keys(conn, originals), single_path
                         )
@@ -347,14 +347,29 @@ def _original_keys(
             f"CREATE OR REPLACE TEMP TABLE _original_attrs AS "
             f"SELECT * EXCLUDE (geom) FROM ({source})"
         )
-        try:
-            codes = detect_level_codes(conn, "_original_attrs")
-            keys[path] = codes[max(codes)]
-        except ValueError as e:
-            logger.warning("original %s has no detectable code column: %s", path, e)
-            keys[path] = None
+        keys[path] = None
+        # One row gives detection no structure to rank levels by.
+        if conn.execute("SELECT count(*) FROM _original_attrs").fetchall()[0][0] > 1:
+            try:
+                codes = detect_level_codes(conn, "_original_attrs")
+                keys[path] = codes[max(codes)]
+            except ValueError:
+                pass
         conn.execute("DROP TABLE _original_attrs")
     return keys
+
+
+def _needs_originals(
+    conn: DuckDBPyConnection, name: str, input_path: Path | str
+) -> bool:
+    """Drop any original view; False if the input has one feature to pair."""
+    conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    rows = conn.execute(f'SELECT count(*) FROM "{name}_input_01"').fetchall()[0][0]
+    if rows > 1:
+        return True
+    # A detached piece merges only into a neighbouring row, which one row lacks.
+    logger.info("input %s has one feature, so pairs no original", input_path)
+    return False
 
 
 def _load_keyed_originals(
@@ -365,6 +380,13 @@ def _load_keyed_originals(
 ) -> None:
     """Pair originals with `{name}_input_01` by each one's own code, if any pair."""
     conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    for path, key in original_keys.items():
+        if key is None:
+            logger.warning(
+                "original %s has no detectable code column, so pairs nothing in %s",
+                path,
+                input_path,
+            )
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
     # A key the input lacks marks another input's original, so none of it pairs.
     usable = {p: k for p, k in original_keys.items() if k in columns}
@@ -572,7 +594,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 CREATE OR REPLACE TABLE "{table}" AS
                 SELECT * FROM read_parquet('{path}')
             """)
-        if originals:
+        if originals and _needs_originals(conn, name, paths[i]):
             _load_nearby_originals(conn, name, original_bboxes, original_keys, paths[i])
         clip.main(
             conn,

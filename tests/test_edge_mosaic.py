@@ -1681,6 +1681,39 @@ def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows)
         )
     assert output_path.exists()
     assert "runs without originals" in caplog.text
+    if original_rows:
+        assert "no detectable code column" in caplog.text
+
+
+@pytest.mark.parametrize("multi", [False, True], ids=["single", "multi"])
+def test_one_feature_input_pairs_no_original_quietly(tmp_path, caplog, multi):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:1], codes=True)
+    _write_synthetic(originals, [(9, _INPUT_WKT[0][1])], codes=True)
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with caplog.at_level(logging.WARNING):
+        mosaic(
+            [inputs] if multi else inputs,
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=originals,
+        )
+    assert "original" not in caplog.text
+
+
+def test_far_unkeyed_original_warns_only_not_near(tmp_path, caplog):
+    inputs = tmp_path / "in.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    far = tmp_path / "missing.parquet"
+    with duckdb.connect() as conn, caplog.at_level(logging.WARNING):
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        _load_nearby_originals(
+            conn, "t", [(far, (100, 60, 101, 61))], {far: None}, inputs
+        )
+    assert "none is near it" in caplog.text
+    assert "no detectable code column" not in caplog.text
 
 
 @pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])

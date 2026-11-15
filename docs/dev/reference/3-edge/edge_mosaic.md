@@ -195,9 +195,13 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   sharing its finest-level code (`code_field`). An original whose code is
   NULL or matches no input feature MUST pair only with the input files its
   own file's other codes pair with, and a warning MUST log each original
-  file's count of unmatched codes. An input file that no nearby original
-  pairs with MUST run without originals, logging a warning. Without
-  originals, no clip-detached piece merges.
+  file's count of unmatched codes. An input file with one feature MUST pair
+  with no original and log no warning, since a detached piece has no
+  neighbouring feature to merge into. An input file that no nearby original
+  pairs with MUST run without originals, logging a warning, and each nearby
+  original with no detectable code column (any one-row original) MUST log a
+  warning naming that input file. Without originals, no clip-detached piece
+  merges.
 
 ## Examples
 
