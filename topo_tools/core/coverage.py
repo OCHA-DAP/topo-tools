@@ -1700,15 +1700,17 @@ def _fill_enclosed_notch_gaps(conn: DuckDBPyConnection, ua: int, ub: int) -> Non
         ),
         parts AS (SELECT before, UNNEST(ST_Dump(g)).geom AS p FROM u),
         holes AS (
-            SELECT before, UNNEST(ST_Dump(
-                ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
-            )).geom AS h
-            FROM parts
+            SELECT before, h FROM (
+                SELECT before, UNNEST(ST_Dump(
+                    ST_Difference(ST_MakePolygon(ST_ExteriorRing(p)), p)
+                )).geom AS h
+                FROM parts
+            ) WHERE NOT ST_IsEmpty(h)
         )
         SELECT n.h FROM holes n
         LEFT JOIN holes o
           ON o.before AND ST_Intersects(o.h, (ST_MaximumInscribedCircle(n.h)).center)
-        WHERE NOT n.before AND NOT ST_IsEmpty(n.h) AND o.h IS NULL
+        WHERE NOT n.before AND o.h IS NULL
     """)
     conn.execute(f"""--sql
         DELETE FROM _notch_holes n USING _notch_all x
