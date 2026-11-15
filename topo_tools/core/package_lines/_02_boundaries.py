@@ -3,6 +3,7 @@
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import generic_families
+from topo_tools.core.coverage import grid_pairs
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
@@ -160,14 +161,15 @@ def main(  # noqa: PLR0913
         SELECT fid, geom, {bbox_columns_sql("geom")}
         FROM (SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom FROM "{dissolved}")
     """)
+    parts = f"{name}_02_parts"
+    grid_pairs(
+        conn, parts, parts, f"{parts}_pairs", on="l.fid < r.fid", tol=0, key="fid"
+    )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_pairs" AS
-        SELECT DISTINCT a.fid AS left_fid, b.fid AS right_fid
-        FROM "{name}_02_parts" a JOIN "{name}_02_parts" b
-          ON a.fid < b.fid
-          AND a.xmin <= b.xmax AND a.xmax >= b.xmin
-          AND a.ymin <= b.ymax AND a.ymax >= b.ymin
+        SELECT DISTINCT pid AS left_fid, near_pid AS right_fid FROM "{parts}_pairs"
     """)
+    conn.execute(f'DROP TABLE IF EXISTS "{parts}_pairs"')
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_boundary" AS
         SELECT fid, ST_Boundary(geom) AS boundary FROM "{dissolved}"
