@@ -1115,11 +1115,23 @@ def _load_owned_original(
 ) -> None:
     """Write _det_oparts: raw original parts near a probe, with their owning fid.
 
-    Ownership is by interior point, limited to the original_owner fid if given.
+    Ownership is by interior point, limited to the original_owner fid if given,
+    else to the row's source_file.
     """
     tol = SNAP_TOLERANCE
     owner_sql = f'"{original_owner}"' if original_owner else "NULL::BIGINT"
-    owner_on = "q.fid = f.owner_fid AND " if original_owner else ""
+    file_sql = '"source_file"' if original_owner else "NULL::VARCHAR"
+    point_on = """q.xmin <= f.px AND q.xmax >= f.px
+             AND q.ymin <= f.py AND q.ymax >= f.py AND ST_Intersects(q.geom, f.pos)"""
+    candidates = f"SELECT f.oid, q.qid, q.fid FROM f JOIN _det_pre q ON {point_on}"
+    if original_owner:
+        candidates = f"""{candidates} AND q.fid = f.owner_fid
+            UNION ALL
+            SELECT f.oid, q.qid, q.fid FROM f
+            JOIN (SELECT DISTINCT fid, source_file FROM _det_parts) m
+              ON m.source_file = f.owner_file
+            JOIN _det_pre q ON q.fid = m.fid AND {point_on}
+            WHERE f.owner_fid IS NULL"""
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_obox AS
         SELECT {bbox_columns_sql("geom")} FROM "{original_table}"
@@ -1135,26 +1147,26 @@ def _load_owned_original(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_ofeat AS
         WITH r AS (
-            SELECT geom, {owner_sql} AS owner_fid, {bbox_columns_sql("geom")}
+            SELECT geom, {owner_sql} AS owner_fid, {file_sql} AS owner_file,
+                   {bbox_columns_sql("geom")}
             FROM "{original_table}"
         )
-        SELECT row_number() OVER () AS oid, r.geom, r.owner_fid
+        SELECT row_number() OVER () AS oid, r.geom, r.owner_fid, r.owner_file
         FROM r SEMI JOIN _det_ohit h USING (xmin, xmax, ymin, ymax)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_oparts AS
-        WITH owner AS (
-            SELECT f.oid, q.fid FROM (
-                SELECT oid, owner_fid, ST_X(pos) AS px, ST_Y(pos) AS py, pos
-                FROM (
-                    SELECT oid, owner_fid,
-                           (ST_MaximumInscribedCircle(geom)).center AS pos
-                    FROM _det_ofeat
-                )
-            ) f JOIN _det_pre q
-              ON {owner_on}q.xmin <= f.px AND q.xmax >= f.px
-             AND q.ymin <= f.py AND q.ymax >= f.py AND ST_Intersects(q.geom, f.pos)
-            QUALIFY row_number() OVER (PARTITION BY f.oid ORDER BY q.qid) = 1
+        WITH f AS (
+            SELECT oid, owner_fid, owner_file, ST_X(pos) AS px, ST_Y(pos) AS py, pos
+            FROM (
+                SELECT oid, owner_fid, owner_file,
+                       (ST_MaximumInscribedCircle(geom)).center AS pos
+                FROM _det_ofeat
+            )
+        ),
+        owner AS (
+            SELECT oid, fid FROM ({candidates})
+            QUALIFY row_number() OVER (PARTITION BY oid ORDER BY qid) = 1
         ),
         parts AS (
             SELECT o.fid, UNNEST(ST_Dump(f.geom)).geom AS geom

@@ -11,6 +11,7 @@ from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
 from topo_tools.api.edge_mosaic import mosaic
 from topo_tools.cli.main import cli
+from topo_tools.core.assign._inputs import load_input, load_original
 from topo_tools.core.coverage import has_invalid_edges
 
 _LEVEL_1, _LEVEL_2 = 1, 2
@@ -1680,3 +1681,33 @@ def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows)
         )
     assert output_path.exists()
     assert "runs without originals" in caplog.text
+
+
+@pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])
+def test_unkeyed_originals_pair_by_file(tmp_path, second_id):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(
+        originals, [(1, _INPUT_WKT[0][1]), (second_id, _INPUT_WKT[1][1])], codes=True
+    )
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        load_original(conn, "t", {originals: "adm1_pcode"})
+        rows = conn.execute(
+            "SELECT input_fid, source_file FROM t_original_01 ORDER BY 1"
+        ).fetchall()
+    assert rows == [(1, None), (None, str(inputs))]
+
+
+def test_mosaic_warns_on_unmatched_original_codes(tmp_path, caplog):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    rows = [(1, _INPUT_WKT[0][1]), (9, _INPUT_WKT[1][1])]
+    _write_synthetic(originals, rows, codes=True, keep_id=False)
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with caplog.at_level(logging.WARNING):
+        mosaic(inputs, overlays, tmp_path / "out.parquet", original_paths=originals)
+    assert "runs without originals" not in caplog.text
+    assert "1 adm1_pcode codes match no input feature" in caplog.text
