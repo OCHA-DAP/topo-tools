@@ -198,12 +198,16 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 
 - A clip-detached piece is any polygon part of a clipped polygon other than
   the kept piece of its own pre-clip part (the extended part holding the
-  piece's interior point). The kept piece is the largest piece on the
+  piece's inscribed-circle center). The kept piece is the largest piece on the
   unit's original footprint, or the largest piece when none is.
-- A piece is on the original footprint when its interior point falls on an
-  original part of the same polygon, or when at least
+- A piece is on the original footprint when its inscribed-circle center
+  falls on an original part of the same polygon, or when at least
   `DETACHED_MAX_ORIGINAL_SHARE` (50%) of its area is original land. An
-  original polygon belongs to the pre-clip part holding its interior point.
+  original polygon belongs to the pre-clip part holding its inscribed-circle
+  center. In `edge-mosaic`, that part MUST belong to an input polygon sharing
+  the original's finest-level code. An original whose code is NULL or matches
+  no input polygon MUST be limited to the input files its own file's other
+  codes pair with.
 - `edge-match` and `edge-mosaic` MUST merge a piece under
   `DETACHED_MERGE_MAX_RATIO` (1%) of its kept piece's area into the polygon,
   assigned to the same overlay polygon, it shares the longest edge with

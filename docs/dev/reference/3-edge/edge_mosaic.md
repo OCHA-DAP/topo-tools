@@ -191,7 +191,13 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
 - `edge-mosaic` MAY accept `original_paths` (CLI: `--original`,
   repeatable and comma-separable, env `ORIGINAL_FILES`), one or more
   pre-extension originals covering the input files, in any supported
-  format or as URLs. Without them, no clip-detached piece merges.
+  format or as URLs. Each original feature MUST pair with the input feature
+  sharing its finest-level code (`code_field`). An original whose code is
+  NULL or matches no input feature MUST pair only with the input files its
+  own file's other codes pair with, and a warning MUST log each original
+  file's count of unmatched codes. An input file that no nearby original
+  pairs with MUST run without originals, logging a warning. Without
+  originals, no clip-detached piece merges.
 
 ## Examples
 
