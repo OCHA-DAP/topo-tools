@@ -165,8 +165,6 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         if single_path is not None
         else output_path.name.replace(".", "_") + "_edge_mosaic"
     )
-    original_table = f"{name}_original_01" if originals else None
-
     with (
         resolve_tmp_dir(tmp_dir, debug=debug) as tmp_dir_path,
         pipeline_connection(
@@ -278,7 +276,9 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         passthrough=passthrough,
                         result_table=f"{name}_03",
                         raise_if_empty=False,
-                        original_table=original_table,
+                        original_table=_paired_original(conn, name)
+                        if originals
+                        else None,
                     )
                     if passthrough:
                         fill_unmatched_overlays(
@@ -352,13 +352,32 @@ def _load_keyed_originals(  # noqa: PLR0913
     name_field: str | None,
     code_field: str | None,
 ) -> None:
-    """Pair originals with `{name}_input_01` by its finest code; raise if none pair."""
-    levels = resolve_levels(conn, f"{name}_input_01", name_field, code_field)
+    """Pair originals with `{name}_input_01` by its finest code, if any pair."""
+    conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    try:
+        levels = resolve_levels(conn, f"{name}_input_01", name_field, code_field)
+    except ValueError as e:
+        if name_field or code_field:
+            raise
+        logger.warning("input %s runs without originals: %s", input_path, e)
+        return
     key = levels[max(levels)].code
     load_original(conn, name, originals, key=key)
     if not conn.execute(f'SELECT count(*) FROM "{name}_original_01"').fetchall()[0][0]:
-        msg = f"no original feature shares a {key!r} value with input {input_path}"
-        raise ValueError(msg)
+        conn.execute(f'DROP VIEW "{name}_original_01"')
+        logger.warning(
+            "input %s runs without originals: none shares its %r values",
+            input_path,
+            key,
+        )
+
+
+def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
+    """Return the original view's name if originals paired with the input, else None."""
+    found = conn.execute(
+        f"SELECT 1 FROM duckdb_views() WHERE view_name = '{name}_original_01'"
+    ).fetchall()
+    return f"{name}_original_01" if found else None
 
 
 def _load_nearby_originals(  # noqa: PLR0913
@@ -563,7 +582,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
             passthrough=passthrough,
             result_table=f"{name}_03_iter",
             raise_if_empty=False,
-            original_table=f"{name}_original_01" if originals else None,
+            original_table=_paired_original(conn, name) if originals else None,
             tiles=tiles,
         )
 

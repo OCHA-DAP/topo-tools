@@ -1659,35 +1659,24 @@ def test_mosaic_fill_errors(tmp_path, kwargs, match):
         mosaic(input_path, overlays_path, tmp_path / "out.parquet", **kwargs)
 
 
-def test_mosaic_original_without_key_column_raises(tmp_path):
+@pytest.mark.parametrize("original_rows", [None, [(9, _INPUT_WKT[0][1])]])
+def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows):
     inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
     _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
-    _write_synthetic(originals, _INPUT_WKT[:2])
+    _write_synthetic(
+        originals, original_rows or _INPUT_WKT[:2], codes=original_rows is not None
+    )
     overlays = tmp_path / "overlays.parquet"
     _write_synthetic(overlays, _OVERLAY_WKT)
-    with pytest.raises(ValueError, match="no original feature shares"):
+    output_path = tmp_path / "out.parquet"
+    with caplog.at_level(logging.WARNING):
         mosaic(
             inputs,
             overlays,
-            tmp_path / "out.parquet",
+            output_path,
             original_paths=originals,
             name_field="adm{n}_name",
             code_field="adm{n}_pcode",
         )
-
-
-def test_mosaic_original_sharing_no_key_raises(tmp_path):
-    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
-    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
-    _write_synthetic(originals, [(9, _INPUT_WKT[0][1])], codes=True)
-    overlays = tmp_path / "overlays.parquet"
-    _write_synthetic(overlays, _OVERLAY_WKT)
-    with pytest.raises(ValueError, match="no original feature shares"):
-        mosaic(
-            inputs,
-            overlays,
-            tmp_path / "out.parquet",
-            original_paths=originals,
-            name_field="adm{n}_name",
-            code_field="adm{n}_pcode",
-        )
+    assert output_path.exists()
+    assert "runs without originals" in caplog.text
