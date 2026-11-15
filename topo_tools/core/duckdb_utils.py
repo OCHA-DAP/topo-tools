@@ -132,6 +132,8 @@ def get_connection(
     conn.execute("SET enable_progress_bar = false")
     conn.execute("SET geometry_always_xy = true")
     conn.execute("SET preserve_insertion_order = false")
+    # DuckDB 2.0.0 drops rows when a WHERE on ST_* scans a shredded geometry column.
+    conn.execute("SET geometry_minimum_shredding_size = -1")
     if threads is not None:
         conn.execute(f"SET threads = {threads}")
     return ProfiledConnection(conn, debug=debug)
