@@ -386,7 +386,7 @@ def _load_keyed_originals(
                 key,
                 input_path,
             )
-    if not conn.execute(f'SELECT count(*) FROM "{name}_original_01"').fetchall()[0][0]:
+    if not conn.execute(f'SELECT 1 FROM "{name}_original_01" LIMIT 1').fetchall():
         conn.execute(f'DROP VIEW "{name}_original_01"')
         logger.warning(
             "input %s runs without originals: none pairs by code", input_path
@@ -417,12 +417,7 @@ def _load_nearby_originals(
         and obox is not None
         and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
     ]
-    _load_keyed_originals(
-        conn,
-        name,
-        {p: original_keys[p] for p in nearby or [p for p, _ in original_bboxes]},
-        input_path,
-    )
+    _load_keyed_originals(conn, name, {p: original_keys[p] for p in nearby}, input_path)
 
 
 def _check_shared_winner(

@@ -9,7 +9,7 @@ from click.testing import CliRunner
 import topo_tools.core.edge_extend.attempt as attempt_module
 from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
-from topo_tools.api.edge_mosaic import mosaic
+from topo_tools.api.edge_mosaic import _load_nearby_originals, _paired_original, mosaic
 from topo_tools.cli.main import cli
 from topo_tools.core.assign._inputs import load_input, load_original
 from topo_tools.core.coverage import has_invalid_edges
@@ -1711,3 +1711,16 @@ def test_mosaic_warns_on_unmatched_original_codes(tmp_path, caplog):
         mosaic(inputs, overlays, tmp_path / "out.parquet", original_paths=originals)
     assert "runs without originals" not in caplog.text
     assert "1 adm1_pcode codes match no input feature" in caplog.text
+
+
+def test_no_nearby_original_loads_none(tmp_path):
+    inputs = tmp_path / "in.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    far = tmp_path / "missing.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        _load_nearby_originals(
+            conn, "t", [(far, (100, 60, 101, 61))], {far: "adm1_pcode"}, inputs
+        )
+        assert _paired_original(conn, "t") is None
