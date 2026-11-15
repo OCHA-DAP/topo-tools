@@ -1713,6 +1713,34 @@ def test_mosaic_warns_on_unmatched_original_codes(tmp_path, caplog):
     assert "1 adm1_pcode codes match no input feature" in caplog.text
 
 
+@pytest.mark.parametrize("odd_id", [1, "NULL", 9], ids=["keyed", "null", "unmatched"])
+def test_unkeyed_original_keeps_detached_piece(tmp_path, odd_id):
+    notch = (
+        "POLYGON((-0.01 0, 0.01 0, 0.01 0.008, 0 0.008, 0 0.009, 0.00005 0.009, "
+        "0.00005 0.0091, 0 0.0091, 0 0.01, -0.01 0.01, -0.01 0))"
+    )
+    odd = "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"
+    even = "POLYGON((-0.005 0, 0 0, 0 0.01, -0.005 0.01, -0.005 0))"
+    third = "POLYGON((-0.01 0, -0.005 0, -0.005 0.01, -0.01 0.01, -0.01 0))"
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, [(1, odd), (2, even), (3, third)], codes=True)
+    odd_original = (
+        "MULTIPOLYGON(((0 0, 0.01 0, 0.01 0.008, 0 0.008, 0 0)), "
+        "((0 0.009, 0.00005 0.009, 0.00005 0.0091, 0 0.0091, 0 0.009)))"
+    )
+    rows = [(odd_id, odd_original), (2, even), (3, third)]
+    _write_synthetic(originals, rows, codes=True, keep_id=False)
+    overlays, issues = tmp_path / "overlays.parquet", tmp_path / "issues.parquet"
+    _write_synthetic(overlays, [(1, notch)])
+    mosaic(inputs, overlays, tmp_path / "out.parquet", issues, original_paths=originals)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(
+            f"SELECT fixed, reason FROM '{issues}' WHERE kind = 'detached-part'"
+        ).fetchall()
+    assert rows == [(False, "kept: matches original shape")]
+
+
 def test_no_nearby_original_loads_none(tmp_path):
     inputs = tmp_path / "in.parquet"
     _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
