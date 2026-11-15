@@ -33,14 +33,16 @@ _OVERLAY_A_AREA = 9.0
 _STEPS = ["inputs", "assign", "clip", "clean", "outputs"]
 
 
-def _write_synthetic(path, wkt_rows, *, codes=False):
+def _write_synthetic(path, wkt_rows, *, codes=False, ids=False, keep_id=True):
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt}'))" for fid, wkt in wkt_rows)
     code_sql = ", 'C' || id AS adm1_pcode, 'N' || id AS adm1_name" if codes else ""
+    code_sql += ", 'X' || id AS adm1_id" if ids else ""
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         conn.execute(f"""--sql
             CREATE TABLE synth AS
-            SELECT id{code_sql}, geom FROM (VALUES {values}) AS t(id, geom)
+            SELECT {"id" if keep_id else "NULL AS _"}{code_sql}, geom
+            FROM (VALUES {values}) AS t(id, geom)
         """)
         conn.execute(f"COPY synth TO '{path}'")
 
@@ -462,25 +464,24 @@ def test_mosaic_multi_file_merge_untagged_inputs_tagged_overlay(
     assert count == len(paths) + 1
 
 
-def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
+@pytest.mark.parametrize("own_code_field", [False, True])
+def test_mosaic_multi_file_detached_keys_are_unique(tmp_path, own_code_field):
     notch = (
         "POLYGON(({x0} 0, {x2} 0, {x2} 0.008, {x1} 0.008, {x1} 0.009, "
         "{x3} 0.009, {x3} 0.0091, {x1} 0.0091, {x1} 0.01, {x0} 0.01, {x0} 0))"
     )
-    overlays, paths = [], []
+    overlays, paths, originals = [], [], []
     for i, dx in enumerate((0, 1)):
         x0, x1, x2, x3 = dx - 0.005, dx, dx + 0.01, dx + 0.00005
         overlays.append((i + 1, notch.format(x0=x0, x1=x1, x2=x2, x3=x3)))
-        path = tmp_path / f"children_{i}.parquet"
-        _write_synthetic(
-            path,
-            [
-                (2 * i + 1, f"POLYGON(({x1} 0, {x2} 0, {x2} 0.01, {x1} 0.01, {x1} 0))"),
-                (2 * i + 2, f"POLYGON(({x0} 0, {x1} 0, {x1} 0.01, {x0} 0.01, {x0} 0))"),
-            ],
-            codes=True,
-        )
-        paths.append(path)
+        rows = [
+            (2 * i + 1, f"POLYGON(({x1} 0, {x2} 0, {x2} 0.01, {x1} 0.01, {x1} 0))"),
+            (2 * i + 2, f"POLYGON(({x0} 0, {x1} 0, {x1} 0.01, {x0} 0.01, {x0} 0))"),
+        ]
+        paths.append(tmp_path / f"children_{i}.parquet")
+        _write_synthetic(paths[-1], rows, codes=True, ids=own_code_field)
+        originals.append(tmp_path / f"original_{i}.parquet")
+        _write_synthetic(originals[-1], rows, codes=True, keep_id=False)
     overlays_path = tmp_path / "parents.parquet"
     _write_synthetic(overlays_path, overlays)
     output_path = tmp_path / "out.parquet"
@@ -491,9 +492,10 @@ def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
         output_path,
         issues_path,
         overwrite=True,
-        original_paths=paths,
-        name_field="adm{n}_name",
-        code_field="adm{n}_pcode",
+        original_paths=originals,
+        fill_schema=own_code_field,
+        name_field="adm{n}_name" if own_code_field else None,
+        code_field="adm{n}_id" if own_code_field else None,
     )
 
     with duckdb.connect() as conn:
@@ -1675,8 +1677,6 @@ def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows)
             overlays,
             output_path,
             original_paths=originals,
-            name_field="adm{n}_name",
-            code_field="adm{n}_pcode",
         )
     assert output_path.exists()
     assert "runs without originals" in caplog.text

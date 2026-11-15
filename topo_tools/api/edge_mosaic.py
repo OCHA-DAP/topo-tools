@@ -47,7 +47,7 @@ from topo_tools.core.io import (
     resolve_input_path,
     sort_paths_by_column_count_desc,
 )
-from topo_tools.core.schema_map._resolve_levels import resolve_levels
+from topo_tools.core.schema_map._level_columns import detect_level_codes
 
 logger = getLogger(__name__)
 
@@ -121,9 +121,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         fill=fill,
     )
     validate_fill_flags(
-        fill_schema=fill_schema or bool(original_paths),
-        name_field=name_field,
-        code_field=code_field,
+        fill_schema=fill_schema, name_field=name_field, code_field=code_field
     )
     passthrough = merge
 
@@ -214,12 +212,7 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     load_overlay(conn, name, overlay_path, require_coverage=True)
                     if originals:
                         _load_keyed_originals(
-                            conn,
-                            name,
-                            originals,
-                            single_path,
-                            name_field=name_field,
-                            code_field=code_field,
+                            conn, name, _original_keys(conn, originals), single_path
                         )
                     if passthrough:
                         create_lookup_copy(
@@ -343,32 +336,43 @@ def _original_bboxes(
     return result
 
 
-def _load_keyed_originals(  # noqa: PLR0913
+def _original_keys(
+    conn: DuckDBPyConnection, originals: list[Path | str]
+) -> dict[Path | str, str | None]:
+    """Return each original file's own finest-level code column, None if undetected."""
+    keys: dict[Path | str, str | None] = {}
+    for path in originals:
+        source = reproject_select_sql(conn, path, make_valid=False)
+        conn.execute(
+            f"CREATE OR REPLACE TEMP TABLE _original_attrs AS "
+            f"SELECT * EXCLUDE (geom) FROM ({source})"
+        )
+        try:
+            codes = detect_level_codes(conn, "_original_attrs")
+            keys[path] = codes[max(codes)]
+        except ValueError as e:
+            logger.warning("original %s has no detectable code column: %s", path, e)
+            keys[path] = None
+        conn.execute("DROP TABLE _original_attrs")
+    return keys
+
+
+def _load_keyed_originals(
     conn: DuckDBPyConnection,
     name: str,
-    originals: list[Path | str],
+    original_keys: dict[Path | str, str | None],
     input_path: Path | str,
-    *,
-    name_field: str | None,
-    code_field: str | None,
 ) -> None:
-    """Pair originals with `{name}_input_01` by its finest code, if any pair."""
+    """Pair originals with `{name}_input_01` by each one's own code, if any pair."""
     conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
-    try:
-        levels = resolve_levels(conn, f"{name}_input_01", name_field, code_field)
-    except ValueError as e:
-        if name_field or code_field:
-            raise
-        logger.warning("input %s runs without originals: %s", input_path, e)
-        return
-    key = levels[max(levels)].code
-    load_original(conn, name, originals, key=key)
+    columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
+    # A key the input lacks marks another input's original, so none of it pairs.
+    usable = {p: k for p, k in original_keys.items() if k in columns}
+    load_original(conn, name, usable)
     if not conn.execute(f'SELECT count(*) FROM "{name}_original_01"').fetchall()[0][0]:
         conn.execute(f'DROP VIEW "{name}_original_01"')
         logger.warning(
-            "input %s runs without originals: none shares its %r values",
-            input_path,
-            key,
+            "input %s runs without originals: none pairs by code", input_path
         )
 
 
@@ -380,14 +384,12 @@ def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
     return f"{name}_original_01" if found else None
 
 
-def _load_nearby_originals(  # noqa: PLR0913
+def _load_nearby_originals(
     conn: DuckDBPyConnection,
     name: str,
     original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
+    original_keys: dict[Path | str, str | None],
     input_path: Path | str,
-    *,
-    name_field: str | None,
-    code_field: str | None,
 ) -> None:
     """Expose only the originals overlapping `{name}_input_01` as the original view."""
     bbox = input_bbox_extent(conn, name)
@@ -401,10 +403,8 @@ def _load_nearby_originals(  # noqa: PLR0913
     _load_keyed_originals(
         conn,
         name,
-        nearby or [p for p, _ in original_bboxes],
+        {p: original_keys[p] for p in nearby or [p for p, _ in original_bboxes]},
         input_path,
-        name_field=name_field,
-        code_field=code_field,
     )
 
 
@@ -472,6 +472,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     """Assign/clip one input file at a time against one already-loaded overlay layer."""
     load_overlay(conn, name, overlay_path, require_coverage=True)
     original_bboxes = _original_bboxes(conn, originals) if originals else []
+    original_keys = _original_keys(conn, originals)
     create_lookup_copy(conn, f"{name}_overlay_01", f"{name}_overlay_full")
     paths = sort_paths_by_column_count_desc(conn, paths)
 
@@ -563,14 +564,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 SELECT * FROM read_parquet('{path}')
             """)
         if originals:
-            _load_nearby_originals(
-                conn,
-                name,
-                original_bboxes,
-                paths[i],
-                name_field=name_field,
-                code_field=code_field,
-            )
+            _load_nearby_originals(conn, name, original_bboxes, original_keys, paths[i])
         clip.main(
             conn,
             name,

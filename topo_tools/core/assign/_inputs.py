@@ -50,28 +50,20 @@ def load_overlay(
 
 
 def load_original(
-    conn: DuckDBPyConnection,
-    name: str,
-    original_paths: list[Path | str],
-    *,
-    key: str,
+    conn: DuckDBPyConnection, name: str, original_keys: dict[Path | str, str]
 ) -> None:
     """Expose the original layer as view `{name}_original_01`, one row per input fid.
 
-    Each original row is paired with every `{name}_input_01` fid sharing its key.
+    Each original file's rows pair with every `{name}_input_01` fid sharing its key.
     """
-    selects = []
-    for path in original_paths:
-        source = reproject_select_sql(conn, path, make_valid=False)
-        columns = {r[0] for r in conn.execute(f"DESCRIBE {source}").fetchall()}
-        # A file without the key belongs to another input, so none of it pairs.
-        if key in columns:
-            selects.append(f'(SELECT geom, "{key}"::VARCHAR AS k FROM ({source}))')
-    if not selects:
-        selects.append("(SELECT NULL::GEOMETRY AS geom, NULL::VARCHAR AS k)")
+    selects = [
+        f"""(SELECT o.geom, i.fid AS input_fid
+            FROM ({reproject_select_sql(conn, path, make_valid=False)}) o
+            JOIN "{name}_input_01" i ON i."{key}"::VARCHAR = o."{key}"::VARCHAR)"""
+        for path, key in original_keys.items()
+    ] or ["(SELECT NULL::GEOMETRY AS geom, NULL::BIGINT AS input_fid WHERE FALSE)"]
     conn.execute(f"""--sql
         CREATE OR REPLACE VIEW "{name}_original_01" AS
-        SELECT row_number() OVER () AS fid, o.geom, i.fid AS input_fid
-        FROM ({" UNION ALL ".join(selects)}) o
-        JOIN "{name}_input_01" i ON i."{key}"::VARCHAR = o.k
+        SELECT row_number() OVER () AS fid, geom, input_fid
+        FROM ({" UNION ALL ".join(selects)})
     """)

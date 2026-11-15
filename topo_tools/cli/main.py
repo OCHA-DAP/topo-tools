@@ -129,62 +129,50 @@ def _add_merge_options(f):  # noqa: ANN001, ANN202
     return f
 
 
-def _fill_options(*, original: bool) -> tuple:
-    """Build the shared --fill-schema option set; original lets --original enable it."""
-
-    def requires(other: str) -> str:
-        if original:
-            return f"{other} and either --fill-schema or --original"
-        return f"--fill-schema and {other}"
-
-    return (
-        click.option(
-            "--fill-schema",
-            envvar="FILL_SCHEMA",
-            is_flag=True,
-            help=(
-                "Before writing the output, fill each row's empty finer admin "
-                "columns from its coarser ones and add a column with the row's own "
-                "admin level. Set the columns with --name-field and --code-field, "
-                "and the level column's name with --depth-column."
-            ),
+_FILL_OPTIONS = (
+    click.option(
+        "--fill-schema",
+        envvar="FILL_SCHEMA",
+        is_flag=True,
+        help=(
+            "Before writing the output, fill each row's empty finer admin "
+            "columns from its coarser ones and add a column with the row's own "
+            "admin level. Set the columns with --name-field and --code-field, "
+            "and the level column's name with --depth-column."
         ),
-        click.option(
-            "--name-field",
-            envvar="NAME_FIELD",
-            default=None,
-            help="Name column of each level, with {n} for the level number, e.g. "
-            f"'adm{{n}}_name'. Needs {requires('--code-field')}. Without both, "
-            "levels are detected from the data.",
-        ),
-        click.option(
-            "--code-field",
-            envvar="CODE_FIELD",
-            default=None,
-            help="Code column of each level, with {n} for the level number, e.g. "
-            f"'adm{{n}}_code'. Needs {requires('--name-field')}. Without both, "
-            "levels are detected from the data.",
-        ),
-        click.option(
-            "--depth-column",
-            envvar="DEPTH_COLUMN",
-            default="adm_lvl",
-            show_default=True,
-            help="Name of the added column holding each row's own admin level. "
-            "Needs --fill-schema.",
-        ),
-    )
+    ),
+    click.option(
+        "--name-field",
+        envvar="NAME_FIELD",
+        default=None,
+        help="Name column of each level, with {n} for the level number, e.g. "
+        "'adm{n}_name'. Needs --fill-schema and --code-field. Without both, levels "
+        "are detected from the data.",
+    ),
+    click.option(
+        "--code-field",
+        envvar="CODE_FIELD",
+        default=None,
+        help="Code column of each level, with {n} for the level number, e.g. "
+        "'adm{n}_code'. Needs --fill-schema and --name-field. Without both, levels "
+        "are detected from the data.",
+    ),
+    click.option(
+        "--depth-column",
+        envvar="DEPTH_COLUMN",
+        default="adm_lvl",
+        show_default=True,
+        help="Name of the added column holding each row's own admin level. "
+        "Needs --fill-schema.",
+    ),
+)
 
 
-def _add_fill_options(*, original: bool = False):  # noqa: ANN202
+def _add_fill_options(f):  # noqa: ANN001, ANN202
     """Apply the shared --fill-schema option set to a command function."""
-
-    def decorate(f):  # noqa: ANN001, ANN202
-        for option in reversed(_fill_options(original=original)):
-            f = option(f)
-        return f
-
-    return decorate
+    for option in reversed(_FILL_OPTIONS):
+        f = option(f)
+    return f
 
 
 @click.group()
@@ -2061,7 +2049,7 @@ def code_update(  # noqa: PLR0913, PLR0917
     help="Skip the final coverage clean, for runs too large for it. Seams between "
     "overlay polygons stay in the output, reported as invalid-edge issue rows.",
 )
-@_add_fill_options()
+@_add_fill_options
 def edge_match(  # noqa: PLR0913, PLR0917
     input_file: str,
     overlay_file: str,
@@ -2288,7 +2276,7 @@ def edge_match(  # noqa: PLR0913, PLR0917
     help="Skip the final coverage clean, for runs too large for it. Seams between "
     "overlay polygons stay in the output, reported as invalid-edge issue rows.",
 )
-@_add_fill_options(original=True)
+@_add_fill_options
 def edge_mosaic(  # noqa: PLR0913, PLR0917
     input_file: str,
     overlay_file: str,
