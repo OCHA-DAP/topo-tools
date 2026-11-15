@@ -872,7 +872,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     conn.execute("""--sql
         CREATE OR REPLACE TABLE _det_pts AS
         SELECT pid, fid, pt, ST_X(pt) AS px, ST_Y(pt) AS py
-        FROM (SELECT pid, fid, ST_PointOnSurface(geom) AS pt
+        FROM (SELECT pid, fid, (ST_MaximumInscribedCircle(geom)).center AS pt
               FROM _det_parts WHERE multi)
     """)
     conn.execute("""--sql
@@ -1147,7 +1147,8 @@ def _load_owned_original(
             SELECT f.oid, q.fid FROM (
                 SELECT oid, owner_fid, ST_X(pos) AS px, ST_Y(pos) AS py, pos
                 FROM (
-                    SELECT oid, owner_fid, ST_PointOnSurface(geom) AS pos
+                    SELECT oid, owner_fid,
+                           (ST_MaximumInscribedCircle(geom)).center AS pos
                     FROM _det_ofeat
                 )
             ) f JOIN _det_pre q
@@ -1693,7 +1694,8 @@ def _fill_enclosed_notch_gaps(conn: DuckDBPyConnection, ua: int, ub: int) -> Non
             FROM parts
         )
         SELECT n.h FROM holes n
-        LEFT JOIN holes o ON o.before AND ST_Intersects(o.h, ST_PointOnSurface(n.h))
+        LEFT JOIN holes o
+          ON o.before AND ST_Intersects(o.h, (ST_MaximumInscribedCircle(n.h)).center)
         WHERE NOT n.before AND NOT ST_IsEmpty(n.h) AND o.h IS NULL
     """)
     conn.execute(f"""--sql
