@@ -410,6 +410,10 @@ def _load_nearby_originals(
         and obox is not None
         and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
     ]
+    if not nearby:
+        conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+        logger.warning("input %s runs without originals: none is near it", input_path)
+        return
     _load_keyed_originals(conn, name, {p: original_keys[p] for p in nearby}, input_path)
 
 
