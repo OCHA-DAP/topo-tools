@@ -353,8 +353,8 @@ def _original_keys(
             try:
                 codes = detect_level_codes(conn, "_original_attrs")
                 keys[path] = codes[max(codes)]
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("original %s: %s", path, e)
         conn.execute("DROP TABLE _original_attrs")
     return keys
 
