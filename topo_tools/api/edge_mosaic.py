@@ -30,6 +30,7 @@ from topo_tools.core.coverage import check_no_overlaps
 from topo_tools.core.duckdb_utils import (
     bbox_columns_sql,
     collect_spilled,
+    create_lookup_copy,
     maybe_export_debug_tables,
     pipeline_connection,
     resolve_tmp_dir,
@@ -213,10 +214,9 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     if originals:
                         load_original(conn, name, originals)
                     if passthrough:
-                        conn.execute(f"""--sql
-                            CREATE OR REPLACE TABLE "{name}_overlay_full" AS
-                            SELECT * FROM "{name}_overlay_01"
-                        """)
+                        create_lookup_copy(
+                            conn, f"{name}_overlay_01", f"{name}_overlay_full"
+                        )
                 elif s == "assign":
                     if not merge_resolved:
                         resolved_overlay_columns, resolved_input_columns = (
@@ -415,9 +415,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     """Assign/clip one input file at a time against one already-loaded overlay layer."""
     load_overlay(conn, name, overlay_path, require_coverage=True)
     original_bboxes = _original_bboxes(conn, originals) if originals else []
-    conn.execute(f"""--sql
-        CREATE TABLE "{name}_overlay_full" AS SELECT * FROM "{name}_overlay_01"
-    """)
+    create_lookup_copy(conn, f"{name}_overlay_01", f"{name}_overlay_full")
     paths = sort_paths_by_column_count_desc(conn, paths)
 
     combined_bbox: tuple[float, float, float, float] | None = None

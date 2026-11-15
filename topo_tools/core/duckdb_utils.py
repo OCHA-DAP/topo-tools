@@ -180,6 +180,23 @@ def quote_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def create_lookup_copy(conn: DuckDBPyConnection, source: str, target: str) -> None:
+    """Copy source into target with geom uncompressed, for repeated per-fid reads.
+
+    A compressed geom column is decompressed whole to read even one row.
+    """
+    columns = conn.execute(f"DESCRIBE {quote_identifier(source)}").fetchall()
+    ddl = ", ".join(
+        f"{quote_identifier(c)} {t}"
+        + (" USING COMPRESSION uncompressed" if c == "geom" else "")
+        for c, t, *_ in columns
+    )
+    src, dst = quote_identifier(source), quote_identifier(target)
+    conn.execute(f"DROP TABLE IF EXISTS {dst}")
+    conn.execute(f"CREATE TABLE {dst} ({ddl})")
+    conn.execute(f"INSERT INTO {dst} SELECT * FROM {src}")
+
+
 def bbox_columns_sql(geom_expr: str) -> str:
     """Build a bbox column list, to precompute once rather than inline in a JOIN."""
     return (

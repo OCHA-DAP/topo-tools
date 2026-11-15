@@ -23,6 +23,7 @@ from topo_tools.core.assign import (
 )
 from topo_tools.core.duckdb_utils import (
     collect_spilled,
+    create_lookup_copy,
     maybe_export_debug_tables,
     pipeline_connection,
     resolve_tmp_dir,
@@ -214,10 +215,9 @@ def match(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 if s == "inputs":
                     inputs.main(conn, name, single_path, overlay_path)
                     if passthrough:
-                        conn.execute(f"""--sql
-                            CREATE OR REPLACE TABLE "{name}_overlay_full" AS
-                            SELECT * FROM "{name}_overlay_01"
-                        """)
+                        create_lookup_copy(
+                            conn, f"{name}_overlay_01", f"{name}_overlay_full"
+                        )
                 elif s == "assign":
                     if not merge_resolved:
                         resolved_overlay_columns, resolved_input_columns = (
@@ -415,9 +415,7 @@ def _match_multi_file(  # noqa: C901, PLR0913, PLR0917
     afterward, so cross-file input polygons sharing a overlay_fid extend together.
     """
     load_overlay(conn, name, overlay_path, require_coverage=True)
-    conn.execute(f"""--sql
-        CREATE TABLE "{name}_overlay_full" AS SELECT * FROM "{name}_overlay_01"
-    """)
+    create_lookup_copy(conn, f"{name}_overlay_01", f"{name}_overlay_full")
     paths = sort_paths_by_column_count_desc(conn, paths)
 
     combined_bbox: tuple[float, float, float, float] | None = None
