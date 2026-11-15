@@ -273,8 +273,9 @@ def _detach(clipped, pre, original=None):
 
     load("clipped", clipped, "fid")
     load("pre", pre, "fid, overlay_fid")
+    owned = original is not None and isinstance(original[0][1], int)
     if original is not None:
-        load("original", original, "fid")
+        load("original", original, "fid, input_fid" if owned else "fid")
     conn.execute("""
         CREATE TABLE overlay AS
         SELECT p.overlay_fid AS fid, ST_Union_Agg(c.geom) AS geom
@@ -288,6 +289,7 @@ def _detach(clipped, pre, original=None):
         overlay_source="overlay",
         original_table="original" if original is not None else None,
         issues_table="issues",
+        original_owner="input_fid" if owned else None,
     )
     out = dict(
         conn.execute(
@@ -333,6 +335,22 @@ def test_detached_piece_drawn_as_original_lobe_is_kept():
     assert count == 0
     assert out == {1: 2, 2: 1}
     assert issues == [(1, 2, "kept: matches original shape", False)]
+
+
+@pytest.mark.parametrize(
+    ("lobe_owner", "reason"),
+    [(1, "kept: matches original shape"), (99, "merged into neighbouring polygon")],
+)
+def test_detached_piece_follows_only_its_own_original(lobe_owner, reason):
+    ring = [(0, 0), (10, 0), (10, 8), (4e-4, 8), (4e-4, 9), (0.05, 9), (0.05, 9.1)]
+    ring += [(0, 9.1), (0, 0)]
+    lobe = "POLYGON((" + ", ".join(f"{x * S} {y * S}" for x, y in ring) + "))"
+    _, _, issues, _ = _detach(
+        [(1, _multi(MAIN_1, PIECE_1)), (2, LEFT_2)],
+        [(1, 1, PRE_1), (2, 1, LEFT_2)],
+        original=[(1, lobe_owner, lobe), (2, 2, LEFT_2)],
+    )
+    assert [r[2] for r in issues] == [reason]
 
 
 def test_detached_piece_over_ratio_is_kept_and_reported():

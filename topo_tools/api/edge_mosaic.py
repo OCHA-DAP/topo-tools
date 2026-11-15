@@ -47,6 +47,7 @@ from topo_tools.core.io import (
     resolve_input_path,
     sort_paths_by_column_count_desc,
 )
+from topo_tools.core.schema_map._resolve_levels import resolve_levels
 
 logger = getLogger(__name__)
 
@@ -120,7 +121,9 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
         fill=fill,
     )
     validate_fill_flags(
-        fill_schema=fill_schema, name_field=name_field, code_field=code_field
+        fill_schema=fill_schema or bool(original_paths),
+        name_field=name_field,
+        code_field=code_field,
     )
     passthrough = merge
 
@@ -212,7 +215,14 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     check_input(conn, name, single_path)
                     load_overlay(conn, name, overlay_path, require_coverage=True)
                     if originals:
-                        load_original(conn, name, originals)
+                        _load_keyed_originals(
+                            conn,
+                            name,
+                            originals,
+                            single_path,
+                            name_field=name_field,
+                            code_field=code_field,
+                        )
                     if passthrough:
                         create_lookup_copy(
                             conn, f"{name}_overlay_01", f"{name}_overlay_full"
@@ -333,10 +343,32 @@ def _original_bboxes(
     return result
 
 
-def _load_nearby_originals(
+def _load_keyed_originals(  # noqa: PLR0913
+    conn: DuckDBPyConnection,
+    name: str,
+    originals: list[Path | str],
+    input_path: Path | str,
+    *,
+    name_field: str | None,
+    code_field: str | None,
+) -> None:
+    """Pair originals with `{name}_input_01` by its finest code; raise if none pair."""
+    levels = resolve_levels(conn, f"{name}_input_01", name_field, code_field)
+    key = levels[max(levels)].code
+    load_original(conn, name, originals, key=key)
+    if not conn.execute(f'SELECT count(*) FROM "{name}_original_01"').fetchall()[0][0]:
+        msg = f"no original feature shares a {key!r} value with input {input_path}"
+        raise ValueError(msg)
+
+
+def _load_nearby_originals(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
+    input_path: Path | str,
+    *,
+    name_field: str | None,
+    code_field: str | None,
 ) -> None:
     """Expose only the originals overlapping `{name}_input_01` as the original view."""
     bbox = input_bbox_extent(conn, name)
@@ -347,8 +379,14 @@ def _load_nearby_originals(
         and obox is not None
         and bboxes_overlap(bbox, obox, 2 * SNAP_TOLERANCE)
     ]
-    # One far-away file keeps the view's schema when none is nearby.
-    load_original(conn, name, nearby or [original_bboxes[0][0]])
+    _load_keyed_originals(
+        conn,
+        name,
+        nearby or [p for p, _ in original_bboxes],
+        input_path,
+        name_field=name_field,
+        code_field=code_field,
+    )
 
 
 def _check_shared_winner(
@@ -506,7 +544,14 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 SELECT * FROM read_parquet('{path}')
             """)
         if originals:
-            _load_nearby_originals(conn, name, original_bboxes)
+            _load_nearby_originals(
+                conn,
+                name,
+                original_bboxes,
+                paths[i],
+                name_field=name_field,
+                code_field=code_field,
+            )
         clip.main(
             conn,
             name,

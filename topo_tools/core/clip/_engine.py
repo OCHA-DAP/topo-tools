@@ -33,6 +33,7 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
     threads: int | None = None,
     debug: bool = False,
     original_table: str | None = None,
+    original_owner: str | None = None,
     tiles: str,
 ) -> None:
     """Clip every row of table_in to its own overlay_fid's geometry.
@@ -105,6 +106,7 @@ def main(  # noqa: PLR0913 (each param is a distinct required input)
         overlay_source=overlay_source,
         original_table=original_table,
         issues_table=f"{table_out}_detached",
+        original_owner=original_owner,
     )
 
 

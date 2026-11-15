@@ -50,14 +50,28 @@ def load_overlay(
 
 
 def load_original(
-    conn: DuckDBPyConnection, name: str, original_paths: list[Path | str]
+    conn: DuckDBPyConnection,
+    name: str,
+    original_paths: list[Path | str],
+    *,
+    key: str,
 ) -> None:
-    """Expose the original layer's unvalidated geometry as view `{name}_original_01`."""
-    union_sql = " UNION ALL ".join(
-        f"(SELECT geom FROM ({reproject_select_sql(conn, path, make_valid=False)}))"
-        for path in original_paths
-    )
+    """Expose the original layer as view `{name}_original_01`, one row per input fid.
+
+    Each original row is paired with every `{name}_input_01` fid sharing its key.
+    """
+    selects = []
+    for path in original_paths:
+        source = reproject_select_sql(conn, path, make_valid=False)
+        columns = {r[0] for r in conn.execute(f"DESCRIBE {source}").fetchall()}
+        # A file without the key belongs to another input, so none of it pairs.
+        if key in columns:
+            selects.append(f'(SELECT geom, "{key}"::VARCHAR AS k FROM ({source}))')
+    if not selects:
+        selects.append("(SELECT NULL::GEOMETRY AS geom, NULL::VARCHAR AS k)")
     conn.execute(f"""--sql
         CREATE OR REPLACE VIEW "{name}_original_01" AS
-        SELECT row_number() OVER () AS fid, geom FROM ({union_sql})
+        SELECT row_number() OVER () AS fid, o.geom, i.fid AS input_fid
+        FROM ({" UNION ALL ".join(selects)}) o
+        JOIN "{name}_input_01" i ON i."{key}"::VARCHAR = o.k
     """)

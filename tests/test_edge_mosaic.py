@@ -33,13 +33,15 @@ _OVERLAY_A_AREA = 9.0
 _STEPS = ["inputs", "assign", "clip", "clean", "outputs"]
 
 
-def _write_synthetic(path, wkt_rows):
+def _write_synthetic(path, wkt_rows, *, codes=False):
     values = ", ".join(f"({fid}, ST_GeomFromText('{wkt}'))" for fid, wkt in wkt_rows)
+    code_sql = ", 'C' || id AS adm1_pcode, 'N' || id AS adm1_name" if codes else ""
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
-        conn.execute(
-            f"CREATE TABLE synth AS SELECT * FROM (VALUES {values}) AS t(id, geom)"
-        )
+        conn.execute(f"""--sql
+            CREATE TABLE synth AS
+            SELECT id{code_sql}, geom FROM (VALUES {values}) AS t(id, geom)
+        """)
         conn.execute(f"COPY synth TO '{path}'")
 
 
@@ -476,6 +478,7 @@ def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
                 (2 * i + 1, f"POLYGON(({x1} 0, {x2} 0, {x2} 0.01, {x1} 0.01, {x1} 0))"),
                 (2 * i + 2, f"POLYGON(({x0} 0, {x1} 0, {x1} 0.01, {x0} 0.01, {x0} 0))"),
             ],
+            codes=True,
         )
         paths.append(path)
     overlays_path = tmp_path / "parents.parquet"
@@ -489,6 +492,8 @@ def test_mosaic_multi_file_detached_keys_are_unique(tmp_path):
         issues_path,
         overwrite=True,
         original_paths=paths,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
     )
 
     with duckdb.connect() as conn:
@@ -1652,3 +1657,37 @@ def test_mosaic_fill_errors(tmp_path, kwargs, match):
     input_path, overlays_path = _write_fill_layers(tmp_path)
     with pytest.raises(ValueError, match=match):
         mosaic(input_path, overlays_path, tmp_path / "out.parquet", **kwargs)
+
+
+def test_mosaic_original_without_key_column_raises(tmp_path):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(originals, _INPUT_WKT[:2])
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with pytest.raises(ValueError, match="no original feature shares"):
+        mosaic(
+            inputs,
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=originals,
+            name_field="adm{n}_name",
+            code_field="adm{n}_pcode",
+        )
+
+
+def test_mosaic_original_sharing_no_key_raises(tmp_path):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(originals, [(9, _INPUT_WKT[0][1])], codes=True)
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with pytest.raises(ValueError, match="no original feature shares"):
+        mosaic(
+            inputs,
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=originals,
+            name_field="adm{n}_name",
+            code_field="adm{n}_pcode",
+        )

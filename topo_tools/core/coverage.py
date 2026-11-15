@@ -821,6 +821,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
     overlay_source: str,
     original_table: str | None,
     issues_table: str,
+    original_owner: str | None = None,
 ) -> int:
     """Merge small clip-detached pieces the original layer shows as clip artefacts.
 
@@ -895,7 +896,7 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
             FROM _det_parts p JOIN _det_q q USING (pid)
             WHERE q.qid IN (SELECT qid FROM _det_q GROUP BY qid HAVING count(*) > 1)
         """)
-        _load_owned_original(conn, original_table, "_det_split")
+        _load_owned_original(conn, original_table, "_det_split", original_owner)
         conn.execute("""--sql
             CREATE OR REPLACE TABLE _det_probe AS
             SELECT pid, s.fid, t.pt AS geom, t.px AS xmin, t.px AS xmax,
@@ -1107,13 +1108,18 @@ def merge_detached_parts(  # noqa: PLR0913 (each param is a distinct required in
 
 
 def _load_owned_original(
-    conn: DuckDBPyConnection, original_table: str, probe_table: str
+    conn: DuckDBPyConnection,
+    original_table: str,
+    probe_table: str,
+    original_owner: str | None,
 ) -> None:
     """Write _det_oparts: raw original parts near a probe, with their owning fid.
 
-    Ownership is by interior point, so no key column is shared with the input.
+    Ownership is by interior point, limited to the original_owner fid if given.
     """
     tol = SNAP_TOLERANCE
+    owner_sql = f'"{original_owner}"' if original_owner else "NULL::BIGINT"
+    owner_on = "q.fid = f.owner_fid AND " if original_owner else ""
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_obox AS
         SELECT {bbox_columns_sql("geom")} FROM "{original_table}"
@@ -1128,18 +1134,24 @@ def _load_owned_original(
     # Re-reading by exact bbox streams the original and needs no stable row order.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_ofeat AS
-        WITH r AS (SELECT geom, {bbox_columns_sql("geom")} FROM "{original_table}")
-        SELECT row_number() OVER () AS oid, r.geom
+        WITH r AS (
+            SELECT geom, {owner_sql} AS owner_fid, {bbox_columns_sql("geom")}
+            FROM "{original_table}"
+        )
+        SELECT row_number() OVER () AS oid, r.geom, r.owner_fid
         FROM r SEMI JOIN _det_ohit h USING (xmin, xmax, ymin, ymax)
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _det_oparts AS
         WITH owner AS (
             SELECT f.oid, q.fid FROM (
-                SELECT oid, pos, ST_X(pos) AS px, ST_Y(pos) AS py
-                FROM (SELECT oid, ST_PointOnSurface(geom) AS pos FROM _det_ofeat)
+                SELECT oid, owner_fid, ST_X(pos) AS px, ST_Y(pos) AS py, pos
+                FROM (
+                    SELECT oid, owner_fid, ST_PointOnSurface(geom) AS pos
+                    FROM _det_ofeat
+                )
             ) f JOIN _det_pre q
-              ON q.xmin <= f.px AND q.xmax >= f.px
+              ON {owner_on}q.xmin <= f.px AND q.xmax >= f.px
              AND q.ymin <= f.py AND q.ymax >= f.py AND ST_Intersects(q.geom, f.pos)
             QUALIFY row_number() OVER (PARTITION BY f.oid ORDER BY q.qid) = 1
         ),
