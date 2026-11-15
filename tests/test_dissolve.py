@@ -113,3 +113,10 @@ def test_unsupported_aggregation_raises(conn):
             group_by=["adm1_pcode"],
             aggregations={"area_sqkm": "median"},
         )
+
+
+def test_fid_follows_group_by_order(conn):
+    conn.execute("CREATE TABLE t_rev AS SELECT * FROM t_01 ORDER BY fid DESC")
+    dissolve_stage.main(conn, "t_rev", "t_out", group_by=["adm2_pcode"])
+    rows = conn.execute('SELECT fid, adm2_pcode FROM "t_out" ORDER BY fid').fetchall()
+    assert rows == [(1, "A1"), (2, "A2"), (3, "B1")]
