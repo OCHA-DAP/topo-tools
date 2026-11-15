@@ -368,25 +368,18 @@ def _load_keyed_originals(
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
     # A key the input lacks marks another input's original, so none of it pairs.
     usable = {p: k for p, k in original_keys.items() if k in columns}
-    load_original(conn, name, usable)
-    for path, key in usable.items():
-        paired, unmatched = conn.execute(f"""--sql
-            SELECT count(i.k), count(o.k) - count(i.k)
-            FROM (SELECT "{key}"::VARCHAR AS k
-                  FROM ({reproject_select_sql(conn, path, make_valid=False)})) o
-            LEFT JOIN (SELECT DISTINCT "{key}"::VARCHAR AS k
-                       FROM "{name}_input_01") i ON i.k = o.k
-        """).fetchall()[0]
+    counts = load_original(conn, name, usable)
+    for path, (paired, unmatched) in counts.items():
         # An original pairing nothing belongs to another input, so stays quiet.
         if paired and unmatched:
             logger.warning(
                 "original %s: %d %s codes match no input feature in %s",
                 path,
                 unmatched,
-                key,
+                usable[path],
                 input_path,
             )
-    if not conn.execute(f'SELECT 1 FROM "{name}_original_01" LIMIT 1').fetchall():
+    if not any(paired for paired, _ in counts.values()):
         conn.execute(f'DROP VIEW "{name}_original_01"')
         logger.warning(
             "input %s runs without originals: none pairs by code", input_path
