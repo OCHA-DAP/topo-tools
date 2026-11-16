@@ -21,12 +21,13 @@ label each edge by the units whose boundary lies within
 `10 * SNAP_TOLERANCE` of its midpoint: one unit is exterior, two are
 shared, and more than two keep the two nearest. Noding runs per 1° tile
 (`TILE_DEG`), with boundaries clipped to the tile plus `TILE_MARGIN_DEG`
-so a line cut at the tile edge still meets its node. Line endpoints within
-that tolerance of another move onto the least one, once after noding and
-once after the clip back to exact tiles, and lines that collapse below it
-are dropped. Two copies of one shared border in one tile then take each
-other's vertices (`ST_Snap` within the same tolerance, which only inserts
-vertices), and each label pair is line-merged. Edges are normalised after
+so a line cut at the tile edge still meets its node. Each line endpoint moves
+onto the least other endpoint within that tolerance, once after noding and
+once after the clip back to exact tiles, and lines left with zero length
+are dropped. Two copies of one shared border in one tile are then snapped
+onto each other (`ST_Snap` within the same tolerance, which moves vertices
+onto the other copy's and inserts the rest), and each label pair is
+line-merged. Edges are normalised after
 noding and every aggregate after noding is ordered, so the output is the
 same on every run. `ST_ReducePrecision` and snapping before noding are
 not used: snapping both sides swaps near vertices.
@@ -35,8 +36,10 @@ not used: snapping both sides swaps near vertices.
 
 On a clean coverage the linework matches per-pair extraction to within
 1e-9°. On seamed input the shared borders are recovered: raw Georgia
-input gives the same rows as its cleaned copy. Measured on one machine at `threads=4`:
-global admin4 (225,316 units) runs in 501 to 557 s at a 4.2 to 5.1 GB
-peak, against 636 s and 3.7 GB for per-pair extraction, and Indonesia
-admin2 in 24 s at 1.6 GB, against 27 s and 0.9 GB. A unit whose boundary
-touches itself at a vertex keeps one row per side of that vertex.
+input gives the same rows as its cleaned copy. Measured on one
+machine at `threads=4`: global admin4 (225,316 units) uses 715 s of CPU
+at a 3.7 to 5.1 GB peak, against 1,260 s and 3.7 GB for per-pair
+extraction, and Indonesia admin2 26 s at 1.6 GB, against 31 s and 0.9 GB.
+A unit whose boundary touches itself at a vertex keeps one row per side of
+that vertex. A chain of endpoints each within tolerance of the next, with
+its ends further apart, can still leave an extra row.

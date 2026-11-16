@@ -56,8 +56,8 @@ fieldmaps Xinjiang layer). Cleaning the input first resolves the overlap.
    (`TILE_DEG`) its bbox covers, widened by `TILE_MARGIN_DEG`, skipping
    the clip for a boundary already inside its tile.
 3. Node each tile with `ST_LineMerge(ST_Union_Agg(geom))`, dumped to
-   edges and normalised, with endpoints within `10 * SNAP_TOLERANCE` of
-   another moved onto the least one, then add each edge's midpoint and bbox in a
+   edges and normalised, with each endpoint moved onto the least other
+   endpoint within `10 * SNAP_TOLERANCE`, then add each edge's midpoint and bbox in a
    separate pass (computing them in the noding query makes it about three
    times slower).
 4. Label each edge: pair edges with boundaries on bbox columns only, then
@@ -106,10 +106,10 @@ dropped (step 8).
 The real target scale for this tool, `--debug` off, `threads=4`, Apple
 Silicon:
 
-| Run | Fids in / rows out | Wall time | RSS peak | Result |
+| Run | Fids in / rows out | CPU time (user) | RSS peak | Result |
 | --- | --- | --- | --- | --- |
-| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,765 rows | 501 to 557 s | 4.2 to 5.1 GB | Every finest-level fid present in the output |
-| Indonesia admin2 (`portolan/original/idn/latest/idn_admin2`) | 9,503 rows | 24 s | 1.6 GB | Every finest-level fid present in the output |
+| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,769 rows | 715 s | 3.7 to 5.1 GB | Every finest-level fid present in the output |
+| Indonesia admin2 (`portolan/original/idn/latest/idn_admin2`) | 9,503 rows | 26 s | 1.6 GB | Every finest-level fid present in the output |
 
 Noding and labelling run per 1° tile, so cost grows with the busiest tile
 (2.27M vertices globally), not with the whole input.
