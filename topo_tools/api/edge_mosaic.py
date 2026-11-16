@@ -613,45 +613,47 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         fid_offset = new_max if new_max is not None else fid_offset
 
     keyless: dict[Path | str, list[Path | str]] = {}
-    for i in range(len(paths)):
-        for table in assigned:
-            path = assigned_dir / table / f"{i:06d}.parquet"
-            conn.execute(f"""--sql
-                CREATE OR REPLACE TABLE "{table}" AS
-                SELECT * FROM read_parquet('{path}')
-            """)
-        if originals and _needs_originals(conn, name, paths[i]):
-            _load_nearby_originals(
+    try:
+        for i in range(len(paths)):
+            for table in assigned:
+                path = assigned_dir / table / f"{i:06d}.parquet"
+                conn.execute(f"""--sql
+                    CREATE OR REPLACE TABLE "{table}" AS
+                    SELECT * FROM read_parquet('{path}')
+                """)
+            if originals and _needs_originals(conn, name, paths[i]):
+                _load_nearby_originals(
+                    conn,
+                    name,
+                    original_bboxes,
+                    original_keys,
+                    paths[i],
+                    keyless=keyless,
+                )
+            clip.main(
                 conn,
                 name,
-                original_bboxes,
-                original_keys,
-                paths[i],
-                keyless=keyless,
+                tmp_dir_path,
+                threads=threads,
+                debug=debug,
+                carry_columns=resolved_overlay_columns,
+                input_columns=resolved_input_columns,
+                passthrough=passthrough,
+                result_table=f"{name}_03_iter",
+                raise_if_empty=False,
+                original_table=_paired_original(conn, name) if originals else None,
+                tiles=tiles,
             )
-        clip.main(
-            conn,
-            name,
-            tmp_dir_path,
-            threads=threads,
-            debug=debug,
-            carry_columns=resolved_overlay_columns,
-            input_columns=resolved_input_columns,
-            passthrough=passthrough,
-            result_table=f"{name}_03_iter",
-            raise_if_empty=False,
-            original_table=_paired_original(conn, name) if originals else None,
-            tiles=tiles,
-        )
 
-        for table in spilled:
-            spill_table(conn, spill_dir, table, i)
+            for table in spilled:
+                spill_table(conn, spill_dir, table, i)
 
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
-    _warn_keyless(keyless)
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
+    finally:
+        _warn_keyless(keyless)
     if not debug:
         shutil.rmtree(assigned_dir, ignore_errors=True)
 
