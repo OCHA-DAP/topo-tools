@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-16
+
+### Added
+
+- Every coverage clean merges each enclosed sliver gap (`2 * area *
+  vertices / perimeter^2` at most `SLIVER_GAP_MAX_RATIO`, 0.2) into the
+  neighbour sharing its longest border, and writes a `sliver-gap` issue row.
+  A gap excludes the outline of any polygon inside it, so `topo-detect` gap
+  rows and `has_gaps` follow the same rule.
+
+### Changed
+
+- `package-lines` builds its lines from one noded network of every unit
+  boundary, labelled by the units within `10 * SNAP_TOLERANCE` of each edge.
+  Units meeting at clip seams (sliver overlaps, T-junction vertices off the
+  neighbour's segment) get one shared row instead of two exterior rows. Global
+  admin4 uses about 45% less CPU and peaks about 1.3 GB higher.
+- An `edge-mosaic` input file with one feature skips original pairing, and a
+  one-row original skips code detection. Each original without a detectable
+  code column logs one warning per run, naming every input it was considered
+  for.
+
+### Removed
+
+- `topo-clean --maximum-gap-width thin`. Use `all` or a width in degrees.
+
+### Fixed
+
+- `edge-extend` ignores a fid whose exterior lines are all sliver-length, so a
+  gap 1.4 mm wide no longer breaks the points stage (UNHCR Brazil adm2).
+
 ## [0.23.0] - 2026-11-15
 
 ### Changed
@@ -1070,7 +1101,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.0...v0.21.1
