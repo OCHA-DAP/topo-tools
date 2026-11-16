@@ -11,6 +11,7 @@ from topo_tools.core.coverage import (
     close_notches,
     count_gaps,
     coverage_clean,
+    coverage_clean_rows,
     detect_notches,
     has_gaps,
     has_invalid_edges,
@@ -917,6 +918,20 @@ def test_merge_sliver_gaps_compares_width_to_vertex_spacing(points_per_side, mer
         assert has_gaps(conn, "synth", gap_maximum_width=0) == (not merged)
 
 
+def test_merge_sliver_gaps_leaves_enclave_inside_hole():
+    island = "POLYGON((0.25 0.495, 0.75 0.495, 0.75 0.505, 0.25 0.505, 0.25 0.495))"
+    with duckdb.connect() as conn:
+        _sliver_table(conn, [(1, _strip_hole(2)), (2, island)])
+        assert merge_sliver_gaps(conn, "synth", issues_table="iss", coverage=False)
+        assert not has_gaps(conn, "synth", gap_maximum_width=0)
+        rows = conn.execute("""
+            SELECT ST_Area(ST_Intersection(a.geom, b.geom)), ST_Area(b.geom)
+            FROM synth a, synth b WHERE a.fid = 1 AND b.fid = 2
+        """).fetchall()
+        assert rows[0][0] == pytest.approx(0, abs=1e-12)
+        assert rows[0][1] == pytest.approx(0.005)
+
+
 def test_merge_sliver_gaps_keeps_compact_hole():
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
@@ -940,3 +955,33 @@ def test_coverage_clean_merges_sliver_gaps_unless_disabled(merge_slivers):
         assert has_gaps(conn, "out", gap_maximum_width=0) != merge_slivers
         kinds = conn.execute("SELECT kind FROM iss").fetchall()
         assert kinds == ([("sliver-gap",)] if merge_slivers else [])
+
+
+@pytest.mark.parametrize(
+    ("rows", "slivers", "held_area"),
+    [
+        # A held row filling the hole leaves no gap to merge.
+        (
+            [
+                (1, _strip_hole(2)),
+                (2, "POLYGON((0.2 0.49, 0.8 0.49, 0.8 0.51, 0.2 0.51, 0.2 0.49))"),
+            ],
+            0,
+            0.012,
+        ),
+        # A held row elsewhere still lets the needle merge into a cleaned row.
+        (
+            [(1, LEFT), (3, RIGHT_NEEDLE), (2, "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))")],
+            1,
+            1.0,
+        ),
+    ],
+)
+def test_coverage_clean_rows_counts_held_rows_as_filled(rows, slivers, held_area):
+    with duckdb.connect() as conn:
+        _sliver_table(conn, rows)
+        coverage_clean_rows(conn, "synth", "fid != 2", issues_table="iss")
+        kinds = conn.execute("SELECT kind FROM iss WHERE kind = 'sliver-gap'")
+        assert len(kinds.fetchall()) == slivers
+        held = conn.execute("SELECT ST_Area(geom) FROM synth WHERE fid = 2")
+        assert held.fetchall()[0][0] == pytest.approx(held_area)

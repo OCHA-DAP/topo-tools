@@ -469,21 +469,42 @@ def _union_sql(table: str, *, coverage: bool) -> str:
 def gap_geometries_sql(table: str, *, coverage: bool = False) -> str:
     """Build SQL for a subquery of individual fully-enclosed interior-hole geometries.
 
-    Dumps the union into parts first: ST_NumInteriorRings returns NULL on a
-    MultiPolygon, and ST_Difference needs one polygon's own exterior ring.
+    Dumps the union into parts first (ST_NumInteriorRings is NULL on a MultiPolygon),
+    then subtracts any other part lying inside a hole, such as an enclave.
     """
     return f"""(
         WITH u AS ({_union_sql(table, coverage=coverage)}),
         parts AS (
-            SELECT (UNNEST(ST_Dump(g))).geom AS poly FROM u WHERE g IS NOT NULL
+            SELECT row_number() OVER () AS pid, poly, {bbox_columns_sql("poly")}
+            FROM (SELECT (UNNEST(ST_Dump(g))).geom AS poly FROM u WHERE g IS NOT NULL)
         ),
         holes AS (
+            SELECT row_number() OVER () AS hid, pid, geom, {bbox_columns_sql("geom")}
+            FROM (
+                SELECT pid, UNNEST(ST_Dump(
+                    ST_Difference(ST_MakePolygon(ST_ExteriorRing(poly)), poly)
+                )).geom AS geom
+                FROM parts WHERE ST_NumInteriorRings(poly) > 0
+            )
+            WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+        ),
+        inside AS (
+            SELECT h.hid, ST_Union_Agg(p.poly) AS g
+            FROM holes h
+            JOIN parts p ON p.pid != h.pid
+             AND p.xmin >= h.xmin AND p.xmax <= h.xmax
+             AND p.ymin >= h.ymin AND p.ymax <= h.ymax
+             AND ST_Intersects(p.poly, h.geom)
+            GROUP BY h.hid
+        ),
+        cut AS (
             SELECT UNNEST(ST_Dump(
-                ST_Difference(ST_MakePolygon(ST_ExteriorRing(poly)), poly)
+                CASE WHEN i.g IS NULL THEN h.geom ELSE ST_Difference(h.geom, i.g) END
             )).geom AS geom
-            FROM parts WHERE ST_NumInteriorRings(poly) > 0
+            FROM holes h LEFT JOIN inside i USING (hid)
         )
-        SELECT geom FROM holes WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+        SELECT geom FROM cut
+        WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom) AND ST_Dimension(geom) = 2
     )"""
 
 
@@ -814,34 +835,25 @@ def merge_micro_polygons(
 
 
 def merge_sliver_gaps(
-    conn: DuckDBPyConnection, table: str, *, issues_table: str, coverage: bool
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    issues_table: str,
+    coverage: bool,
+    where: str = "TRUE",
 ) -> int:
-    """Merge each sliver gap of `table` into its longest-border neighbour, in place.
+    """Merge each sliver gap of `table` into its longest-border `where` neighbour.
 
     A sliver is an enclosed gap with 2 * area * vertices / perimeter^2 at most
     SLIVER_GAP_MAX_RATIO; coverage=True needs a table that has passed has_invalid_edges.
     """
-    agg = "ST_CoverageUnion_Agg" if coverage else "ST_Union_Agg"
     ratio = "2 * ST_Area(geom) * ST_NPoints(geom) / power(ST_Perimeter(geom), 2)"
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _sliver_gaps AS
-        WITH u AS (
-            SELECT {agg}(geom) AS g
-            FROM (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
-            WHERE ST_Dimension(geom) = 2
-        ),
-        parts AS (
-            SELECT UNNEST(ST_Dump(g)).geom AS poly FROM u WHERE g IS NOT NULL
-        ),
-        holes AS (
-            SELECT ST_MakePolygon(ST_InteriorRingN(
-                poly, UNNEST(range(1, ST_NumInteriorRings(poly) + 1))
-            )) AS geom
-            FROM parts WHERE ST_NumInteriorRings(poly) > 0
-        )
         SELECT row_number() OVER (ORDER BY hash(geom)) AS gid, geom,
                {bbox_columns_sql("geom")}
-        FROM holes WHERE {ratio} <= {SLIVER_GAP_MAX_RATIO}
+        FROM {gap_geometries_sql(table, coverage=coverage)}
+        WHERE {ratio} <= {SLIVER_GAP_MAX_RATIO}
     """)
     count = conn.execute("SELECT count(*) FROM _sliver_gaps").fetchall()[0][0]
     if not count:
@@ -859,7 +871,7 @@ def merge_sliver_gaps(
         CREATE OR REPLACE TABLE _sliver_dest AS
         WITH r AS (
             SELECT rnid, fid, {src} AS source_file, geom, {bbox_columns_sql("geom")}
-            FROM _sliver_rows
+            FROM _sliver_rows WHERE {where}
         )
         SELECT g.gid, g.geom, r.rnid, r.fid, r.source_file
         FROM _sliver_gaps g
@@ -1516,10 +1528,26 @@ def coverage_clean_rows(
         CREATE OR REPLACE TABLE "{held}" AS
         SELECT * FROM "{table}" WHERE NOT ({where})
     """)
+    n_held = conn.execute(f'SELECT count(*) FROM "{held}"').fetchall()[0][0]
     conn.execute(f'DELETE FROM "{table}" WHERE NOT ({where})')
-    coverage_clean(conn, table, table, fids=None, issues_table=issues_table)
+    coverage_clean(
+        conn,
+        table,
+        table,
+        fids=None,
+        issues_table=issues_table,
+        merge_slivers=not n_held,
+    )
     conn.execute(f'INSERT INTO "{table}" BY NAME SELECT * FROM "{held}"')
     conn.execute(f'DROP TABLE "{held}"')
+    # Held rows fill their own area, so a gap they cover isn't a gap.
+    if n_held and merge_sliver_gaps(
+        conn, table, issues_table="_clean_sliver", coverage=False, where=where
+    ):
+        conn.execute(f"""--sql
+            INSERT INTO "{issues_table}" BY NAME SELECT * FROM _clean_sliver
+        """)
+    conn.execute("DROP TABLE IF EXISTS _clean_sliver")
 
 
 # Two edges this close count as touching, not as a notch.
