@@ -202,10 +202,10 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   of its edges' mean segment length, counting the ring's closing point
   as a vertex. Any polygon inside the hole, an enclave or a row held out
   of the clean, is not part of the gap.
-- Every `coverage_clean` call MUST merge each sliver gap into the polygon
-  sharing its longest border (ties to the lowest fid) after
+- Every `coverage_clean` call MUST merge each sliver gap into the cleaned
+  polygon sharing its longest border (ties to the lowest fid) after
   `ST_CoverageClean`, except in `edge-extend`'s merge stage, whose output
-  has no gaps.
+  has no gaps. A row held out of the clean MUST NOT receive one.
 - Each merged gap MUST be reported as a `sliver-gap` row by every tool
   that writes an issues report for that clean.
 

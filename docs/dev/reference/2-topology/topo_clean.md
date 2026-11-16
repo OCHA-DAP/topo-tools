@@ -36,8 +36,9 @@ detection stage directly rather than owning separate logic (see
 - The default gap-fill behavior (reached by omitting `--maximum-gap-width`,
   not a named mode) MUST fill a gap only if its width is at or below
   `SNAP_TOLERANCE`, regardless of shape.
-- Whatever the gap-fill mode, when `topo-detect` reports a gap or an
-  invalid edge, `topo-clean` MUST merge every enclosed gap
+- Whatever the gap-fill mode, whenever it runs the coverage clean (a
+  reported gap, invalid edges, or an explicit width), `topo-clean` MUST
+  merge every enclosed gap
   whose mean width is at most `SLIVER_GAP_MAX_RATIO` of its edges' mean
   segment length into the neighbour sharing its longest border, and report
   it as a `sliver-gap` row with `fixed` TRUE.

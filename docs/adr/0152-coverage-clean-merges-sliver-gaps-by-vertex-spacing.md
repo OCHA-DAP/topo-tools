@@ -25,8 +25,9 @@ its edges' mean segment length) into the neighbour sharing its longest
 border, and writes a `sliver-gap` issue row for it. The test is relative to
 each dataset's own digitising resolution, so one cutoff holds at any scale.
 Vertices count the ring's closing point, so with four or more vertices
-r ≤ 0.2 implies thinness ≤ 0.25 and compact holes are kept. `edge_extend`'s merge stage skips the pass, since its output has no
-gaps. `--maximum-gap-width thin` is removed.
+r ≤ 0.2 implies thinness ≤ 0.25 and compact holes are kept. `edge_extend`'s
+merge stage skips the pass, since its output has no gaps.
+`--maximum-gap-width thin` is removed.
 
 ## Consequences
 
