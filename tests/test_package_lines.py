@@ -223,6 +223,47 @@ def test_corner_touch_produces_zero_shared_rows(tmp_path):
     assert not [r for r in rows if r[1] is not None]
 
 
+def test_sliver_overlap_t_junction_is_one_shared_edge(tmp_path):
+    """A clip-seam vertex just off the neighbour's edge (no ST_Touches) shares it."""
+    west, east = "21.1848499 44.7758881", "21.237854 44.7895683"
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            {
+                "adm1_pcode": "A",
+                "wkt": f"POLYGON(({west},{east},21.237854 44.75,"
+                f"21.1848499 44.75,{west}))",
+            },
+            {
+                "adm1_pcode": "B",
+                "wkt": f"POLYGON(({west},21.1848499 44.8,21.237854 44.8,{east},"
+                f"21.2200349875 44.78496926606107,{west}))",
+            },
+        ],
+    )
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path,
+        output_path,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(f"""
+            SELECT b_pcode IS NULL, count(*), sum(ST_Length(geometry))
+            FROM '{output_path}' GROUP BY 1 ORDER BY 1
+        """).fetchall()
+        edge = conn.execute(
+            f"SELECT ST_Length(ST_GeomFromText('LINESTRING({west},{east})'))"
+        ).fetchall()[0][0]
+    assert [r[:2] for r in rows] == [(False, 1), (True, 2)]
+    assert rows[0][2] == pytest.approx(edge)
+
+
 def test_multi_part_fid_touching_and_remote(tmp_path):
     """A 2-part fid: one part touches a neighbor, one is a remote island."""
     input_path = tmp_path / "in.parquet"

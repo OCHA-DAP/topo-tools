@@ -26,15 +26,18 @@ sidebar:
 - `package-lines` MUST dissolve the input once, at the finest detected
   level only; every coarser boundary is already contained in that level's
   own adjacency, so no per-level repeat dissolve is needed.
-- `package-lines` MUST derive each pair of touching units' shared boundary
-  from `ST_Boundary` and `ST_Intersection`, never a PostGIS-style
-  shared-paths function (not available in this DuckDB spatial build), and
-  MUST merge the result with `ST_LineMerge` before dumping to atomic rows:
-  an unmerged intersection returns one fragment per matching edge segment,
-  not one line, even where both sides' vertices exactly coincide.
-- A shared-boundary row MUST be produced exactly once per touching pair
-  (`left_fid < right_fid`), never twice. A pair whose polygons only touch
-  at a point (corner touch) MUST produce zero shared rows.
+- `package-lines` MUST build shared and exterior boundaries from one noded
+  line network of every unit's boundary, labelling each edge by the units
+  whose boundary lies within `10 * SNAP_TOLERANCE` of its midpoint: one
+  unit makes it exterior, two make it shared, and more than two keep the
+  two nearest. Units that overlap by a sliver or meet at a T-junction
+  vertex off the other's segment MUST still produce one shared row.
+- A shared-boundary row MUST be produced exactly once per pair of units
+  sharing an edge (`left_fid < right_fid`), never twice. A pair whose
+  polygons only touch at a point (corner touch) MUST produce zero shared
+  rows.
+- `package-lines` MUST produce the same output on every run of the same
+  input.
 - `package-lines` MUST dump every multi-part shared or exterior geometry
   into atomic `LineString` rows; a unit with multiple disjoint exterior
   segments MUST produce one row per segment, never a single

@@ -33,16 +33,14 @@ package_lines("admin3.parquet")
 Run `topo-tools package-lines --help` for the full, always-current option
 list.
 
-## Why not `ST_SharedPaths`
+## Why a noded network
 
-PostGIS exposes `ST_SharedPaths` for exactly this shared-boundary
-extraction. This project's DuckDB spatial build has no equivalent
-function; the `verify-duckdb-function` skill's live catalog lookup
-confirms `ST_SharedPaths` and `ST_Relate` are both absent. `package-lines`
-instead builds shared boundaries from `ST_Boundary` plus `ST_Intersection`
-plus `ST_CollectionExtract`, verified end to end against synthetic
-geometry during design (adjacent squares, a three-in-a-row middle unit, a
-multi-part/archipelago fid, and a corner-only touch).
+Two units can share a border without `ST_Touches` holding: clip seams
+leave sliver overlaps and T-junction vertices a rounding error off the
+neighbour's segment, so per-pair `ST_Intersection` misses them. Noding
+every boundary together gives each stretch of line once, whatever the
+polygons' own topology, and labelling by distance finds the units on each
+side (see `docs/adr/0153`).
 
 ## Pipeline (`_02_boundaries`)
 
@@ -51,33 +49,21 @@ multi-part/archipelago fid, and a corner-only touch).
    already contained in the finest level's own adjacency, so no per-level
    repeat is needed. Every ancestor code column survives as a
    constant-per-group attribute, used later for classification.
-2. Build a part-exploded bbox table (`UNNEST(ST_Dump(geom))`, bbox columns
-   precomputed via `bbox_columns_sql()`, never inline inside a JOIN's `ON`
-   clause), so a multi-part fid with a remote exclave doesn't make every
-   candidate-pair bbox comparison span the whole fid's extent.
-3. Find candidate touching fid pairs from bbox overlap at the part level
-   (`DISTINCT`, `a.fid < b.fid`), then confirm real adjacency with
-   `ST_Touches` against each pair's whole-fid geometry (a part-level bbox
-   overlap doesn't guarantee the whole fids actually touch).
-4. For each touching pair, compute the shared segment as
-   `ST_LineMerge(ST_CollectionExtract(ST_Intersection(boundary_a,
-   boundary_b), 2))`, filtering out `NULL`/empty results; a corner-only
-   touch has `ST_Touches` true but an empty intersection, and is filtered
-   out here, producing zero shared rows for that pair. `ST_LineMerge` is
-   required even when both sides' vertices exactly coincide along the
-   shared edge: `ST_Intersection` on two boundaries returns one
-   `LineString` fragment per matching edge segment, not one merged line,
-   so real admin boundaries with many vertices along a shared border
-   produce hundreds of tiny fragments without it (see `docs/adr/0097`).
-5. Union each fid's own shared segments (both sides of every pair it's in)
-   via `ST_Union_Agg`, then compute its exterior as
-   `ST_LineMerge(ST_Difference(boundary, own_shared))`, dumped to atomic
-   `LineString` rows. A fid with two disjoint exterior segments (e.g. one
-   touching side, one fully remote part) produces two rows, never one
-   `MultiLineString`.
-6. Dump shared segments to atomic `LineString` rows too (a multi-part
-   fid's shared adjacency can itself be a `MultiLineString`), then classify
-   every row: a shared row's depth is the coarsest detected level at which
+2. Take each unit's `ST_Boundary` and clip it to every 1° tile
+   (`TILE_DEG`) its bbox covers, widened by `TILE_MARGIN_DEG`, skipping
+   the clip for a boundary already inside its tile.
+3. Node each tile with `ST_LineMerge(ST_Union_Agg(geom))`, dumped to
+   edges and normalised, then add each edge's midpoint and bbox in a
+   separate pass (computing them in the noding query makes it about three
+   times slower).
+4. Label each edge: pair edges with boundaries on bbox columns only, then
+   keep the units within `10 * SNAP_TOLERANCE` of the midpoint, nearest
+   two first. One unit makes the edge exterior, two make it shared
+   (`left_fid < right_fid`).
+5. Snap same-label edges in one tile onto each other, clip edges back to
+   their exact tile, snap tile cut points a rounding error apart onto one
+   point, and line-merge each label pair into atomic `LineString` rows.
+6. Classify every row: a shared row's depth is the coarsest detected level at which
    its two sides' own code columns first differ; an exterior row's depth
    is the coarsest detected level when that level has a single unit,
    since every outer edge is then that unit's outline, and one level
@@ -87,9 +73,8 @@ multi-part/archipelago fid, and a corner-only touch).
 7. Raise `ValueError` if any finest-level fid is absent from every output
    row (as `left_fid` or `right_fid`), catching a fid silently dropped
    somewhere in the pipeline. A fid fully enclosed by neighbors (zero
-   exterior boundary) can only ever appear as `right_fid`, since candidate
-   pairs are generated with `a.fid < b.fid`; the check accepts either
-   column, not `left_fid` alone.
+   exterior boundary) appears only in shared rows, as `left_fid` or
+   `right_fid`; the check accepts either column, not `left_fid` alone.
 8. Resolve each side's `fid` to the detected identity families at the
    row's own depth, the coarsest level for an outer edge
    (`group_families_by_level()`/`level_family_names()`, the same
@@ -113,15 +98,12 @@ dropped (step 8).
 
 ## Portolan-scale profiling
 
-The real target scale for this tool, `--debug` off, Apple Silicon/10 logical
-cores:
+The real target scale for this tool, `--debug` off, `threads=4`, Apple
+Silicon:
 
-| Run                              | Fids in / shared+exterior rows out | Wall time | RSS peak | Result                              |
-| --------------------------------- | ---------------------------------- | --------- | -------- | ------------------------------------ |
-| Global admin4 (`portolan/global/admin4/admin4.parquet`, 217,223 rows, `--depth-column pkg_lvl`) | 217,223 / 612,006 shared + 44,356 exterior | 333s | 7.74 GB | Every finest-level fid present in the output |
+| Run | Fids in / rows out | Wall time | RSS peak | Result |
+| --- | --- | --- | --- | --- |
+| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,769 rows | 425 to 446 s | 3.8 to 4.2 GB | Every finest-level fid present in the output |
 
-The bbox-prefiltered candidate-pair join stays close to linear in input
-size in practice: touching pairs cluster within each country's own
-landmass, so a global run costs roughly the sum of each country's own
-candidate-pair search, not a combinatorial blow-up across all 217,223 rows
-at once.
+Noding and labelling run per 1° tile, so cost grows with the busiest tile
+(2.27M vertices globally), not with the whole input.

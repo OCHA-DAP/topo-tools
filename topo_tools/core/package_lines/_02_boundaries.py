@@ -3,10 +3,10 @@
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import generic_families
-from topo_tools.core.constants import SUBDIVIDE_MAX_VERTICES, SUBDIVIDE_MIN_VERTICES
-from topo_tools.core.coverage import grid_pairs
+from topo_tools.core.constants import SNAP_TOLERANCE
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
+from topo_tools.core.package_lines._constants import TILE_DEG, TILE_MARGIN_DEG
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
 from topo_tools.core.schema_map._level_columns import (
     detect_levels_with_root,
@@ -16,8 +16,6 @@ from topo_tools.core.schema_map._level_columns import (
     verify_functional_cluster,
 )
 from topo_tools.core.schema_map._target_schema import TargetSchema
-
-_EMPTY_LINES = "ST_GeomFromText('MULTILINESTRING EMPTY')"
 
 
 def _classification_sql(levels: list[int], code_columns: list[str]) -> str:
@@ -157,99 +155,7 @@ def main(  # noqa: PLR0913
     outer_depth = _outer_depth(conn, table_in, levels, code_columns)
     labels = _labels(families, levels, code_columns, dissolved_columns, outer_depth)
 
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_parts" AS
-        SELECT fid, geom, {bbox_columns_sql("geom")}
-        FROM (SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom FROM "{dissolved}")
-    """)
-    parts = f"{name}_02_parts"
-    grid_pairs(
-        conn, parts, parts, f"{name}_02_tmp1", on="l.fid < r.fid", tol=0, key="fid"
-    )
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_pairs" AS
-        SELECT DISTINCT pid AS left_fid, near_pid AS right_fid FROM "{name}_02_tmp1"
-    """)
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp1"')
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_boundary" AS
-        SELECT fid, ST_Boundary(geom) AS boundary FROM "{dissolved}"
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_boundary_parts" AS
-        SELECT fid, geom, {bbox_columns_sql("geom")}
-        FROM (
-            SELECT fid, UNNEST(ST_Dump(boundary)).geom AS geom
-            FROM "{name}_02_boundary"
-        )
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_touching" AS
-        SELECT p.left_fid, p.right_fid
-        FROM "{name}_02_pairs" p
-        JOIN "{dissolved}" wl ON wl.fid = p.left_fid
-        JOIN "{dissolved}" wr ON wr.fid = p.right_fid
-        WHERE ST_Touches(wl.geom, wr.geom)
-    """)
-    _split_long_parts(conn, f"{name}_02_boundary_parts", f"{name}_02_tmp2")
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_shared" AS
-        WITH pieces AS (
-            SELECT t.left_fid, t.right_fid,
-                   ST_CollectionExtract(ST_Intersection(lp.geom, rp.geom), 2) AS geom
-            FROM "{name}_02_touching" t
-            JOIN "{name}_02_tmp2" lp ON lp.fid = t.left_fid
-            JOIN "{name}_02_tmp2" rp ON rp.fid = t.right_fid
-              AND lp.xmin <= rp.xmax AND lp.xmax >= rp.xmin
-              AND lp.ymin <= rp.ymax AND lp.ymax >= rp.ymin
-        ),
-        merged AS (
-            SELECT left_fid, right_fid, ST_LineMerge(ST_Union_Agg(geom)) AS geom
-            FROM pieces
-            WHERE NOT ST_IsEmpty(geom)
-            GROUP BY left_fid, right_fid
-        )
-        SELECT left_fid, right_fid, geom FROM merged
-        WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
-    """)
-    conn.execute(f'DROP TABLE IF EXISTS "{name}_02_tmp2"')
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_shared_by_fid" AS
-        SELECT fid, ST_Union_Agg(geom) AS geom
-        FROM (
-            SELECT left_fid AS fid, geom FROM "{name}_02_shared"
-            UNION ALL
-            SELECT right_fid AS fid, geom FROM "{name}_02_shared"
-        )
-        GROUP BY fid
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_exterior_raw" AS
-        SELECT bp.fid,
-               ST_LineMerge(ST_Difference(
-                   bp.geom, COALESCE(s.geom, {_EMPTY_LINES})
-               )) AS geom
-        FROM "{name}_02_boundary_parts" bp
-        LEFT JOIN "{name}_02_shared_by_fid" s ON s.fid = bp.fid
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_shared_atomic" AS
-        SELECT left_fid, right_fid, geom
-        FROM (
-            SELECT left_fid, right_fid, UNNEST(ST_Dump(geom)).geom AS geom
-            FROM "{name}_02_shared"
-        )
-        WHERE NOT ST_IsEmpty(geom)
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_02_exterior" AS
-        SELECT fid AS left_fid, NULL::BIGINT AS right_fid, geom
-        FROM (
-            SELECT fid, UNNEST(ST_Dump(geom)).geom AS geom
-            FROM "{name}_02_exterior_raw"
-        )
-        WHERE NOT ST_IsEmpty(geom)
-    """)
+    _noded_lines(conn, name, dissolved)
 
     # A whole-table-constant root never separates two units; a NULL would.
     classification = _classification_sql(
@@ -261,13 +167,12 @@ def main(  # noqa: PLR0913
     )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_rows" AS
-        SELECT s.left_fid, s.right_fid, {classification} AS depth, s.geom
-        FROM "{name}_02_shared_atomic" s
+        SELECT s.left_fid, s.right_fid,
+               CASE WHEN s.right_fid IS NULL THEN {outer_depth}
+               ELSE {classification} END AS depth, s.geom
+        FROM "{name}_02_lines" s
         JOIN "{dissolved}" l ON l.fid = s.left_fid
-        JOIN "{dissolved}" r ON r.fid = s.right_fid
-        UNION ALL
-        SELECT left_fid, right_fid, {outer_depth} AS depth, geom
-        FROM "{name}_02_exterior"
+        LEFT JOIN "{dissolved}" r ON r.fid = s.right_fid
     """)
 
     def _label(side: str, by_depth: dict[int, str]) -> str:
@@ -301,52 +206,187 @@ def main(  # noqa: PLR0913
         ORDER BY left_fid, right_fid NULLS LAST, hash(geom)
     """)
 
-    for table in [
-        "parts",
-        "pairs",
-        "boundary",
-        "boundary_parts",
-        "touching",
-        "shared",
-        "shared_by_fid",
-        "exterior_raw",
-        "shared_atomic",
-        "exterior",
-        "rows",
-    ]:
+    for table in ["lines", "rows"]:
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_{table}"')
 
 
-def _split_long_parts(conn: DuckDBPyConnection, table_in: str, table_out: str) -> None:
-    """Split long lines into runs of their own vertices, sharing each run's ends.
+def _tile_range(low: str, high: str) -> str:
+    first, last = (f"floor({v} / {TILE_DEG})::BIGINT" for v in (low, high))
+    return f"range({first}, {last} + 1)"
 
-    A join row carries both geometries, so one huge ring repeats per candidate.
+
+def _envelope(margin: float) -> str:
+    return (
+        f"ST_MakeEnvelope(tx * {TILE_DEG} - {margin}, ty * {TILE_DEG} - {margin}, "
+        f"(tx + 1) * {TILE_DEG} + {margin}, (ty + 1) * {TILE_DEG} + {margin})"
+    )
+
+
+def _clip_to_tile(margin: float) -> str:
+    """Clip geom to its tile, skipping the clip for a geom already inside it."""
+    inside = " AND ".join(
+        [
+            f"xmin >= tx * {TILE_DEG} - {margin}",
+            f"xmax <= (tx + 1) * {TILE_DEG} + {margin}",
+            f"ymin >= ty * {TILE_DEG} - {margin}",
+            f"ymax <= (ty + 1) * {TILE_DEG} + {margin}",
+        ]
+    )
+    clip = f"ST_CollectionExtract(ST_Intersection(geom, {_envelope(margin)}), 2)"
+    return f"CASE WHEN {inside} THEN geom ELSE {clip} END"
+
+
+def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
+    """Node every unit boundary per grid tile, label each edge by its one or two units.
+
+    Writes `{name}_02_lines` (left_fid, right_fid NULL for an exterior edge, geom).
     """
-    step = SUBDIVIDE_MAX_VERTICES - 1
-    long = f"ST_NPoints(geom) >= {SUBDIVIDE_MIN_VERTICES}"
+    tol = SNAP_TOLERANCE * 10
+    margin = TILE_MARGIN_DEG
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{table_out}" AS
-        WITH parts AS (
-            SELECT fid, row_number() OVER () AS part, geom
-            FROM "{table_in}" WHERE {long}
-        ),
-        points AS (
-            SELECT fid, part, d.path[1] AS i, d.geom
-            FROM (SELECT fid, part, UNNEST(ST_Dump(ST_Points(geom))) AS d FROM parts)
-        ),
-        runs AS (
-            SELECT fid, ST_MakeLine(list(geom ORDER BY i)) AS geom
-            FROM (
-                SELECT fid, part, i, geom, UNNEST(
-                    CASE WHEN i > 1 AND (i - 1) % {step} = 0
-                    THEN [(i - 1) // {step} - 1, (i - 1) // {step}]
-                    ELSE [(i - 1) // {step}] END
-                ) AS run
-                FROM points
-            )
-            GROUP BY fid, part, run HAVING count(*) > 1
-        )
-        SELECT fid, geom, {bbox_columns_sql("geom")} FROM runs
-        UNION ALL BY NAME
-        SELECT fid, geom, xmin, xmax, ymin, ymax FROM "{table_in}" WHERE NOT {long}
+        CREATE OR REPLACE TABLE "{name}_02_tmp1" AS
+        SELECT fid, ST_Boundary(geom) AS geom, {bbox_columns_sql("geom")}
+        FROM "{dissolved}"
     """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp2" AS
+        SELECT row_number() OVER () AS bid, fid, tx, ty, geom,
+               {bbox_columns_sql("geom")}
+        FROM (
+            SELECT fid, tx, ty, {_clip_to_tile(margin)} AS geom
+            FROM "{name}_02_tmp1",
+                 LATERAL (SELECT UNNEST({
+        _tile_range(f"(xmin - {margin})", f"(xmax + {margin})")
+    }) AS tx),
+                 LATERAL (SELECT UNNEST({
+        _tile_range(f"(ymin - {margin})", f"(ymax + {margin})")
+    }) AS ty)
+        )
+        WHERE NOT ST_IsEmpty(geom)
+    """)
+    conn.execute(f'DROP TABLE "{name}_02_tmp1"')
+    # Computing the edge columns in the noding query itself makes it about 3x slower.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp3" AS
+        SELECT tx, ty, ST_Normalize(geom) AS geom
+        FROM (
+            SELECT tx, ty,
+                   UNNEST(ST_Dump(ST_LineMerge(ST_Union_Agg(geom)))).geom AS geom
+            FROM "{name}_02_tmp2" GROUP BY tx, ty
+        )
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp3" AS
+        SELECT row_number() OVER (
+                   ORDER BY tx, ty, ST_XMin(geom), ST_YMin(geom), ST_AsWKB(geom)
+               ) AS eid, tx, ty, geom,
+               ST_LineInterpolatePoint(geom, 0.5) AS mid,
+               {bbox_columns_sql("geom")}
+        FROM "{name}_02_tmp3"
+    """)
+    # Pairing on bbox columns alone first keeps geometry out of the join's hash table.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp4" AS
+        SELECT e.eid, b.bid
+        FROM (SELECT eid, tx, ty, ST_X(mid) AS mx, ST_Y(mid) AS my
+              FROM "{name}_02_tmp3") e
+        JOIN (SELECT bid, tx, ty, xmin, xmax, ymin, ymax FROM "{name}_02_tmp2") b
+          ON b.tx = e.tx AND b.ty = e.ty
+          AND e.mx BETWEEN b.xmin - {tol} AND b.xmax + {tol}
+          AND e.my BETWEEN b.ymin - {tol} AND b.ymax + {tol}
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp4" AS
+        WITH near AS (
+            SELECT c.eid, b.fid, ST_Distance(b.geom, e.mid) AS dist
+            FROM "{name}_02_tmp4" c
+            JOIN (SELECT eid, mid FROM "{name}_02_tmp3") e USING (eid)
+            JOIN (SELECT bid, fid, geom FROM "{name}_02_tmp2") b USING (bid)
+            WHERE ST_DWithin(b.geom, e.mid, {tol})
+        ),
+        ranked AS (
+            SELECT eid, fid, row_number() OVER (
+                PARTITION BY eid ORDER BY dist, fid
+            ) AS rank
+            FROM near
+        )
+        SELECT eid, min(fid) AS left_fid,
+               CASE WHEN count(*) = 2 THEN max(fid) END AS right_fid
+        FROM ranked WHERE rank <= 2 GROUP BY eid
+    """)
+    conn.execute(f'DROP TABLE "{name}_02_tmp2"')
+    # Each side's vertices go into the other's copy of a shared border.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp5" AS
+        WITH labelled AS (
+            SELECT l.eid, l.left_fid, coalesce(l.right_fid, -1) AS right_key,
+                   e.tx, e.ty, e.geom, e.xmin, e.xmax, e.ymin, e.ymax
+            FROM "{name}_02_tmp4" l JOIN "{name}_02_tmp3" e USING (eid)
+        )
+        SELECT a.eid,
+               ST_Snap(any_value(a.geom),
+                       ST_Collect(list_append(
+                           list(b.geom ORDER BY b.eid), any_value(a.geom)
+                       )),
+                       {tol}) AS geom
+        FROM labelled a JOIN labelled b ON a.tx = b.tx AND a.ty = b.ty
+          AND a.left_fid = b.left_fid AND a.right_key = b.right_key
+          AND a.eid <> b.eid
+          AND a.xmin <= b.xmax + {tol} AND a.xmax >= b.xmin - {tol}
+          AND a.ymin <= b.ymax + {tol} AND a.ymax >= b.ymin - {tol}
+        GROUP BY a.eid
+    """)
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_tmp6" AS
+        SELECT row_number() OVER (
+                   ORDER BY left_fid, right_fid, ST_AsWKB(geom)
+               ) AS pid, left_fid, right_fid,
+               coalesce(right_fid, -1) AS right_key, geom
+        FROM (
+            SELECT l.left_fid, l.right_fid, {_clip_to_tile(0)} AS geom
+            FROM (
+                SELECT e.eid, e.tx, e.ty, e.xmin, e.xmax, e.ymin, e.ymax,
+                       coalesce(s.geom, e.geom) AS geom
+                FROM "{name}_02_tmp3" e LEFT JOIN "{name}_02_tmp5" s USING (eid)
+            ) e
+            JOIN "{name}_02_tmp4" l USING (eid)
+        )
+        WHERE NOT ST_IsEmpty(geom)
+    """)
+    for table in ["tmp3", "tmp4", "tmp5"]:
+        conn.execute(f'DROP TABLE "{name}_02_{table}"')
+    # Neighbouring tiles cut one line at points a rounding error apart.
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_02_lines" AS
+        WITH ends AS (
+            SELECT pid, left_fid, right_key, ST_X(pt) AS x, ST_Y(pt) AS y, pt
+            FROM (
+                SELECT pid, left_fid, right_key,
+                       UNNEST([ST_StartPoint(geom), ST_EndPoint(geom)]) AS pt
+                FROM "{name}_02_tmp6"
+            )
+        ),
+        moves AS (
+            SELECT a.pid, ST_Collect(list(b.pt ORDER BY b.x, b.y)) AS targets
+            FROM ends a JOIN ends b ON a.left_fid = b.left_fid
+              AND a.right_key = b.right_key AND a.pid <> b.pid
+              AND abs(a.x - b.x) <= {tol} AND abs(a.y - b.y) <= {tol}
+              AND (b.x < a.x OR (b.x = a.x AND b.y < a.y))
+            GROUP BY a.pid
+        ),
+        snapped AS (
+            SELECT p.pid, p.left_fid, p.right_fid, CASE WHEN m.pid IS NULL THEN p.geom
+                ELSE ST_Snap(p.geom, m.targets, {tol}) END AS geom
+            FROM "{name}_02_tmp6" p LEFT JOIN moves m USING (pid)
+        )
+        SELECT left_fid, right_fid, geom
+        FROM (
+            SELECT left_fid, right_fid,
+                   UNNEST(ST_Dump(ST_LineMerge(
+                       ST_Union_Agg(geom ORDER BY pid)
+                   ))).geom AS geom
+            FROM snapped GROUP BY left_fid, right_fid
+        )
+        WHERE NOT ST_IsEmpty(geom)
+    """)
+    conn.execute(f'DROP TABLE "{name}_02_tmp6"')
