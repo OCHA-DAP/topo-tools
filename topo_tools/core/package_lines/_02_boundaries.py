@@ -319,9 +319,10 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp5" AS
         WITH labelled AS (
-            SELECT l.eid, l.left_fid, coalesce(l.right_fid, -1) AS right_key,
+            SELECT l.eid, l.left_fid, l.right_fid,
                    e.tx, e.ty, e.geom, e.xmin, e.xmax, e.ymin, e.ymax
             FROM "{name}_02_tmp4" l JOIN "{name}_02_tmp3" e USING (eid)
+            WHERE l.right_fid IS NOT NULL
         )
         SELECT a.eid,
                ST_Snap(any_value(a.geom),
@@ -330,7 +331,7 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
                        )),
                        {tol}) AS geom
         FROM labelled a JOIN labelled b ON a.tx = b.tx AND a.ty = b.ty
-          AND a.left_fid = b.left_fid AND a.right_key = b.right_key
+          AND a.left_fid = b.left_fid AND a.right_fid = b.right_fid
           AND a.eid <> b.eid
           AND a.xmin <= b.xmax + {tol} AND a.xmax >= b.xmin - {tol}
           AND a.ymin <= b.ymax + {tol} AND a.ymax >= b.ymin - {tol}
