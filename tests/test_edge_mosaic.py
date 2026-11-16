@@ -1761,6 +1761,37 @@ def test_one_feature_input_drops_previous_original_view(tmp_path):
         assert _paired_original(conn, "t") is None
 
 
+def test_multi_file_unkeyed_original_warns_once(tmp_path, caplog):
+    first, second, single = (tmp_path / f"{n}.parquet" for n in "abc")
+    _write_synthetic(first, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(
+        second,
+        [
+            (1, "POLYGON((9 -1, 11.5 -1, 11.5 4, 9 4, 9 -1))"),
+            (2, "POLYGON((11.5 -1, 14 -1, 14 4, 11.5 4, 11.5 -1))"),
+        ],
+        codes=True,
+    )
+    _write_synthetic(single, [(1, "POLYGON((19 -1, 24 -1, 24 4, 19 4, 19 -1))")])
+    overlays, original = tmp_path / "overlays.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(
+        overlays, [*_OVERLAY_WKT, (3, "POLYGON((20 0, 23 0, 23 3, 20 3, 20 0))")]
+    )
+    _write_synthetic(original, [(1, "POLYGON((-5 -5, 24 -5, 24 5, -5 5, -5 -5))")])
+    with caplog.at_level(logging.WARNING):
+        mosaic(
+            [first, second, single],
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=original,
+        )
+    warned = [r for r in caplog.records if "no detectable code column" in r.message]
+    assert len(warned) == 1
+    assert str(first) in warned[0].message
+    assert str(second) in warned[0].message
+    assert str(single) not in warned[0].message
+
+
 @pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])
 def test_unkeyed_originals_pair_by_file(tmp_path, second_id):
     inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
