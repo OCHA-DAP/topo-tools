@@ -19,6 +19,9 @@ NOTCH_MIN_SCORE = 2
 # A flagged segment's endpoint moves onto the other unit only within this
 # share of the segment's own length.
 NOTCH_MAX_GAP_RATIO = 1 / 10
+# An enclosed gap is a sliver when its mean width is at most this share of its
+# edges' mean segment length (2 * area * vertices / perimeter^2).
+SLIVER_GAP_MAX_RATIO = 0.2
 # Degrees around a notch inside which its two units are cut and rebuilt.
 NOTCH_WINDOW_MARGIN = 0.002
 # Equal Earth, used by match/change to rank/compute areas for cross-polygon

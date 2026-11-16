@@ -27,4 +27,4 @@ def main(
     where = coverage_rows_sql(
         name, passthrough=passthrough, passthrough_fids=passthrough_fids
     )
-    coverage_clean_rows(conn, table, where, micro_issues_table=f"{table}_micro")
+    coverage_clean_rows(conn, table, where, issues_table=f"{table}_micro")

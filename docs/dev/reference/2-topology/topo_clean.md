@@ -36,14 +36,14 @@ detection stage directly rather than owning separate logic (see
 - The default gap-fill behavior (reached by omitting `--maximum-gap-width`,
   not a named mode) MUST fill a gap only if its width is at or below
   `SNAP_TOLERANCE`, regardless of shape.
-- The `thin` mode MUST fill a gap only if its compactness score, measured
-  after notch closing, marks it as
-  a thin, elongated digitization sliver rather than a plausible real
-  feature (e.g. a pond or a strait), regardless of the gap's absolute size.
+- Whatever the gap-fill mode, `topo-clean` MUST merge every enclosed gap
+  whose mean width is at most `SLIVER_GAP_MAX_RATIO` of its edges' mean
+  segment length into the neighbour sharing its longest border, and report
+  it as a `sliver-gap` row with `fixed` TRUE.
 - The `all` mode MUST fill every detected gap, regardless of shape.
 - A user-supplied numeric width MUST be honored directly, in decimal
   degrees, with no unit conversion. Requesting any gap-fill mode other
-  than `thin`, `all`, or a number MUST raise `ValueError`; requesting the
+  than `all` or a number MUST raise `ValueError`; requesting the
   literal string `auto` MUST also raise `ValueError`, the default is only
   reachable by omitting the flag.
 - The default snapping behavior (reached by omitting `--snapping-distance`,
@@ -112,15 +112,11 @@ detection stage directly rather than owning separate logic (see
 
     topo-tools topo-clean example.geojson example_cleaned.geojson
 
-### Example 2: fill thin/sliver-shaped gaps regardless of width
-
-    topo-tools topo-clean example.gpkg --maximum-gap-width thin
-
-### Example 3: fill every detected gap, not just slivers
+### Example 2: fill every detected gap, not just slivers
 
     topo-tools topo-clean example.gpkg --maximum-gap-width all
 
-### Example 4: custom issues report path and snapping distance
+### Example 3: custom issues report path and snapping distance
 
     topo-tools topo-clean example.parquet --issues-file example_report.parquet \
       --snapping-distance 0.0001

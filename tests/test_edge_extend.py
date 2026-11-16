@@ -410,6 +410,23 @@ def test_check_cells_raises_on_cell_holding_several_points():
             voronoi.check_cells(conn, "t")
 
 
+def test_points_allow_dropping_sliver_exterior_edge():
+    """A fid whose only exterior edge is a sliver within the zone yields no point."""
+    sliver = 1.4 * SNAP_TOLERANCE
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"""--sql
+            CREATE TABLE s_02 AS SELECT * FROM (VALUES
+                (1, ST_GeomFromText('LINESTRING(0 0, 1 0)')),
+                (2, ST_GeomFromText('LINESTRING(0.5 1, 0.5 {1 + sliver!r})'))
+            ) t(fid, geom)
+        """)
+        points.build_segments(conn, "s")
+        points.main(conn, "s", Decimal("0.25"))
+        fids = conn.execute("SELECT DISTINCT fid FROM s_03b").fetchall()
+    assert fids == [(1,)]
+
+
 def test_points_skip_map_cut_edges(tmp_path):
     """Edges on the antimeridian and the poles seed no Voronoi points."""
     path = tmp_path / "cut.parquet"

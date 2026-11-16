@@ -18,4 +18,4 @@ def main(conn: DuckDBPyConnection, name: str, *, passthrough: bool = False) -> N
     """Coverage-clean `{name}_04` in place, micro rows in `{name}_04_micro`."""
     table = f"{name}_04"
     where = coverage_rows_sql(name, passthrough=passthrough)
-    coverage_clean_rows(conn, table, where, micro_issues_table=f"{table}_micro")
+    coverage_clean_rows(conn, table, where, issues_table=f"{table}_micro")

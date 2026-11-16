@@ -194,6 +194,18 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   inputs; its overlay drops intersections below `SNAP_TOLERANCE` squared
   instead.
 
+## Sliver gaps
+
+- A sliver gap is an enclosed gap with `2 * area * vertices / perimeter^2`
+  at most `SLIVER_GAP_MAX_RATIO` (0.2): its mean width is at most a fifth
+  of its edges' mean segment length.
+- Every `coverage_clean` call MUST merge each sliver gap into the polygon
+  sharing its longest border (ties to the lowest fid) after
+  `ST_CoverageClean`, except in `edge-extend`'s merge stage, whose output
+  has no gaps.
+- Each merged gap MUST be reported as a `sliver-gap` row by every tool
+  that writes an issues report.
+
 ## Clip-detached pieces
 
 - A clip-detached piece is any polygon part of a clipped polygon other than
@@ -301,6 +313,10 @@ own polygon fid in `unit_a`, the receiving polygon's fid in `unit_b` (null
 when dropped), `reason` MUST say whether it was merged or dropped,
 `fixed` MUST be true, and `geom` MUST be the part itself. `topo-detect`
 reports the same kind unfixed: `fixed` false, `unit_b` and `reason` null.
+
+A `kind='sliver-gap'` row (see Sliver gaps) MUST hold the receiving
+polygon's fid in `unit_a`, with `unit_b` null, `fixed` true,
+`filled_area_m2` the gap's area, and `geom` the gap itself.
 
 A `kind='detached-part'` row (see Clip-detached pieces) MUST hold the
 piece's own polygon fid in `unit_a`, the fid of the polygon it shares the

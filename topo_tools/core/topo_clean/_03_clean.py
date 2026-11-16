@@ -8,17 +8,13 @@ from topo_tools.core.constants import SNAP_TOLERANCE
 from topo_tools.core.coverage import (
     close_notches,
     coverage_clean,
-    gap_issues_sql,
     has_gaps,
     has_invalid_edges,
     merge_micro_polygons,
 )
-from topo_tools.core.units import METERS_PER_DEGREE
 
 from ._constants import (
     AREA_NOISE_FACTOR,
-    AUTO_GAP_WIDTH_EPSILON_FACTOR,
-    DEFAULT_THINNESS_RATIO,
     GAP_MAXIMUM_WIDTH_ALL_DEG,
     OVERLAP_LOSS_HEADROOM,
 )
@@ -30,7 +26,6 @@ def _resolve_gap_maximum_width_deg(
     conn: DuckDBPyConnection,
     name: str,
     gap_maximum_width: tuple[str, float | None],
-    table: str,
 ) -> float | None:
     mode, value = gap_maximum_width
     if mode == "all":
@@ -43,15 +38,6 @@ def _resolve_gap_maximum_width_deg(
             SELECT EXISTS (SELECT 1 FROM "{name}_02" WHERE kind = 'gap')
         """).fetchall()[0][0]
         return SNAP_TOLERANCE if has_gap else None
-    if mode == "thin":
-        # Measured on `table`: notch closing reshapes gaps, e.g. trims a notch sliver.
-        widest_m = conn.execute(f"""--sql
-            SELECT MAX(max_width_m) FROM ({gap_issues_sql(conn, table)})
-            WHERE thinness_ratio <= {DEFAULT_THINNESS_RATIO}
-        """).fetchall()[0][0]
-        if widest_m is None:
-            return None
-        return widest_m / METERS_PER_DEGREE * AUTO_GAP_WIDTH_EPSILON_FACTOR
     return value
 
 
@@ -124,7 +110,7 @@ def _fix(
         close_notches(conn, table)
 
     gap_maximum_width_deg = _resolve_gap_maximum_width_deg(
-        conn, name, gap_maximum_width, table
+        conn, name, gap_maximum_width
     )
     # has_invalid_edges() never detects gaps.
     if not has_invalid_edges(conn, table) and gap_maximum_width_deg is None:
@@ -149,7 +135,7 @@ def _fix(
         fids=None,
         gap_maximum_width=gap_maximum_width_deg,
         snapping_distance=snapping_distance_deg,
-        micro_issues_table=f"{name}_03_tmp1",
+        issues_table=f"{name}_03_tmp1",
     )
 
     output_area = _total_area(conn, out_table)
@@ -206,7 +192,7 @@ def main(
     gap_maximum_width: tuple[str, float | None],
     snapping_distance: tuple[str, float | None],
 ) -> None:
-    """Fix `{name}_01` into `{name}_03`; micro-polygon rows go to `{name}_03_micro`."""
+    """Fix `{name}_01` into `{name}_03`; micro/sliver-gap rows to `{name}_03_micro`."""
     _fix(
         conn,
         name,
@@ -225,7 +211,9 @@ def main(
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_micro" AS
         SELECT * REPLACE (
-            'micro-polygon-' || row_number() OVER (ORDER BY unit_a, hash(geom)) AS key
+            kind || '-' || row_number() OVER (
+                PARTITION BY kind ORDER BY unit_a, hash(geom)
+            ) AS key
         )
         FROM ({" UNION ALL BY NAME ".join(parts)})
     """)

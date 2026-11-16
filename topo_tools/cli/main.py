@@ -1084,9 +1084,9 @@ def package(  # noqa: PLR0913, PLR0917
     envvar="MAXIMUM_GAP_WIDTH",
     type=str,
     default=None,
-    help="Which gaps to fill: 'thin' for thin, sliver-shaped gaps of any "
-    "width, 'all' for every gap found, or a width in decimal degrees (not "
-    "meters). By default only tiny gaps from rounding errors are filled.",
+    help="Which gaps to fill: 'all' for every gap found, or a width in decimal "
+    "degrees (not meters). By default only tiny gaps from rounding errors and "
+    "sliver gaps (much narrower than the edges drawn around them) are filled.",
 )
 @click.option(
     "--snapping-distance",
@@ -1153,12 +1153,8 @@ def topo_clean(  # noqa: PLR0913, PLR0917
 
     \b
     Examples:
-      # Basic run: fills only tiny gaps from rounding errors
+      # Basic run: fills tiny gaps from rounding errors and sliver gaps
       topo-tools topo-clean example.geojson
-
-    \b
-      # Fill thin, sliver-shaped gaps of any width
-      topo-tools topo-clean example.gpkg --maximum-gap-width thin
 
     \b
       # Fill every detected gap, not just slivers
