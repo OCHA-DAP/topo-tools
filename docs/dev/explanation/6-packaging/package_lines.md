@@ -40,7 +40,10 @@ leave sliver overlaps and T-junction vertices a rounding error off the
 neighbour's segment, so per-pair `ST_Intersection` misses them. Noding
 every boundary together gives each stretch of line once, whatever the
 polygons' own topology, and labelling by distance finds the units on each
-side (see `docs/adr/0153`).
+side (see `docs/adr/0153`). Where two units overlap each other along a
+third unit's border, each copy keeps its own label, so the shared line can
+appear twice with different unit pairs (2.8 km of 14,397 km in the
+fieldmaps Xinjiang layer). Cleaning the input first resolves the overlap.
 
 ## Pipeline (`_02_boundaries`)
 
@@ -53,16 +56,18 @@ side (see `docs/adr/0153`).
    (`TILE_DEG`) its bbox covers, widened by `TILE_MARGIN_DEG`, skipping
    the clip for a boundary already inside its tile.
 3. Node each tile with `ST_LineMerge(ST_Union_Agg(geom))`, dumped to
-   edges and normalised, then add each edge's midpoint and bbox in a
+   edges and normalised, with endpoints within `10 * SNAP_TOLERANCE` of
+   another moved onto the least one, then add each edge's midpoint and bbox in a
    separate pass (computing them in the noding query makes it about three
    times slower).
 4. Label each edge: pair edges with boundaries on bbox columns only, then
    keep the units within `10 * SNAP_TOLERANCE` of the midpoint, nearest
    two first. One unit makes the edge exterior, two make it shared
    (`left_fid < right_fid`).
-5. Snap same-label edges in one tile onto each other, clip edges back to
-   their exact tile, snap tile cut points a rounding error apart onto one
-   point, and line-merge each label pair into atomic `LineString` rows.
+5. Snap same-label shared edges in one tile onto each other, clip edges
+   back to their exact tile, move endpoints within tolerance onto the
+   least one again (tile cuts differ by a rounding error), and line-merge
+   each label pair into atomic `LineString` rows.
 6. Classify every row: a shared row's depth is the coarsest detected level at which
    its two sides' own code columns first differ; an exterior row's depth
    is the coarsest detected level when that level has a single unit,
@@ -103,7 +108,8 @@ Silicon:
 
 | Run | Fids in / rows out | Wall time | RSS peak | Result |
 | --- | --- | --- | --- | --- |
-| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,769 rows | 425 to 446 s | 3.8 to 4.2 GB | Every finest-level fid present in the output |
+| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,765 rows | 501 to 557 s | 4.2 to 5.1 GB | Every finest-level fid present in the output |
+| Indonesia admin2 (`portolan/original/idn/latest/idn_admin2`) | 9,503 rows | 24 s | 1.6 GB | Every finest-level fid present in the output |
 
 Noding and labelling run per 1° tile, so cost grows with the busiest tile
 (2.27M vertices globally), not with the whole input.
