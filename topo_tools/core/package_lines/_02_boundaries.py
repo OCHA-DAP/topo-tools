@@ -210,6 +210,41 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02_{table}"')
 
 
+def _snap_ends(conn: DuckDBPyConnection, table: str, key: str, tol: float) -> None:
+    """Move endpoints within tol of another onto the least; drop collapsed lines."""
+    cell = TILE_MARGIN_DEG
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{table}" AS
+        WITH ends AS (
+            SELECT {key}, ST_X(pt) AS x, ST_Y(pt) AS y, pt,
+                   floor(ST_X(pt) / {cell})::BIGINT AS gx,
+                   floor(ST_Y(pt) / {cell})::BIGINT AS gy
+            FROM (
+                SELECT {key}, UNNEST([ST_StartPoint(geom), ST_EndPoint(geom)]) AS pt
+                FROM "{table}"
+            )
+        ),
+        moves AS (
+            SELECT a.{key}, ST_Collect(list(b.pt ORDER BY b.x, b.y)) AS targets
+            FROM (
+                SELECT {key}, x, y, gx + dx AS gx, gy + dy AS gy
+                FROM ends, (SELECT UNNEST([-1, 0, 1]) AS dx),
+                     (SELECT UNNEST([-1, 0, 1]) AS dy)
+            ) a
+            JOIN ends b ON a.gx = b.gx AND a.gy = b.gy AND a.{key} <> b.{key}
+              AND abs(a.x - b.x) <= {tol} AND abs(a.y - b.y) <= {tol}
+              AND (b.x < a.x OR (b.x = a.x AND b.y < a.y))
+            GROUP BY a.{key}
+        )
+        SELECT * FROM (
+            SELECT t.* REPLACE (CASE WHEN m.{key} IS NULL THEN t.geom
+                ELSE ST_Snap(t.geom, m.targets, {tol}) END AS geom)
+            FROM "{table}" t LEFT JOIN moves m USING ({key})
+        )
+        WHERE ST_Length(geom) >= {tol}
+    """)
+
+
 def _tile_range(low: str, high: str) -> str:
     first, last = (f"floor({v} / {TILE_DEG})::BIGINT" for v in (low, high))
     return f"range({first}, {last} + 1)"
@@ -268,13 +303,14 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
     # Computing the edge columns in the noding query itself makes it about 3x slower.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp3" AS
-        SELECT tx, ty, ST_Normalize(geom) AS geom
+        SELECT row_number() OVER () AS eid, tx, ty, geom
         FROM (
             SELECT tx, ty,
                    UNNEST(ST_Dump(ST_LineMerge(ST_Union_Agg(geom)))).geom AS geom
             FROM "{name}_02_tmp2" GROUP BY tx, ty
         )
     """)
+    _snap_ends(conn, f"{name}_02_tmp3", "eid", tol)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp3" AS
         SELECT row_number() OVER (
@@ -282,7 +318,7 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
                ) AS eid, tx, ty, geom,
                ST_LineInterpolatePoint(geom, 0.5) AS mid,
                {bbox_columns_sql("geom")}
-        FROM "{name}_02_tmp3"
+        FROM (SELECT tx, ty, ST_Normalize(geom) AS geom FROM "{name}_02_tmp3")
     """)
     # Pairing on bbox columns alone first keeps geometry out of the join's hash table.
     conn.execute(f"""--sql
@@ -341,8 +377,7 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
         CREATE OR REPLACE TABLE "{name}_02_tmp6" AS
         SELECT row_number() OVER (
                    ORDER BY left_fid, right_fid, ST_AsWKB(geom)
-               ) AS pid, left_fid, right_fid,
-               coalesce(right_fid, -1) AS right_key, geom
+               ) AS pid, left_fid, right_fid, geom
         FROM (
             SELECT l.left_fid, l.right_fid, {_clip_to_tile(0)} AS geom
             FROM (
@@ -356,37 +391,16 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
     """)
     for table in ["tmp3", "tmp4", "tmp5"]:
         conn.execute(f'DROP TABLE "{name}_02_{table}"')
-    # Neighbouring tiles cut one line at points a rounding error apart.
+    _snap_ends(conn, f"{name}_02_tmp6", "pid", tol)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_lines" AS
-        WITH ends AS (
-            SELECT pid, left_fid, right_key, ST_X(pt) AS x, ST_Y(pt) AS y, pt
-            FROM (
-                SELECT pid, left_fid, right_key,
-                       UNNEST([ST_StartPoint(geom), ST_EndPoint(geom)]) AS pt
-                FROM "{name}_02_tmp6"
-            )
-        ),
-        moves AS (
-            SELECT a.pid, ST_Collect(list(b.pt ORDER BY b.x, b.y)) AS targets
-            FROM ends a JOIN ends b ON a.left_fid = b.left_fid
-              AND a.right_key = b.right_key AND a.pid <> b.pid
-              AND abs(a.x - b.x) <= {tol} AND abs(a.y - b.y) <= {tol}
-              AND (b.x < a.x OR (b.x = a.x AND b.y < a.y))
-            GROUP BY a.pid
-        ),
-        snapped AS (
-            SELECT p.pid, p.left_fid, p.right_fid, CASE WHEN m.pid IS NULL THEN p.geom
-                ELSE ST_Snap(p.geom, m.targets, {tol}) END AS geom
-            FROM "{name}_02_tmp6" p LEFT JOIN moves m USING (pid)
-        )
         SELECT left_fid, right_fid, geom
         FROM (
             SELECT left_fid, right_fid,
                    UNNEST(ST_Dump(ST_LineMerge(
                        ST_Union_Agg(geom ORDER BY pid)
                    ))).geom AS geom
-            FROM snapped GROUP BY left_fid, right_fid
+            FROM "{name}_02_tmp6" GROUP BY left_fid, right_fid
         )
         WHERE NOT ST_IsEmpty(geom)
     """)

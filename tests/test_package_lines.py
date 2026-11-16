@@ -264,6 +264,47 @@ def test_sliver_overlap_t_junction_is_one_shared_edge(tmp_path):
     assert rows[0][2] == pytest.approx(edge)
 
 
+def test_crossing_sliver_at_near_miss_junction_is_one_shared_row(tmp_path):
+    """Two border copies crossing within tol, ending 5e-10 apart at a third unit."""
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(
+        input_path,
+        [
+            {
+                "adm1_pcode": "A",
+                "wkt": "POLYGON((0.1 0.1,0.5 0.1,0.5 0.5,0.1 0.5,0.1 0.1))",
+            },
+            {
+                "adm1_pcode": "B",
+                "wkt": "POLYGON((0.5 0.1,0.9 0.1,0.9 0.5,0.5000000005 0.5,"
+                "0.4999999995 0.3,0.5 0.1))",
+            },
+            {
+                "adm1_pcode": "C",
+                "wkt": "POLYGON((0.1 0.5,0.9 0.5,0.9 0.9,0.1 0.9,0.1 0.5))",
+            },
+        ],
+    )
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path,
+        output_path,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        rows = conn.execute(f"""
+            SELECT ST_IsClosed(geometry), ST_Length(geometry) FROM '{output_path}'
+            WHERE a_pcode = 'A' AND b_pcode = 'B'
+        """).fetchall()
+    assert len(rows) == 1
+    assert not rows[0][0]
+    assert rows[0][1] == pytest.approx(0.4, abs=1e-8)
+
+
 def test_multi_part_fid_touching_and_remote(tmp_path):
     """A 2-part fid: one part touches a neighbor, one is a remote island."""
     input_path = tmp_path / "in.parquet"
