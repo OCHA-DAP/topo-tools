@@ -22,7 +22,7 @@ unit. That decides the gap setting:
       --issues-file admin2_topo_issues.parquet --maximum-gap-width all
 
 Load the issues file as a map layer, not just a table, to see exactly
-which polygons got fixed (`kind='gap'`/`kind='overlap'`, `fixed=true`).
+which polygons got fixed (`kind='gap'`, `kind='sliver-gap'` or `kind='overlap'`, `fixed=true`).
 With no flag, a gap left open that isn't a water body shows as
 `fixed=false`: send it to review or the data provider.
 

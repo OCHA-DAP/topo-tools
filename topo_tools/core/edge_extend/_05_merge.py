@@ -132,4 +132,6 @@ def main(conn: DuckDBPyConnection, name: str, *, debug: bool = False) -> None:
 
     # Closes floating-point seams from the per-fid ST_Difference calls above;
     # every point here belongs to exactly one fid, so any find is seam noise, not a gap.
-    coverage_clean(conn, f"{name}_05_tmp3", f"{name}_05", fids=None)
+    coverage_clean(
+        conn, f"{name}_05_tmp3", f"{name}_05", fids=None, merge_slivers=False
+    )

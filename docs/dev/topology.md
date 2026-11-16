@@ -106,3 +106,18 @@ touches its neighbours, and its snap can narrow a part just over
 micro-polygons before the clean and again on its own output, and
 `has_valid_topology` checks for them directly, so an auto-cleaned input is
 cleaned whenever it has one. See `docs/adr/0142`.
+
+## Sliver gaps
+
+An enclosed gap is a sliver when it is much narrower than the lines drawn
+around it: `2 * area * vertices / perimeter^2`, the gap's mean width over
+its edges' mean segment length, at most `SLIVER_GAP_MAX_RATIO` (0.2). A
+1.4 mm needle between two straight 1.6 km edges scores about 1e-6. A river
+drawn with a vertex every few tens of metres scores above 2. Thinness alone
+can't separate the two, since rivers and lagoons are as thin as slivers,
+and a fixed width doesn't scale from city blocks to countries. With four or
+more vertices, plus the ring's closing point, a score of 0.2 or less also
+means a thinness of 0.25 or less, so compact holes are kept.
+`coverage_clean` finds the gaps from the cleaned coverage's union and
+merges each sliver into the neighbour sharing its longest border, the same
+rule `ST_CoverageClean` uses for the gaps it fills. See `docs/adr/0152`.

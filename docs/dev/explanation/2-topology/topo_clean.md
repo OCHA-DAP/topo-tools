@@ -41,7 +41,7 @@ topo_clean("example.geojson")
 | Option | Description |
 | --- | --- |
 | `--issues-file` | Issues report path. Defaults to `OUTPUT_FILE` with an `_issues` suffix. |
-| `--maximum-gap-width` | `thin` (fill thin/sliver-shaped gaps), `all` (fill every detected gap), or a number in decimal degrees. Omit for the default: fill only gaps at or below `SNAP_TOLERANCE`. |
+| `--maximum-gap-width` | `all` (fill every detected gap) or a number in decimal degrees. Omit for the default: fill only gaps at or below `SNAP_TOLERANCE`. Sliver gaps are merged in every mode. |
 | `--snapping-distance` | A number in decimal degrees. Omit for the default: `SNAP_TOLERANCE`. Noding robustness knob only. |
 | `--overwrite` | Overwrite an existing output file. |
 | `--threads` | DuckDB thread count. |
@@ -50,9 +50,6 @@ topo_clean("example.geojson")
 | `--step` | Run only one named stage: `inputs`, `issues`, `topo-clean`, `outputs`. |
 
 ```sh
-# Only fill thin/sliver-shaped gaps, leave the rest for review
-topo-tools topo-clean example.gpkg --maximum-gap-width thin
-
 # Cap gap-filling at ~0.0001 degrees (~11m at the equator)
 topo-tools topo-clean example.parquet --maximum-gap-width 0.0001
 ```
@@ -122,11 +119,9 @@ own `include/geos/coverage/CoverageCleaner.h`/`src/coverage/CoverageCleaner.cpp`
   is why `edge-extend`/`edge-match`'s existing `coverage_clean()` calls (which never
   pass a positive `gap_maximum_width`) never fill gaps, and why JS's "fill
   up to 2x the widest detected gap" was purely a client-side slider-seeding
-  heuristic, not anything GEOS computes on its own. It's also why `topo-clean`'s
-  own `--maximum-gap-width thin` mode has to compute a real width itself
-  (see below): there's no GEOS-side default to lean on the way both flags'
-  own default (omitted-flag) behavior leans on this codebase's own fixed
-  `SNAP_TOLERANCE` instead (see `docs/adr/0032`, `docs/adr/0033`).
+  heuristic, not anything GEOS computes on its own. It's also why both
+  flags' default (omitted-flag) behavior uses this codebase's own fixed
+  `SNAP_TOLERANCE` (see `docs/adr/0032`, `docs/adr/0033`).
 - **Naming**: `coverage_clean()` (the shared `core/coverage.py`) calls
   `ST_CoverageClean` positionally (`geoms, snapping_distance,
   gap_maximum_width`), passing `-1` for either argument a Python `None`
@@ -149,41 +144,23 @@ own `include/geos/coverage/CoverageCleaner.h`/`src/coverage/CoverageCleaner.cpp`
   open inlets, they aren't fillable "gaps" by this tool's or GEOS's own
   definition.
 
-## `--maximum-gap-width thin|all|<degrees>` (default: omit the flag)
+## `--maximum-gap-width all|<degrees>` (default: omit the flag)
 
 - Default, reached only by omitting the flag, not by naming it (`"auto"`
   raises `ValueError`, see `docs/adr/0033`): fills a gap only if its width
   is at or below `SNAP_TOLERANCE`, the same fixed noise floor used
   everywhere else in the pipeline. Unconditionally safe regardless of
   shape, since anything that small is floating-point noise by construction.
-- `thin`: fills only gaps whose *shape* looks like a digitization sliver,
-  regardless of their absolute width. `gap_maximum_width` is a pure width
-  cutoff with no shape concept of its own (verified live against GDAL's
-  `gdal vector clean-coverage` docs), so this computes the width to feed
-  into it: the widest gap's own width *among only the gaps classified as
-  thin* (`thinness_ratio <= DEFAULT_THINNESS_RATIO`), measured on the gaps
-  of the table `ST_CoverageClean` runs on, after notch closing, since
-  closing a notch trims the sliver part off a gap (`gap_issues_sql()`'s
-  `max_width_m`, from `(ST_MaximumInscribedCircle(geom)).radius * 2`, GEOS's
-  own width metric)
-  plus a small epsilon (`AUTO_GAP_WIDTH_EPSILON_FACTOR` in `_constants.py`)
-  so the widest thin gap itself clears the `<=` comparison. "Thin" is a
-  Polsby-Popper compactness score (`4*pi*Area/Perimeter^2`, 1.0 = circle,
-  ->0 = elongated crack) at or below `DEFAULT_THINNESS_RATIO = 0.3`
-  (`core/topo_clean/_constants.py`), the same formula and cutoff guidance
-  ArcGIS Pro's own "Polygon Sliver" data-quality check uses to flag slivers.
-  Not user-configurable: a gap's absolute width says nothing about whether
-  it's a digitization artifact or a real feature (a small real pond and a
-  narrow real strait both exist), but its shape, independent of scale, is
-  what the sliver-detection literature already uses to make this call; if
-  a dataset needs different behavior than the fixed cutoff produces, tune
-  `--maximum-gap-width <degrees>` directly instead of the thinness cutoff.
-  Known, accepted imprecision: since GEOS only ever compares by width, a
-  non-thin gap narrower than the widest thin gap would also get swept in.
-  This imprecision, applied globally across a whole table rather than
-  per-polygon, is why this mode was demoted from the default, see
-  `docs/adr/0033`. When no gap qualifies as thin, the argument is omitted
-  entirely (no gap-filling).
+- Sliver gaps: whatever this flag says, whenever `topo-clean` runs the
+  coverage clean (a reported gap, invalid edges, or an explicit width),
+  `coverage_clean()` merges every
+  enclosed gap whose mean width is at most `SLIVER_GAP_MAX_RATIO` (0.2) of
+  its edges' mean segment length (`2 * area * vertices / perimeter^2`) into
+  the neighbour sharing its longest border, after `ST_CoverageClean`, and
+  writes a `sliver-gap` row for it. Each gap is tested on its own, against
+  how finely its edges are drawn, so at any scale a river or lagoon drawn
+  in detail stays open while a needle between two long straight edges
+  closes (see `docs/adr/0152`).
 - `all`: fills every gap the detection stage found, using a fixed
   `GAP_MAXIMUM_WIDTH_ALL_DEG = 360` (`_constants.py`), confirmed safe across
   the full `0`-`360°` range once `coverage_clean()`'s named-argument bug was
@@ -194,7 +171,7 @@ own `include/geos/coverage/CoverageCleaner.h`/`src/coverage/CoverageCleaner.cpp`
 ## Validating a coverage-clean result
 
 `_03_clean.py`'s `main()` makes a single `ST_CoverageClean` call at the
-resolved target width (from the default/`thin`/`all`/an explicit value) and
+resolved target width (from the default, `all` or an explicit value) and
 validates
 it against **both** `has_invalid_edges()` *and* a total-area sanity
 floor: the invalid-edges check alone passes a totally empty result as
@@ -278,13 +255,16 @@ large snapping distance may introduce undesirable data alteration."
 columns, all *measured outcomes* of the fix, not the defect as originally
 detected: `fixed BOOLEAN`, `unit_a_area_change_m2 DOUBLE`,
 `unit_b_area_change_m2 DOUBLE`, `filled_area_m2 DOUBLE`. `filled_area_m2`
-is populated only for gap rows; `unit_a`/`unit_b_area_change_m2` only for
+is populated only for `gap` and `sliver-gap` rows; `unit_a`/`unit_b_area_change_m2` only for
 overlap and notch rows. `overlay_fid` and `source_file` are always null for
-`topo-clean`, and `reason` is set only on `micro-polygon` rows: they exist
+`topo-clean`, and `reason` is set only on `micro-polygon` and `sliver-gap` rows: they exist
 so the schema matches `edge-match`/`edge-mosaic`'s own issues
 tables column-for-column. Each `micro-polygon` row comes from `{name}_03_micro`, the merge
 outcome (receiving fid in `unit_b`, `fixed=TRUE`), replacing
-`topo-detect`'s detection row for it.
+`topo-detect`'s detection row for it. Each `sliver-gap` row also comes
+from `{name}_03_micro` (receiving fid in `unit_a`, `fixed=TRUE`),
+alongside `topo-detect`'s `gap` row for the same gap, which
+`_add_outcome_columns` marks fixed.
 
 All four are computed by `_04_outputs.py`'s `_add_outcome_columns` from
 `{name}_01` and `{name}_03` after `_03_clean.py` has run, since that's the
@@ -337,8 +317,7 @@ actually asked `ST_CoverageClean` to close for this run (`has_gaps(conn,
 out_table, gap_maximum_width=gap_maximum_width_deg)`, skipped when
 `gap_maximum_width_deg is None`, meaning no fill was requested at all;
 see `docs/adr/0037`). A gap left wider than that by design (a real gap
-under the default, `--maximum-gap-width thin` on a compact/non-thin gap,
-or a numeric cap narrower than some detected gap) does not raise: `topo-clean`
+under the default, or a numeric cap narrower than some detected gap) does not raise: `topo-clean`
 can legitimately leave those unfilled. `_04_outputs.py` logs a warning
 with a count of how many detected gaps remain uncovered regardless of
 width, tested via `ST_Contains` against a point on each gap's surface;

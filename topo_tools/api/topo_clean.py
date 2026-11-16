@@ -34,13 +34,13 @@ _STEP_TABLES = {
 def _parse_maximum_gap_width(value: str | None) -> tuple[str, float | None]:
     if value is None:
         return "default", None
-    if value in ("thin", "all"):
+    if value == "all":
         return value, None
     try:
         return "value", float(value)
     except ValueError:
         msg = (
-            f"--maximum-gap-width must be 'thin', 'all', or a number in "
+            f"--maximum-gap-width must be 'all' or a number in "
             f"decimal degrees (omit it for the default noise-floor fill), "
             f"got {value!r}"
         )

@@ -218,7 +218,7 @@ without asking. Stage 4's answer sets `methodology_pcodes` (e.g.
    unit, area and basis of each merge the coarser layers don't settle:
    no coarser layer, a split overlap, or a choice between neighbours
    under one parent. Then rerun `topo-clean` on
-   the gapfill file with `--maximum-gap-width thin`, overwriting the
+   the gapfill file, overwriting the
    stage 2 output and its issues file, and show the filled gap rows for
    review. Never trace a fill from OpenStreetMap, whose licence is
    incompatible with CC BY-IGO.

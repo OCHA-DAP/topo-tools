@@ -175,9 +175,11 @@ def main(
           AND abs(ST_X(geom)) != 180 AND abs(ST_Y(geom)) != 90
     """)
 
+    # An exterior edge within 2x the zone radius is all zone, so may drop entirely.
     missing = conn.execute(f"""--sql
         SELECT count(*) FROM (
-            SELECT DISTINCT fid FROM "{name}_03_tmp4"
+            SELECT fid FROM "{name}_02"
+            GROUP BY fid HAVING max(ST_Length(geom)) > {2 * SNAP_TOLERANCE}
             EXCEPT
             SELECT DISTINCT fid FROM "{name}_03b"
         )

@@ -29,8 +29,8 @@ _SYNTHETIC_WKT = [
     # definition, so this pair is only caught via the join's ST_Contains half.
     (7, "POLYGON((30 0, 32 0, 32 2, 30 2, 30 0))"),
     (8, "POLYGON((30.5 0.5, 31.5 0.5, 31.5 1.5, 30.5 1.5, 30.5 0.5))"),
-    # Second donut: same hole area (1.0) as fid 1-4's, but a thinness ratio
-    # (~0.03) far below DEFAULT_THINNESS_RATIO (vs fid 1-4's ~0.785 square).
+    # Second donut: a sliver gap of similar area to fid 1-4's compact
+    # square hole.
     (9, "POLYGON((50 0, 62 0, 62 1, 50 1, 50 0))"),
     (10, "POLYGON((50 1.1, 62 1.1, 62 2.1, 50 2.1, 50 1.1))"),
     (11, "POLYGON((50 1, 51 1, 51 1.1, 50 1.1, 50 1))"),
@@ -104,7 +104,7 @@ def test_clean_full_run(synthetic_input, tmp_path):
             ).fetchall()
         }
     assert row_count == len(_SYNTHETIC_WKT)
-    assert kinds == {"gap", "overlap"}
+    assert kinds == {"gap", "overlap", "sliver-gap"}
 
 
 def test_clean_closes_notch(tmp_path):
@@ -321,17 +321,11 @@ def test_clean_maximum_gap_width_all_fills_gap(scaled_gap_input, tmp_path):
     assert filled > 0
 
 
-def test_clean_maximum_gap_width_thin_fills_only_thin_gap(synthetic_input, tmp_path):
-    """Thin fills the fid 9-12 sliver but leaves the fid 1-4 compact square alone."""
-    output_path = tmp_path / "thin.parquet"
-    issues_path = tmp_path / "thin_issues.parquet"
-    clean(
-        synthetic_input,
-        output_path,
-        issues_path,
-        maximum_gap_width="thin",
-        overwrite=True,
-    )
+def test_clean_default_merges_sliver_gap_only(synthetic_input, tmp_path):
+    """The fid 9-12 sliver is merged, the fid 1-4 compact square is left alone."""
+    output_path = tmp_path / "sliver.parquet"
+    issues_path = tmp_path / "sliver_issues.parquet"
+    clean(synthetic_input, output_path, issues_path, overwrite=True)
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
@@ -348,13 +342,17 @@ def test_clean_maximum_gap_width_thin_fills_only_thin_gap(synthetic_input, tmp_p
                 ORDER BY thinness_ratio DESC
             """).fetchall()
         )
+        slivers = conn.execute(
+            f"SELECT count(*) FROM '{issues_path}' WHERE kind = 'sliver-gap'"
+        ).fetchall()[0][0]
     assert compact_filled is False
     assert thin_filled is True
     assert compact_fixed is False
     assert thin_fixed is True
+    assert slivers == 1
 
 
-@pytest.mark.parametrize("mode", [None, "thin", "all"])
+@pytest.mark.parametrize("mode", [None, "all"])
 def test_clean_reports_every_gap_topo_detect_finds(mode, synthetic_input, tmp_path):
     output_path = tmp_path / "clean.parquet"
     issues_path = tmp_path / "clean_issues.parquet"
