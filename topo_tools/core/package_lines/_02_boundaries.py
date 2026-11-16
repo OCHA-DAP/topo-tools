@@ -211,8 +211,9 @@ def main(  # noqa: PLR0913
 
 
 def _snap_ends(conn: DuckDBPyConnection, table: str, key: str, tol: float) -> None:
-    """Move endpoints within tol of another onto the least; drop collapsed lines."""
+    """Move each endpoint onto the least endpoint within tol; drop zero-length lines."""
     cell = TILE_MARGIN_DEG
+    near = f"(a.x - b.x) ** 2 + (a.y - b.y) ** 2 < {tol} ** 2"
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{table}" AS
         WITH ends AS (
@@ -224,24 +225,32 @@ def _snap_ends(conn: DuckDBPyConnection, table: str, key: str, tol: float) -> No
                 FROM "{table}"
             )
         ),
-        moves AS (
-            SELECT a.{key}, ST_Collect(list(b.pt ORDER BY b.x, b.y)) AS targets
-            FROM (
-                SELECT {key}, x, y, gx + dx AS gx, gy + dy AS gy
-                FROM ends, (SELECT UNNEST([-1, 0, 1]) AS dx),
-                     (SELECT UNNEST([-1, 0, 1]) AS dy)
-            ) a
-            JOIN ends b ON a.gx = b.gx AND a.gy = b.gy AND a.{key} <> b.{key}
-              AND abs(a.x - b.x) <= {tol} AND abs(a.y - b.y) <= {tol}
+        probes AS (
+            SELECT {key}, x, y, gx + dx AS gx, gy + dy AS gy
+            FROM ends, (SELECT UNNEST([-1, 0, 1]) AS dx),
+                 (SELECT UNNEST([-1, 0, 1]) AS dy)
+            WHERE (dx = 0 OR (dx = -1 AND x - gx * {cell} < {tol})
+                   OR (dx = 1 AND (gx + 1) * {cell} - x < {tol}))
+              AND (dy = 0 OR (dy = -1 AND y - gy * {cell} < {tol})
+                   OR (dy = 1 AND (gy + 1) * {cell} - y < {tol}))
+        ),
+        targets AS (
+            SELECT a.{key}, arg_min(b.pt, [b.x, b.y]) AS pt
+            FROM probes a JOIN ends b ON a.gx = b.gx AND a.gy = b.gy
+              AND a.{key} <> b.{key} AND {near}
               AND (b.x < a.x OR (b.x = a.x AND b.y < a.y))
-            GROUP BY a.{key}
+            GROUP BY a.{key}, a.x, a.y
+        ),
+        moves AS (
+            SELECT {key}, ST_Collect(list(pt ORDER BY ST_X(pt), ST_Y(pt))) AS pts
+            FROM targets GROUP BY {key}
         )
         SELECT * FROM (
             SELECT t.* REPLACE (CASE WHEN m.{key} IS NULL THEN t.geom
-                ELSE ST_Snap(t.geom, m.targets, {tol}) END AS geom)
+                ELSE ST_Snap(t.geom, m.pts, {tol}) END AS geom)
             FROM "{table}" t LEFT JOIN moves m USING ({key})
         )
-        WHERE ST_Length(geom) >= {tol}
+        WHERE ST_Length(geom) > 0
     """)
 
 
