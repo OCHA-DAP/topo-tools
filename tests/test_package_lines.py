@@ -1,11 +1,14 @@
 """Correctness + portability tests for the package_lines() tool."""
 
+from pathlib import Path
+
 import duckdb
 import pytest
 from click.testing import CliRunner
 
 from topo_tools.api.package_lines import package_lines
 from topo_tools.cli.main import cli
+from topo_tools.core.package_lines._02_boundaries import _noded_lines
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
 
 
@@ -303,6 +306,110 @@ def test_crossing_sliver_at_near_miss_junction_is_one_shared_row(tmp_path):
     assert len(rows) == 1
     assert not rows[0][0]
     assert rows[0][1] == pytest.approx(0.4, abs=1e-8)
+
+
+_TILE_CASES = {
+    "border_on_tile_line": (
+        [
+            ("A", "POLYGON((0.2 0.5,0.2 1,0.5 1,0.8 1,0.8 0.5,0.2 0.5))"),
+            ("B", "POLYGON((0.2 1,0.2 1.5,0.8 1.5,0.8 1,0.6 1,0.3 1,0.2 1))"),
+        ],
+        {("A", "B"): 0.6},
+    ),
+    "vertex_in_tile_margin": (
+        [
+            ("A", "POLYGON((0.5 0.5,0.5 1.000005,0.5 1.5,0 1.5,0 0.5,0.5 0.5))"),
+            ("B", "POLYGON((0.5 0.5,1.5 0.5,1.5 1.5,0.5 1.5,0.5 1.000005,0.5 0.5))"),
+        ],
+        {("A", "B"): 1.0},
+    ),
+    "four_units_at_tile_corner": (
+        [
+            ("A", "POLYGON((0.5 0.5,1 0.5,1 1,0.5 1,0.5 0.5))"),
+            ("B", "POLYGON((1 0.5,1.5 0.5,1.5 1,1 1,1 0.5))"),
+            ("C", "POLYGON((0.5 1,1 1,1 1.5,0.5 1.5,0.5 1))"),
+            ("D", "POLYGON((1 1,1.5 1,1.5 1.5,1 1.5,1 1))"),
+        ],
+        {("A", "B"): 0.5, ("A", "C"): 0.5, ("B", "D"): 0.5, ("C", "D"): 0.5},
+    ),
+    "antimeridian_unit": (
+        [
+            (
+                "A",
+                (
+                    "MULTIPOLYGON(((179.5 0,180 0,180 1,179.5 1,179.5 0)),"
+                    "((-180 0,-179.5 0,-179.5 1,-180 1,-180 0)))"
+                ),
+            ),
+            ("B", "POLYGON((179 0,179.5 0,179.5 1,179 1,179 0))"),
+        ],
+        {("A", "B"): 1.0},
+    ),
+    "enclosed_unit": (
+        [
+            ("A", "POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,1 2,2 2,2 1,1 1))"),
+            ("B", "POLYGON((1 1,2 1,2 2,1 2,1 1))"),
+        ],
+        {("A", "B"): 4.0},
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_TILE_CASES))
+def test_tiled_network_one_row_per_shared_border(tmp_path, case):
+    """Borders on, across or near tile lines come out once per unit pair."""
+    polygons, expected = _TILE_CASES[case]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, [{"adm1_pcode": k, "wkt": w} for k, w in polygons])
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path,
+        output_path,
+        name_field="adm{n}_name",
+        code_field="adm{n}_pcode",
+        overwrite=True,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        shared = conn.execute(f"""
+            SELECT least(a_pcode, b_pcode), greatest(a_pcode, b_pcode),
+                   count(*), sum(ST_Length(geometry))
+            FROM '{output_path}' WHERE b_pcode IS NOT NULL GROUP BY 1, 2
+        """).fetchall()
+        total, unioned = conn.execute(f"""
+            SELECT sum(ST_Length(geometry)), ST_Length(ST_Union_Agg(geometry))
+            FROM '{output_path}'
+        """).fetchall()[0]
+    assert {(a, b): n for a, b, n, _ in shared} == dict.fromkeys(expected, 1)
+    for a, b, _, length in shared:
+        assert length == pytest.approx(expected[(a, b)])
+    assert total == pytest.approx(unioned)
+
+
+def test_noded_lines_ignore_input_row_order():
+    """Real seamed units (Myanmar admin4) node to the same lines in any row order."""
+    fixture = Path(__file__).parent / "fixtures" / "mmr_seam.parquet"
+    outputs = set()
+    for seed in range(6):
+        with duckdb.connect() as conn:
+            conn.execute("LOAD spatial; SET geometry_always_xy = true")
+            conn.execute(f"""
+                CREATE TABLE base AS SELECT row_number() OVER (ORDER BY adm1_pcode)
+                    AS fid, geometry AS geom FROM '{fixture}'
+            """)
+            conn.execute(f"SELECT setseed(0.{seed + 1})")
+            conn.execute("CREATE TABLE d AS SELECT * FROM base ORDER BY random()")
+            _noded_lines(conn, "x", "d")
+            outputs.add(
+                tuple(
+                    conn.execute("""
+                        SELECT left_fid, right_fid, ST_AsHEXWKB(geom)
+                        FROM x_02_lines ORDER BY ALL
+                    """).fetchall()
+                )
+            )
+    assert len(outputs) == 1
 
 
 def test_multi_part_fid_touching_and_remote(tmp_path):
