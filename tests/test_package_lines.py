@@ -1,5 +1,6 @@
 """Correctness + portability tests for the package_lines() tool."""
 
+import math
 from pathlib import Path
 
 import duckdb
@@ -351,6 +352,29 @@ _TILE_CASES = {
             ("B", "POLYGON((1 1,2 1,2 2,1 2,1 1))"),
         ],
         {("A", "B"): 4.0},
+    ),
+    "diagonal_across_tile_lines": (
+        [
+            ("A", "POLYGON((0.3 0.31,1.7 1.73,1.7 0.31,0.3 0.31))"),
+            ("B", "POLYGON((0.3 0.31,0.3 1.73,1.7 1.73,0.3 0.31))"),
+        ],
+        {("A", "B"): math.hypot(1.4, 1.42)},
+    ),
+    "unit_below_tolerance_enclosed": (
+        [
+            (
+                "A",
+                (
+                    "POLYGON((0 0,1e-6 0,1e-6 1e-6,0 1e-6,0 0),(4e-7 4e-7,4e-7 4.2e-7,"
+                    "4.2e-7 4.2e-7,4.2e-7 4e-7,4e-7 4e-7))"
+                ),
+            ),
+            (
+                "B",
+                "POLYGON((4e-7 4e-7,4.2e-7 4e-7,4.2e-7 4.2e-7,4e-7 4.2e-7,4e-7 4e-7))",
+            ),
+        ],
+        {("A", "B"): 8e-8},
     ),
 }
 
