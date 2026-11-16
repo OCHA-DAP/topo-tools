@@ -13,6 +13,7 @@ from topo_tools.api.edge_mosaic import (
     _load_nearby_originals,
     _needs_originals,
     _paired_original,
+    _warn_keyless,
     mosaic,
 )
 from topo_tools.cli.main import cli
@@ -1711,14 +1712,39 @@ def test_far_unkeyed_original_skips_code_warning(tmp_path, caplog):
     inputs = tmp_path / "in.parquet"
     _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
     far = tmp_path / "missing.parquet"
+    keyless = {}
     with duckdb.connect() as conn, caplog.at_level(logging.WARNING):
         conn.execute("INSTALL spatial; LOAD spatial;")
         load_input(conn, "t", [inputs])
         _load_nearby_originals(
-            conn, "t", [(far, (100, 60, 101, 61))], {far: None}, inputs
+            conn, "t", [(far, (100, 60, 101, 61))], {far: None}, inputs, keyless=keyless
         )
     assert "none is near it" in caplog.text
-    assert "no detectable code column" not in caplog.text
+    assert keyless == {}
+
+
+def test_unkeyed_original_warns_once_naming_every_input(tmp_path, caplog):
+    first, second = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(first, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(second, _INPUT_WKT[1:3], codes=True)
+    unkeyed = tmp_path / "unkeyed.parquet"
+    keyless = {}
+    with duckdb.connect() as conn, caplog.at_level(logging.WARNING):
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        for path in (first, second):
+            load_input(conn, "t", [path])
+            _load_nearby_originals(
+                conn,
+                "t",
+                [(unkeyed, (-5, -5, 20, 20))],
+                {unkeyed: None},
+                path,
+                keyless=keyless,
+            )
+        _warn_keyless(keyless)
+    warned = [r for r in caplog.records if "no detectable code column" in r.message]
+    assert len(warned) == 1
+    assert f"{first}, {second}" in warned[0].message
 
 
 def test_one_feature_input_drops_previous_original_view(tmp_path):
@@ -1801,6 +1827,11 @@ def test_no_nearby_original_loads_none(tmp_path):
         conn.execute("INSTALL spatial; LOAD spatial;")
         load_input(conn, "t", [inputs])
         _load_nearby_originals(
-            conn, "t", [(far, (100, 60, 101, 61))], {far: "adm1_pcode"}, inputs
+            conn,
+            "t",
+            [(far, (100, 60, 101, 61))],
+            {far: "adm1_pcode"},
+            inputs,
+            keyless={},
         )
         assert _paired_original(conn, "t") is None

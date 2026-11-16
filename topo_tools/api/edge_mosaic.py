@@ -211,9 +211,15 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     check_input(conn, name, single_path)
                     load_overlay(conn, name, overlay_path, require_coverage=True)
                     if originals and _needs_originals(conn, name, single_path):
+                        keyless: dict[Path | str, list[Path | str]] = {}
                         _load_keyed_originals(
-                            conn, name, _original_keys(conn, originals), single_path
+                            conn,
+                            name,
+                            _original_keys(conn, originals),
+                            single_path,
+                            keyless=keyless,
                         )
+                        _warn_keyless(keyless)
                     if passthrough:
                         create_lookup_copy(
                             conn, f"{name}_overlay_01", f"{name}_overlay_full"
@@ -377,16 +383,17 @@ def _load_keyed_originals(
     name: str,
     original_keys: dict[Path | str, str | None],
     input_path: Path | str,
+    *,
+    keyless: dict[Path | str, list[Path | str]],
 ) -> None:
-    """Pair originals with `{name}_input_01` by each one's own code, if any pair."""
+    """Pair originals with `{name}_input_01` by each one's own code, if any pair.
+
+    Each original without a code column gets input_path appended in keyless.
+    """
     conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
     for path, key in original_keys.items():
         if key is None:
-            logger.warning(
-                "original %s has no detectable code column, so pairs nothing in %s",
-                path,
-                input_path,
-            )
+            keyless.setdefault(path, []).append(input_path)
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
     # A key the input lacks marks another input's original, so none of it pairs.
     usable = {p: k for p, k in original_keys.items() if k in columns}
@@ -408,6 +415,16 @@ def _load_keyed_originals(
         )
 
 
+def _warn_keyless(keyless: dict[Path | str, list[Path | str]]) -> None:
+    """Warn once per original without a code column, naming every input it missed."""
+    for path, inputs in keyless.items():
+        logger.warning(
+            "original %s has no detectable code column, so pairs nothing in %s",
+            path,
+            ", ".join(str(p) for p in inputs),
+        )
+
+
 def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
     """Return the original view's name if originals paired with the input, else None."""
     found = conn.execute(
@@ -416,12 +433,14 @@ def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
     return f"{name}_original_01" if found else None
 
 
-def _load_nearby_originals(
+def _load_nearby_originals(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
     original_keys: dict[Path | str, str | None],
     input_path: Path | str,
+    *,
+    keyless: dict[Path | str, list[Path | str]],
 ) -> None:
     """Expose only the originals overlapping `{name}_input_01` as the original view."""
     bbox = input_bbox_extent(conn, name)
@@ -436,7 +455,13 @@ def _load_nearby_originals(
         conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
         logger.warning("input %s runs without originals: none is near it", input_path)
         return
-    _load_keyed_originals(conn, name, {p: original_keys[p] for p in nearby}, input_path)
+    _load_keyed_originals(
+        conn,
+        name,
+        {p: original_keys[p] for p in nearby},
+        input_path,
+        keyless=keyless,
+    )
 
 
 def _check_shared_winner(
@@ -587,6 +612,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
         fid_offset = new_max if new_max is not None else fid_offset
 
+    keyless: dict[Path | str, list[Path | str]] = {}
     for i in range(len(paths)):
         for table in assigned:
             path = assigned_dir / table / f"{i:06d}.parquet"
@@ -595,7 +621,14 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 SELECT * FROM read_parquet('{path}')
             """)
         if originals and _needs_originals(conn, name, paths[i]):
-            _load_nearby_originals(conn, name, original_bboxes, original_keys, paths[i])
+            _load_nearby_originals(
+                conn,
+                name,
+                original_bboxes,
+                original_keys,
+                paths[i],
+                keyless=keyless,
+            )
         clip.main(
             conn,
             name,
@@ -618,6 +651,7 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
+    _warn_keyless(keyless)
     if not debug:
         shutil.rmtree(assigned_dir, ignore_errors=True)
 
