@@ -108,7 +108,7 @@ Silicon:
 
 | Run | Fids in / rows out | CPU time (user) | RSS peak | Result |
 | --- | --- | --- | --- | --- |
-| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,769 rows | 715 s | 3.7 to 5.1 GB | Every finest-level fid present in the output |
+| Global admin4 (`portolan/global/admin4/admin4.parquet`, 225,316 rows, `--depth-column pkg_lvl`) | 225,316 / 679,750 rows | 715 s | 3.7 to 5.1 GB | Every finest-level fid present in the output |
 | Indonesia admin2 (`portolan/original/idn/latest/idn_admin2`) | 9,503 rows | 26 s | 1.6 GB | Every finest-level fid present in the output |
 
 Noding and labelling run per 1° tile, so cost grows with the busiest tile
