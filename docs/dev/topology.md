@@ -116,8 +116,8 @@ its edges' mean segment length, at most `SLIVER_GAP_MAX_RATIO` (0.2). A
 drawn with a vertex every few tens of metres scores above 2. Thinness alone
 can't separate the two, since rivers and lagoons are as thin as slivers,
 and a fixed width doesn't scale from city blocks to countries. With four or
-more vertices, a score of 0.2 or less also means a thinness of 0.31 or
-less, so compact holes are kept. `coverage_clean` finds the gaps from the
+more vertices, plus the ring's closing point, a score of 0.2 or less also
+means a thinness of 0.25 or less, so compact holes are kept. `coverage_clean` finds the gaps from the
 cleaned coverage's union and merges each sliver into the neighbour sharing
 its longest border, the same rule `ST_CoverageClean` uses for the gaps it
 fills. See `docs/adr/0152`.

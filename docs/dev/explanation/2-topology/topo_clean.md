@@ -151,7 +151,8 @@ own `include/geos/coverage/CoverageCleaner.h`/`src/coverage/CoverageCleaner.cpp`
   is at or below `SNAP_TOLERANCE`, the same fixed noise floor used
   everywhere else in the pipeline. Unconditionally safe regardless of
   shape, since anything that small is floating-point noise by construction.
-- Sliver gaps: whatever this flag says, `coverage_clean()` merges every
+- Sliver gaps: whatever this flag says, once `topo-detect` reports a gap
+  or an invalid edge, `coverage_clean()` merges every
   enclosed gap whose mean width is at most `SLIVER_GAP_MAX_RATIO` (0.2) of
   its edges' mean segment length (`2 * area * vertices / perimeter^2`) into
   the neighbour sharing its longest border, after `ST_CoverageClean`, and

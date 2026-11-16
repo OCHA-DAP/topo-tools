@@ -188,7 +188,8 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   after its fix, and `package-polygons`, `package-points` and
   `package-lines` to their input.
 - Each merged or dropped part MUST be reported as a `micro-polygon` row
-  (see Issues report schema) by every tool that writes an issues report.
+  (see Issues report schema) by every tool that writes an issues report
+  for that clean.
 - `schema-join` and `schema-map` MUST NOT apply this rule, since they
   never modify geometry. `change` applies it only through its auto-cleaned
   inputs; its overlay drops intersections below `SNAP_TOLERANCE` squared
@@ -198,13 +199,15 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 
 - A sliver gap is an enclosed gap with `2 * area * vertices / perimeter^2`
   at most `SLIVER_GAP_MAX_RATIO` (0.2): its mean width is at most a fifth
-  of its edges' mean segment length.
+  of its edges' mean segment length, counting the ring's closing point
+  as a vertex. Any polygon inside the hole, an enclave or a row held out
+  of the clean, is not part of the gap.
 - Every `coverage_clean` call MUST merge each sliver gap into the polygon
   sharing its longest border (ties to the lowest fid) after
   `ST_CoverageClean`, except in `edge-extend`'s merge stage, whose output
   has no gaps.
 - Each merged gap MUST be reported as a `sliver-gap` row by every tool
-  that writes an issues report.
+  that writes an issues report for that clean.
 
 ## Clip-detached pieces
 
