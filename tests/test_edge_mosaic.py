@@ -9,7 +9,13 @@ from click.testing import CliRunner
 import topo_tools.core.edge_extend.attempt as attempt_module
 from topo_tools.api.edge_extend import extend
 from topo_tools.api.edge_match import match
-from topo_tools.api.edge_mosaic import _load_nearby_originals, _paired_original, mosaic
+from topo_tools.api.edge_mosaic import (
+    _load_nearby_originals,
+    _needs_originals,
+    _paired_original,
+    _warn_keyless,
+    mosaic,
+)
 from topo_tools.cli.main import cli
 from topo_tools.core.assign._inputs import load_input, load_original
 from topo_tools.core.coverage import has_invalid_edges
@@ -1681,6 +1687,109 @@ def test_mosaic_runs_without_unpaired_originals(tmp_path, caplog, original_rows)
         )
     assert output_path.exists()
     assert "runs without originals" in caplog.text
+    if original_rows:
+        assert f"no detectable code column, so pairs nothing in {inputs}" in caplog.text
+
+
+@pytest.mark.parametrize("multi", [False, True], ids=["single", "multi"])
+def test_one_feature_input_pairs_no_original_quietly(tmp_path, caplog, multi):
+    inputs, originals = tmp_path / "in.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:1], codes=True)
+    _write_synthetic(originals, [(9, _INPUT_WKT[0][1])], codes=True)
+    overlays = tmp_path / "overlays.parquet"
+    _write_synthetic(overlays, _OVERLAY_WKT)
+    with caplog.at_level(logging.WARNING):
+        mosaic(
+            [inputs] if multi else inputs,
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=originals,
+        )
+    assert "original" not in caplog.text
+
+
+def test_far_unkeyed_original_skips_code_warning(tmp_path, caplog):
+    inputs = tmp_path / "in.parquet"
+    _write_synthetic(inputs, _INPUT_WKT[:2], codes=True)
+    far = tmp_path / "missing.parquet"
+    keyless = {}
+    with duckdb.connect() as conn, caplog.at_level(logging.WARNING):
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [inputs])
+        _load_nearby_originals(
+            conn, "t", [(far, (100, 60, 101, 61))], {far: None}, inputs, keyless=keyless
+        )
+    assert "none is near it" in caplog.text
+    assert keyless == {}
+
+
+def test_unkeyed_original_warns_once_naming_every_input(tmp_path, caplog):
+    first, second = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_synthetic(first, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(second, _INPUT_WKT[1:3], codes=True)
+    unkeyed = tmp_path / "unkeyed.parquet"
+    keyless = {}
+    with duckdb.connect() as conn, caplog.at_level(logging.WARNING):
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        for path in (first, second):
+            load_input(conn, "t", [path])
+            _load_nearby_originals(
+                conn,
+                "t",
+                [(unkeyed, (-5, -5, 20, 20))],
+                {unkeyed: None},
+                path,
+                keyless=keyless,
+            )
+        _warn_keyless(keyless)
+    warned = [r for r in caplog.records if "no detectable code column" in r.message]
+    assert len(warned) == 1
+    assert f"{first}, {second}" in warned[0].message
+
+
+def test_one_feature_input_drops_previous_original_view(tmp_path):
+    pair, single = tmp_path / "pair.parquet", tmp_path / "single.parquet"
+    _write_synthetic(pair, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(single, _INPUT_WKT[2:3], codes=True)
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        load_input(conn, "t", [pair])
+        load_original(conn, "t", {pair: "adm1_pcode"})
+        assert _paired_original(conn, "t") is not None
+        load_input(conn, "t", [single])
+        assert not _needs_originals(conn, "t", single)
+        assert _paired_original(conn, "t") is None
+
+
+def test_multi_file_unkeyed_original_warns_once(tmp_path, caplog):
+    first, second, single = (tmp_path / f"{n}.parquet" for n in "abc")
+    _write_synthetic(first, _INPUT_WKT[:2], codes=True)
+    _write_synthetic(
+        second,
+        [
+            (1, "POLYGON((9 -1, 11.5 -1, 11.5 4, 9 4, 9 -1))"),
+            (2, "POLYGON((11.5 -1, 14 -1, 14 4, 11.5 4, 11.5 -1))"),
+        ],
+        codes=True,
+    )
+    _write_synthetic(single, [(1, "POLYGON((19 -1, 24 -1, 24 4, 19 4, 19 -1))")])
+    overlays, original = tmp_path / "overlays.parquet", tmp_path / "orig.parquet"
+    _write_synthetic(
+        overlays, [*_OVERLAY_WKT, (3, "POLYGON((20 0, 23 0, 23 3, 20 3, 20 0))")]
+    )
+    _write_synthetic(original, [(1, "POLYGON((-5 -5, 24 -5, 24 5, -5 5, -5 -5))")])
+    with caplog.at_level(logging.WARNING):
+        mosaic(
+            [first, second, single],
+            overlays,
+            tmp_path / "out.parquet",
+            original_paths=original,
+        )
+    warned = [r for r in caplog.records if "no detectable code column" in r.message]
+    assert len(warned) == 1
+    assert str(first) in warned[0].message
+    assert str(second) in warned[0].message
+    assert str(single) not in warned[0].message
 
 
 @pytest.mark.parametrize("second_id", ["NULL", 9], ids=["null", "unmatched"])
@@ -1749,6 +1858,11 @@ def test_no_nearby_original_loads_none(tmp_path):
         conn.execute("INSTALL spatial; LOAD spatial;")
         load_input(conn, "t", [inputs])
         _load_nearby_originals(
-            conn, "t", [(far, (100, 60, 101, 61))], {far: "adm1_pcode"}, inputs
+            conn,
+            "t",
+            [(far, (100, 60, 101, 61))],
+            {far: "adm1_pcode"},
+            inputs,
+            keyless={},
         )
         assert _paired_original(conn, "t") is None

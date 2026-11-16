@@ -210,10 +210,16 @@ def mosaic(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     load_input(conn, name, paths)
                     check_input(conn, name, single_path)
                     load_overlay(conn, name, overlay_path, require_coverage=True)
-                    if originals:
+                    if originals and _needs_originals(conn, name, single_path):
+                        keyless: dict[Path | str, list[Path | str]] = {}
                         _load_keyed_originals(
-                            conn, name, _original_keys(conn, originals), single_path
+                            conn,
+                            name,
+                            _original_keys(conn, originals),
+                            single_path,
+                            keyless=keyless,
                         )
+                        _warn_keyless(keyless)
                     if passthrough:
                         create_lookup_copy(
                             conn, f"{name}_overlay_01", f"{name}_overlay_full"
@@ -347,14 +353,29 @@ def _original_keys(
             f"CREATE OR REPLACE TEMP TABLE _original_attrs AS "
             f"SELECT * EXCLUDE (geom) FROM ({source})"
         )
-        try:
-            codes = detect_level_codes(conn, "_original_attrs")
-            keys[path] = codes[max(codes)]
-        except ValueError as e:
-            logger.warning("original %s has no detectable code column: %s", path, e)
-            keys[path] = None
+        keys[path] = None
+        # One row gives detection no structure to rank levels by.
+        if conn.execute("SELECT count(*) FROM _original_attrs").fetchall()[0][0] > 1:
+            try:
+                codes = detect_level_codes(conn, "_original_attrs")
+                keys[path] = codes[max(codes)]
+            except ValueError as e:
+                logger.debug("original %s: %s", path, e)
         conn.execute("DROP TABLE _original_attrs")
     return keys
+
+
+def _needs_originals(
+    conn: DuckDBPyConnection, name: str, input_path: Path | str
+) -> bool:
+    """Drop any original view; False if the input has one feature to pair."""
+    conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    rows = conn.execute(f'SELECT count(*) FROM "{name}_input_01"').fetchall()[0][0]
+    if rows > 1:
+        return True
+    # A detached piece merges only into a neighbouring row, which one row lacks.
+    logger.info("input %s has one feature, so pairs no original", input_path)
+    return False
 
 
 def _load_keyed_originals(
@@ -362,9 +383,17 @@ def _load_keyed_originals(
     name: str,
     original_keys: dict[Path | str, str | None],
     input_path: Path | str,
+    *,
+    keyless: dict[Path | str, list[Path | str]],
 ) -> None:
-    """Pair originals with `{name}_input_01` by each one's own code, if any pair."""
+    """Pair originals with `{name}_input_01` by each one's own code, if any pair.
+
+    Each original without a code column gets input_path appended in keyless.
+    """
     conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
+    for path, key in original_keys.items():
+        if key is None:
+            keyless.setdefault(path, []).append(input_path)
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{name}_input_01"').fetchall()}
     # A key the input lacks marks another input's original, so none of it pairs.
     usable = {p: k for p, k in original_keys.items() if k in columns}
@@ -386,6 +415,16 @@ def _load_keyed_originals(
         )
 
 
+def _warn_keyless(keyless: dict[Path | str, list[Path | str]]) -> None:
+    """Warn once per original without a code column, naming every input it missed."""
+    for path, inputs in keyless.items():
+        logger.warning(
+            "original %s has no detectable code column, so pairs nothing in %s",
+            path,
+            ", ".join(str(p) for p in inputs),
+        )
+
+
 def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
     """Return the original view's name if originals paired with the input, else None."""
     found = conn.execute(
@@ -394,12 +433,14 @@ def _paired_original(conn: DuckDBPyConnection, name: str) -> str | None:
     return f"{name}_original_01" if found else None
 
 
-def _load_nearby_originals(
+def _load_nearby_originals(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     original_bboxes: list[tuple[Path | str, tuple[float, float, float, float] | None]],
     original_keys: dict[Path | str, str | None],
     input_path: Path | str,
+    *,
+    keyless: dict[Path | str, list[Path | str]],
 ) -> None:
     """Expose only the originals overlapping `{name}_input_01` as the original view."""
     bbox = input_bbox_extent(conn, name)
@@ -414,7 +455,13 @@ def _load_nearby_originals(
         conn.execute(f'DROP VIEW IF EXISTS "{name}_original_01"')
         logger.warning("input %s runs without originals: none is near it", input_path)
         return
-    _load_keyed_originals(conn, name, {p: original_keys[p] for p in nearby}, input_path)
+    _load_keyed_originals(
+        conn,
+        name,
+        {p: original_keys[p] for p in nearby},
+        input_path,
+        keyless=keyless,
+    )
 
 
 def _check_shared_winner(
@@ -565,37 +612,48 @@ def _mosaic_multi_file(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         new_max = conn.execute(f'SELECT MAX(fid) FROM "{name}_input_01"').fetchone()[0]
         fid_offset = new_max if new_max is not None else fid_offset
 
-    for i in range(len(paths)):
-        for table in assigned:
-            path = assigned_dir / table / f"{i:06d}.parquet"
-            conn.execute(f"""--sql
-                CREATE OR REPLACE TABLE "{table}" AS
-                SELECT * FROM read_parquet('{path}')
-            """)
-        if originals:
-            _load_nearby_originals(conn, name, original_bboxes, original_keys, paths[i])
-        clip.main(
-            conn,
-            name,
-            tmp_dir_path,
-            threads=threads,
-            debug=debug,
-            carry_columns=resolved_overlay_columns,
-            input_columns=resolved_input_columns,
-            passthrough=passthrough,
-            result_table=f"{name}_03_iter",
-            raise_if_empty=False,
-            original_table=_paired_original(conn, name) if originals else None,
-            tiles=tiles,
-        )
+    keyless: dict[Path | str, list[Path | str]] = {}
+    try:
+        for i in range(len(paths)):
+            for table in assigned:
+                path = assigned_dir / table / f"{i:06d}.parquet"
+                conn.execute(f"""--sql
+                    CREATE OR REPLACE TABLE "{table}" AS
+                    SELECT * FROM read_parquet('{path}')
+                """)
+            if originals and _needs_originals(conn, name, paths[i]):
+                _load_nearby_originals(
+                    conn,
+                    name,
+                    original_bboxes,
+                    original_keys,
+                    paths[i],
+                    keyless=keyless,
+                )
+            clip.main(
+                conn,
+                name,
+                tmp_dir_path,
+                threads=threads,
+                debug=debug,
+                carry_columns=resolved_overlay_columns,
+                input_columns=resolved_input_columns,
+                passthrough=passthrough,
+                result_table=f"{name}_03_iter",
+                raise_if_empty=False,
+                original_table=_paired_original(conn, name) if originals else None,
+                tiles=tiles,
+            )
 
-        for table in spilled:
-            spill_table(conn, spill_dir, table, i)
+            for table in spilled:
+                spill_table(conn, spill_dir, table, i)
 
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
-        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_dropped"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_detached"')
+            conn.execute(f'DROP TABLE IF EXISTS "{name}_03_iter_cover"')
+    finally:
+        _warn_keyless(keyless)
     if not debug:
         shutil.rmtree(assigned_dir, ignore_errors=True)
 
