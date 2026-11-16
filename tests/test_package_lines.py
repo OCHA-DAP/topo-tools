@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from topo_tools.api.package_lines import package_lines
 from topo_tools.cli.main import cli
-from topo_tools.core.package_lines._02_boundaries import _noded_lines
+from topo_tools.core.package_lines._02_boundaries import _noded_lines, _snap_ends
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
 
 
@@ -409,6 +409,37 @@ def test_tiled_network_one_row_per_shared_border(tmp_path, case):
     for a, b, _, length in shared:
         assert length == pytest.approx(expected[(a, b)])
     assert total == pytest.approx(unioned)
+
+
+def _snapped(lines: list[str]) -> list[str]:
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial; SET geometry_always_xy = true")
+        conn.execute("CREATE TABLE t (k INTEGER, geom GEOMETRY)")
+        for k, wkt in enumerate(lines):
+            conn.execute("INSERT INTO t VALUES (?, ST_GeomFromText(?))", [k, wkt])
+        _snap_ends(conn, "t", "k", 1e-7)
+        return [
+            r[0]
+            for r in conn.execute("SELECT ST_AsText(geom) FROM t ORDER BY k").fetchall()
+        ]
+
+
+def test_snap_ends_moves_each_end_of_a_short_line_to_its_own_target():
+    """Each endpoint of a line shorter than tol moves to its own least target."""
+    out = _snapped(
+        [
+            "LINESTRING (10.5 0, 10.50000005 0)",
+            "LINESTRING (10.49999995 -0.00000003, 10.4 -0.1)",
+            "LINESTRING (10.49999997 0.00000003, 10.4 0.1)",
+        ]
+    )
+    assert out[0] == "LINESTRING (10.49999995 -3e-08, 10.49999997 3e-08)"
+
+
+def test_snap_ends_uses_euclidean_tolerance():
+    """Endpoints within tol on each axis but further apart overall stay put."""
+    out = _snapped(["LINESTRING (0 0, -1 0)", "LINESTRING (9e-08 9e-08, 1 1)"])
+    assert out[1] == "LINESTRING (9e-08 9e-08, 1 1)"
 
 
 def test_noded_lines_ignore_input_row_order():
