@@ -198,8 +198,9 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   file's count of unmatched codes. An input file with one feature MUST pair
   with no original and log no warning, since a detached piece has no
   neighbouring feature to merge into. An input file that no nearby original
-  pairs with MUST run without originals, logging a warning, and each nearby
-  original with no detectable code column (any one-row original) MUST log a
+  pairs with MUST run without originals, logging a warning, and each
+  original with no detectable code column (any one-row original) considered
+  for that input (with multiple input files, each one near it) MUST log a
   warning naming that input file. Without originals, no clip-detached piece
   merges.
 
