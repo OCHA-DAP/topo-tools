@@ -217,16 +217,17 @@ def _snap_ends(conn: DuckDBPyConnection, table: str, key: str, tol: float) -> No
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{table}" AS
         WITH ends AS (
-            SELECT {key}, ST_X(pt) AS x, ST_Y(pt) AS y, pt,
+            SELECT {key}, side, ST_X(pt) AS x, ST_Y(pt) AS y, pt,
                    floor(ST_X(pt) / {cell})::BIGINT AS gx,
                    floor(ST_Y(pt) / {cell})::BIGINT AS gy
             FROM (
-                SELECT {key}, UNNEST([ST_StartPoint(geom), ST_EndPoint(geom)]) AS pt
+                SELECT {key}, UNNEST([0, 1]) AS side,
+                       UNNEST([ST_StartPoint(geom), ST_EndPoint(geom)]) AS pt
                 FROM "{table}"
             )
         ),
         probes AS (
-            SELECT {key}, x, y, gx + dx AS gx, gy + dy AS gy
+            SELECT {key}, side, x, y, gx + dx AS gx, gy + dy AS gy
             FROM ends, (SELECT UNNEST([-1, 0, 1]) AS dx),
                  (SELECT UNNEST([-1, 0, 1]) AS dy)
             WHERE (dx = 0 OR (dx = -1 AND x - gx * {cell} < {tol})
@@ -235,19 +236,24 @@ def _snap_ends(conn: DuckDBPyConnection, table: str, key: str, tol: float) -> No
                    OR (dy = 1 AND (gy + 1) * {cell} - y < {tol}))
         ),
         targets AS (
-            SELECT a.{key}, arg_min(b.pt, [b.x, b.y]) AS pt
+            SELECT a.{key}, a.side, arg_min(b.pt, [b.x, b.y]) AS pt
             FROM probes a JOIN ends b ON a.gx = b.gx AND a.gy = b.gy
               AND a.{key} <> b.{key} AND {near}
               AND (b.x < a.x OR (b.x = a.x AND b.y < a.y))
-            GROUP BY a.{key}, a.x, a.y
+            GROUP BY a.{key}, a.side
         ),
         moves AS (
-            SELECT {key}, ST_Collect(list(pt ORDER BY ST_X(pt), ST_Y(pt))) AS pts
+            SELECT {key}, any_value(pt) FILTER (side = 0) AS first,
+                   any_value(pt) FILTER (side = 1) AS last
             FROM targets GROUP BY {key}
         )
         SELECT * FROM (
             SELECT t.* REPLACE (CASE WHEN m.{key} IS NULL THEN t.geom
-                ELSE ST_Snap(t.geom, m.pts, {tol}) END AS geom)
+                ELSE ST_MakeLine(list_concat(
+                    [coalesce(m.first, ST_StartPoint(t.geom))],
+                    list_slice([p.geom FOR p IN ST_Dump(ST_Points(t.geom))], 2, -2),
+                    [coalesce(m.last, ST_EndPoint(t.geom))]
+                )) END AS geom)
             FROM "{table}" t LEFT JOIN moves m USING ({key})
         )
         WHERE ST_Length(geom) > 0
