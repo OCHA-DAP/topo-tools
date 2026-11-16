@@ -932,6 +932,34 @@ def test_merge_sliver_gaps_leaves_enclave_inside_hole():
         assert rows[0][1] == pytest.approx(0.005)
 
 
+def test_gap_geometries_counts_hole_inside_enclave_once():
+    with duckdb.connect() as conn:
+        _sliver_table(
+            conn,
+            [
+                (
+                    1,
+                    "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2))",
+                ),
+                (2, "POLYGON((3 3, 7 3, 7 7, 3 7, 3 3), (4 4, 6 4, 6 6, 4 6, 4 4))"),
+            ],
+        )
+        gaps = coverage.gap_geometries_sql("synth")
+        areas = conn.execute(f"SELECT ST_Area(geom) FROM {gaps} ORDER BY 1").fetchall()
+        assert [a for (a,) in areas] == pytest.approx([4, 20])
+
+
+def test_merge_sliver_gaps_counts_only_merged_gaps():
+    with duckdb.connect() as conn:
+        _sliver_table(conn, [(1, LEFT), (2, _strip_hole(2))])
+        conn.execute("UPDATE synth SET geom = ST_Translate(geom, 5, 0) WHERE fid = 2")
+        count = merge_sliver_gaps(
+            conn, "synth", issues_table="iss", coverage=False, where="fid = 1"
+        )
+        assert count == 0
+        assert has_gaps(conn, "synth", gap_maximum_width=0)
+
+
 def test_merge_sliver_gaps_keeps_compact_hole():
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")

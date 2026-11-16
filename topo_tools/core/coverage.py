@@ -470,7 +470,7 @@ def gap_geometries_sql(table: str, *, coverage: bool = False) -> str:
     """Build SQL for a subquery of individual fully-enclosed interior-hole geometries.
 
     Dumps the union into parts first (ST_NumInteriorRings is NULL on a MultiPolygon),
-    then subtracts any other part lying inside a hole, such as an enclave.
+    then subtracts the outline of any other part inside a hole, such as an enclave.
     """
     return f"""(
         WITH u AS ({_union_sql(table, coverage=coverage)}),
@@ -489,7 +489,7 @@ def gap_geometries_sql(table: str, *, coverage: bool = False) -> str:
             WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
         ),
         inside AS (
-            SELECT h.hid, ST_Union_Agg(p.poly) AS g
+            SELECT h.hid, ST_Union_Agg(ST_MakePolygon(ST_ExteriorRing(p.poly))) AS g
             FROM holes h
             JOIN parts p ON p.pid != h.pid
              AND p.xmin >= h.xmin AND p.xmax <= h.xmax
@@ -901,6 +901,7 @@ def merge_sliver_gaps(
                source_file, geom
         FROM _sliver_dest ORDER BY gid
     """)
+    count = conn.execute(f'SELECT count(*) FROM "{issues_table}"').fetchall()[0][0]
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{table}" AS
         WITH d AS (
