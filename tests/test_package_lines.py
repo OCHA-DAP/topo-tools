@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from topo_tools.api.package_lines import package_lines
 from topo_tools.cli.main import cli
+from topo_tools.core.package_lines import _02_boundaries as boundaries
 from topo_tools.core.package_lines._02_boundaries import _noded_lines, _snap_ends
 from topo_tools.core.schema_map._identity_names import generic_names_by_family
 
@@ -465,6 +466,39 @@ def test_noded_lines_ignore_input_row_order():
                 )
             )
     assert len(outputs) == 1
+
+
+def _noded_wkb(fixture_rows: str, monkeypatch, budget: int) -> list[tuple]:
+    monkeypatch.setattr(boundaries, "SUBDIVIDE_MAX_VERTICES", budget)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial; SET geometry_always_xy = true")
+        conn.execute(f"CREATE TABLE d AS {fixture_rows}")
+        _noded_lines(conn, "x", "d")
+        return conn.execute("""
+            SELECT left_fid, right_fid, ST_AsHEXWKB(geom) FROM x_02_lines ORDER BY ALL
+        """).fetchall()
+
+
+def test_noded_lines_same_when_long_boundaries_split(monkeypatch):
+    """Splitting boundaries into vertex runs before the tile clip changes no line."""
+    border = [(3 + 0.01 * math.sin(i), i * 3 / 2000) for i in range(2001)]
+    shared = ", ".join(f"{x} {y}" for x, y in border)
+    back = ", ".join(f"{x} {y}" for x, y in reversed(border))
+    synthetic = f"""
+        SELECT * FROM (VALUES
+            (1, ST_GeomFromText('POLYGON((0 0, {shared}, 0 3, 0 0))')),
+            (2, ST_GeomFromText('POLYGON(({back}, 6 0, 6 3, {border[-1][0]} 3))'))
+        ) t(fid, geom)
+    """
+    fixture = Path(__file__).parent / "fixtures" / "mmr_seam.parquet"
+    real = f"""
+        SELECT row_number() OVER (ORDER BY adm1_pcode) AS fid, geometry AS geom
+        FROM '{fixture}'
+    """
+    for rows in (synthetic, real):
+        assert _noded_wkb(rows, monkeypatch, 50) == _noded_wkb(rows, monkeypatch, 10**9)
+    shared_rows = [r[:2] for r in _noded_wkb(synthetic, monkeypatch, 50) if r[1]]
+    assert shared_rows == [(1, 2)]
 
 
 def test_multi_part_fid_touching_and_remote(tmp_path):
