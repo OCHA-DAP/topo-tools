@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-17
+
 ### Fixed
 
 - `package-lines` cuts long boundary parts into runs of at most 1,350
@@ -1107,7 +1109,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.21.1...v0.22.0
