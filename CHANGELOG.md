@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `package-lines` cuts long boundary parts into runs of at most 1,350
+  vertices before tiling and labelling, so units with large, detailed
+  outlines (Antarctica, Canada) fit in memory.
+
 ## [0.24.0] - 2026-11-16
 
 ### Added

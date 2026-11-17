@@ -52,18 +52,20 @@ fieldmaps Xinjiang layer). Cleaning the input first resolves the overlap.
    already contained in the finest level's own adjacency, so no per-level
    repeat is needed. Every ancestor code column survives as a
    constant-per-group attribute, used later for classification.
-2. Take each unit's `ST_Boundary` and clip it to every 1° tile
-   (`TILE_DEG`) its bbox covers, widened by `TILE_MARGIN_DEG`, skipping
-   the clip for a boundary already inside its tile.
+2. Take each unit's `ST_Boundary`, cut each part over
+   `SUBDIVIDE_MAX_VERTICES` at its own vertices into runs of at most that
+   many, and clip each run to every 1° tile (`TILE_DEG`) its bbox covers,
+   widened by `TILE_MARGIN_DEG`, skipping the clip for a run already inside
+   its tile.
 3. Node each tile with `ST_LineMerge(ST_Union_Agg(geom))`, dumped to
    edges and normalised, with each endpoint moved onto the least other
    endpoint within `10 * SNAP_TOLERANCE`, then add each edge's midpoint and bbox in a
    separate pass (computing them in the noding query makes it about three
    times slower).
-4. Label each edge: pair edges with boundaries on bbox columns only, then
-   keep the units within `10 * SNAP_TOLERANCE` of the midpoint, nearest
-   two first. One unit makes the edge exterior, two make it shared
-   (`left_fid < right_fid`).
+4. Label each edge: pair edges with boundary runs on bbox columns only,
+   then keep the units within `10 * SNAP_TOLERANCE` of the midpoint (each
+   unit's distance the least over its runs), nearest two first. One unit
+   makes the edge exterior, two make it shared (`left_fid < right_fid`).
 5. Snap same-label shared edges in one tile onto each other, clip edges
    back to their exact tile, move endpoints within tolerance onto the
    least one again (tile cuts differ by a rounding error), and line-merge

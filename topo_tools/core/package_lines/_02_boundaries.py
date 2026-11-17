@@ -3,7 +3,7 @@
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import generic_families
-from topo_tools.core.constants import SNAP_TOLERANCE
+from topo_tools.core.constants import SNAP_TOLERANCE, SUBDIVIDE_MAX_VERTICES
 from topo_tools.core.dissolve import _02_dissolve as dissolve_stage
 from topo_tools.core.duckdb_utils import bbox_columns_sql
 from topo_tools.core.package_lines._constants import TILE_DEG, TILE_MARGIN_DEG
@@ -293,10 +293,39 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
     """
     tol = SNAP_TOLERANCE * 10
     margin = TILE_MARGIN_DEG
+    step = SUBDIVIDE_MAX_VERTICES - 1
+    # A whole boundary repeated per tile runs out of memory on a large unit, so
+    # long parts are cut at their own vertices into runs sharing an end vertex.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp1" AS
-        SELECT fid, ST_Boundary(geom) AS geom, {bbox_columns_sql("geom")}
-        FROM "{dissolved}"
+        WITH parts AS (
+            SELECT fid, row_number() OVER () AS part, geom
+            FROM (
+                SELECT fid, UNNEST(ST_Dump(ST_Boundary(geom))).geom AS geom
+                FROM "{dissolved}"
+            )
+        ),
+        verts AS (
+            SELECT fid, part, generate_subscripts(pts, 1) AS i, UNNEST(pts) AS pt
+            FROM (
+                SELECT fid, part, [p.geom FOR p IN ST_Dump(ST_Points(geom))] AS pts
+                FROM parts WHERE ST_NPoints(geom) > {SUBDIVIDE_MAX_VERTICES}
+            )
+        ),
+        runs AS (
+            SELECT fid, part, i, pt, (i - 1) // {step} AS k FROM verts
+            UNION ALL
+            SELECT fid, part, i, pt, (i - 1) // {step} - 1 AS k FROM verts
+            WHERE i > 1 AND (i - 1) % {step} = 0
+        )
+        SELECT fid, geom, {bbox_columns_sql("geom")}
+        FROM (
+            SELECT fid, geom FROM parts
+            WHERE ST_NPoints(geom) <= {SUBDIVIDE_MAX_VERTICES}
+            UNION ALL
+            SELECT fid, ST_MakeLine(list(pt ORDER BY i)) AS geom
+            FROM runs GROUP BY fid, part, k HAVING count(*) > 1
+        )
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp2" AS
@@ -349,11 +378,12 @@ def _noded_lines(conn: DuckDBPyConnection, name: str, dissolved: str) -> None:
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02_tmp4" AS
         WITH near AS (
-            SELECT c.eid, b.fid, ST_Distance(b.geom, e.mid) AS dist
+            SELECT c.eid, b.fid, min(ST_Distance(b.geom, e.mid)) AS dist
             FROM "{name}_02_tmp4" c
             JOIN (SELECT eid, mid FROM "{name}_02_tmp3") e USING (eid)
             JOIN (SELECT bid, fid, geom FROM "{name}_02_tmp2") b USING (bid)
             WHERE ST_DWithin(b.geom, e.mid, {tol})
+            GROUP BY c.eid, b.fid
         ),
         ranked AS (
             SELECT eid, fid, row_number() OVER (
