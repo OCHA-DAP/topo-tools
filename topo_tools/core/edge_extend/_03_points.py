@@ -86,15 +86,17 @@ def main(
         CREATE OR REPLACE TABLE "{name}_03_tmp2" AS
         SELECT fid, {_shifted_points("seg_len", f"seg_len / {MAX_POINTS_PER_SEGMENT}")}
             AS geom
-        FROM "{name}_03_tmp1"
-        WHERE seg_len > {cap_threshold!r}
+        FROM (
+            SELECT fid, ST_Normalize(geom) AS geom, seg_len FROM "{name}_03_tmp1"
+            WHERE seg_len > {cap_threshold!r}
+        )
     """)
 
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_tmp3" AS
         SELECT fid, {_shifted_points("len", repr(d))} AS geom
         FROM (
-            SELECT fid, geom, ST_Length(geom) AS len FROM (
+            SELECT fid, ST_Normalize(geom) AS geom, ST_Length(geom) AS len FROM (
                 SELECT fid, UNNEST(ST_Dump(ST_LineMerge(ST_Union_Agg(geom)))).geom
                     AS geom
                 FROM "{name}_03_tmp1"
@@ -196,11 +198,9 @@ def main(
 
 def _shifted_points(length: str, step: str) -> str:
     """Return SQL for points every `step` along `geom`, from a per-line offset."""
-    # Evenly spaced points lined up across lines break GEOS's Voronoi diagram;
-    # a stable per-line offset of up to one step keeps them from lining up.
-    shift = (
-        f"LEAST(({step}) * (hash(fid, ST_AsWKB(geom)) % 1000) / 1000.0, {length} / 2)"
-    )
+    # A per-line offset keeps points from lining up across lines (breaks GEOS
+    # Voronoi); callers pass ST_Normalize'd lines so it ignores direction and order.
+    shift = f"LEAST(({step}) * (hash(ST_AsWKB(geom)) % 1000) / 1000.0, {length} / 2)"
     return (
         f"ST_LineInterpolatePoints(ST_LineSubstring(geom, {shift} / {length}, 1.0), "
         f"LEAST(({step}) / ({length} - {shift}), 1.0), true)"
