@@ -199,7 +199,7 @@ def main(
 def _shifted_points(length: str, step: str) -> str:
     """Return SQL for points every `step` along `geom`, from a per-line offset."""
     # A per-line offset keeps points from lining up across lines (breaks GEOS
-    # Voronoi); callers pass ST_Normalize'd lines so it ignores input row order.
+    # Voronoi); callers pass ST_Normalize'd lines so it ignores direction and order.
     shift = f"LEAST(({step}) * (hash(ST_AsWKB(geom)) % 1000) / 1000.0, {length} / 2)"
     return (
         f"ST_LineInterpolatePoints(ST_LineSubstring(geom, {shift} / {length}, 1.0), "
