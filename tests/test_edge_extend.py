@@ -315,6 +315,40 @@ def test_points_bbox_prefilter_matches_global_union(tmp_path):
         assert mismatched == 0
 
 
+def test_points_ignore_row_order_and_ring_direction(tmp_path):
+    """Reordered rows with reversed rings must seed the same _03b points."""
+    n = 3
+    cells = [
+        f"POLYGON(({x} {y}, {x + 1} {y}, {x + 1.2} {y + 1}, {x} {y + 1.1}, {x} {y}))"
+        for x in range(0, 2 * n, 2)
+        for y in range(0, 2 * n, 2)
+    ]
+    coords = []
+    for tag, wkts, geom in (
+        ("fwd", cells, "ST_GeomFromText(w)"),
+        ("rev", cells[::-1], "ST_Reverse(ST_GeomFromText(w))"),
+    ):
+        path = tmp_path / f"{tag}.parquet"
+        values = ", ".join(f"({i}, '{w}')" for i, w in enumerate(wkts))
+        with duckdb.connect() as conn:
+            conn.execute("INSTALL spatial; LOAD spatial;")
+            conn.execute(f"""--sql
+                COPY (SELECT id, {geom} AS geom FROM (VALUES {values}) t(id, w))
+                TO '{path}'
+            """)
+            inputs.main(conn, tag, path)
+            lines.main(conn, tag)
+            points.build_segments(conn, tag)
+            points.main(conn, tag, Decimal("0.05"))
+            coords.append(
+                conn.execute(
+                    f"SELECT ST_X(geom), ST_Y(geom) FROM {tag}_03b ORDER BY 1, 2"
+                ).fetchall()
+            )
+    assert coords[0]
+    assert coords[0] == coords[1]
+
+
 def test_extend_runs_on_input_past_antimeridian(tmp_path):
     path = tmp_path / "antimeridian.parquet"
     wkt = [
