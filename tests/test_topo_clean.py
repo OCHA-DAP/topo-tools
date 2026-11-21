@@ -490,6 +490,7 @@ def test_partly_filled_gap_is_not_fixed(tmp_path):
             VALUES ('gap-1', 'gap', ST_MakeEnvelope(1, 1, 2, 2))
         """)
         conn.execute("CREATE TABLE stage_03_micro AS FROM stage_02 WHERE FALSE")
+        conn.execute("CREATE TABLE stage_03_width AS SELECT NULL::DOUBLE AS width")
         issues_path = tmp_path / "issues.parquet"
         outputs_stage.main(conn, "stage", tmp_path / "out.parquet", issues_path)
         rows = conn.execute(f"SELECT key, fixed FROM '{issues_path}'").fetchall()
@@ -510,6 +511,7 @@ def test_notch_fixed_matches_location_not_just_unit_pair(tmp_path):
             ('notch-2', 'notch', 1, 2, ST_MakeEnvelope(0.01, -0.01, 0.011, -0.009))
         """)
         conn.execute("CREATE TABLE stage_03_micro AS FROM stage_02 WHERE FALSE")
+        conn.execute("CREATE TABLE stage_03_width AS SELECT NULL::DOUBLE AS width")
         issues_path = tmp_path / "issues.parquet"
         outputs_stage.main(conn, "stage", tmp_path / "out.parquet", issues_path)
         rows = conn.execute(
@@ -806,3 +808,36 @@ def test_clean_steps(synthetic_input, tmp_path):
         )
     assert output_path.exists()
     assert issues_path.exists()
+
+
+def test_clean_steps_raise_on_gap_left_within_fill_width(monkeypatch, tmp_path):
+    """A gap at or below the filled width fails outputs, even run as its own step."""
+    input_path = tmp_path / "donut.parquet"
+    values = ", ".join(f"({f}, ST_GeomFromText('{w}'))" for f, w in _SYNTHETIC_WKT[:4])
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{input_path}'"
+        )
+
+    def leaves_gap(conn, table_in, table_out, **_kwargs):
+        conn.execute(f'CREATE OR REPLACE TABLE "{table_out}" AS FROM "{table_in}"')
+
+    monkeypatch.setattr(clean_stage, "coverage_clean", leaves_gap)
+    work_dir = tmp_path / "work"
+    for step in _STEPS[:-1]:
+        clean(
+            input_path,
+            tmp_path / "out.parquet",
+            tmp_dir=work_dir,
+            step=step,
+            maximum_gap_width="2",
+        )
+    with pytest.raises(RuntimeError, match="GAPS"):
+        clean(
+            input_path,
+            tmp_path / "out.parquet",
+            tmp_dir=work_dir,
+            step=_STEPS[-1],
+            maximum_gap_width="2",
+        )

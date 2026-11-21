@@ -5,10 +5,12 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from topo_tools.api.change import change
 from topo_tools.api.code_create import code_create
 from topo_tools.api.edge_extend import extend
 from topo_tools.api.package import package
 from topo_tools.api.schema_fill import fill
+from topo_tools.api.schema_join import join
 from topo_tools.api.schema_map import map as schema_map
 from topo_tools.api.topo_clean import clean
 from topo_tools.api.topo_detect import detect
@@ -66,9 +68,20 @@ def test_every_output_is_on_grid(shifted, tmp_path):
         min_width=2,
     )
     package(out / "coded.parquet", output_path=str(out / "pkg_{x}.parquet"))
+    join(out / "clean.parquet", out / "pkg_admin1.parquet", out / "join.parquet")
+    change(
+        shifted,
+        out / "clean.parquet",
+        tmp_path / "changelog.csv",
+        overlay_path=out / "change_overlay.parquet",
+    )
 
     written = [p for p in sorted(out.glob("*.parquet")) if _has_geometry(p)]
-    assert {"extend.parquet", "pkg_points.parquet", "pkg_lines.parquet"} <= {
-        p.name for p in written
-    }
+    assert {
+        "extend.parquet",
+        "pkg_points.parquet",
+        "pkg_lines.parquet",
+        "join.parquet",
+        "change_overlay.parquet",
+    } <= {p.name for p in written}
     assert {p.name: _off_grid(p) for p in written} == {p.name: 0 for p in written}

@@ -55,8 +55,8 @@ overwrite any input value (see `docs/adr/0109`).
 
 ## Outputs
 
-- `schema-join` MUST NOT modify geometry, and so performs no topology
-  hard gate at all.
+- `schema-join` MUST change geometry only by rounding it to the output
+  grid, and performs no topology check.
 - The output MUST keep every input row, using `name_field`/`code_field`, or
   `adm{n}_name`/`adm{n}_code` when omitted. Columns MUST keep input order,
   each added numbered sibling right after the last existing column of its

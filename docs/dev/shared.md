@@ -198,7 +198,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
 - `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  never modify geometry. `change` applies it only through its auto-cleaned
+  change geometry only by rounding it to the output grid. `change` applies it only through its auto-cleaned
   inputs; its overlay drops intersections below `SNAP_TOLERANCE` squared
   instead.
 

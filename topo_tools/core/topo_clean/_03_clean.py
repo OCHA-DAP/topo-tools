@@ -177,8 +177,8 @@ def main(
     *,
     gap_maximum_width: tuple[str, float | None],
     snapping_distance: tuple[str, float | None],
-) -> float | None:
-    """Fix `{name}_01` into `{name}_03`; return the gap width filled, or None."""
+) -> None:
+    """Fix `{name}_01` into `{name}_03`; the gap width filled to `{name}_03_width`."""
     gap_maximum_width_deg = _fix(
         conn,
         name,
@@ -205,4 +205,7 @@ def main(
     """)
     for tmp in (f"{name}_03_tmp1", f"{name}_03_tmp2"):
         conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
-    return gap_maximum_width_deg
+    conn.execute(
+        f'CREATE OR REPLACE TABLE "{name}_03_width" AS SELECT ?::DOUBLE AS width',
+        [gap_maximum_width_deg],
+    )

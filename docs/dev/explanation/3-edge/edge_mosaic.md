@@ -43,8 +43,9 @@ total wall time. If the geometry is already extended, only assignment and clippi
 4. **`_02_clean`**: runs `coverage_clean()` in place over `{name}_03`,
    passthrough rows excluded.
    `--no-clean` skips this stage.
-5. **`_03_outputs`**: runs `check_valid_topology`, or with `--no-clean` merges
-   micro-polygons and runs the bounded invalid-edge check
+5. **`_03_outputs`**: rounds to the output grid and validates the coverage via
+   `finalize_geometry`, or with `--no-clean` merges micro-polygons, rounds, and runs
+   the bounded invalid-edge check
    (`core.coverage.invalid_edge_issues`, passthrough rows excluded). Both modes add
    `kind='gap'` rows for overlay area no output row covers. The issues report lists unassigned/passthrough
    input polygons (no dropped-group kind, since there are no groups) and any

@@ -140,19 +140,17 @@ def _warn_on_unfilled_gaps(conn: DuckDBPyConnection, name: str) -> None:
         )
 
 
-def main(  # noqa: PLR0913
+def main(
     conn: DuckDBPyConnection,
     name: str,
     dest: Path,
     issues_dest: Path,
     *,
-    gap_maximum_width: float | None = None,
     debug: bool = False,
 ) -> None:
-    """Validate `{name}_03`, gaps up to gap_maximum_width, and export it + issues."""
-    finalize_geometry(
-        conn, f"{name}_03", validate="coverage", gap_maximum_width=gap_maximum_width
-    )
+    """Validate `{name}_03`, gaps up to the width filled, and export it + issues."""
+    width = conn.execute(f'SELECT width FROM "{name}_03_width"').fetchall()[0][0]
+    finalize_geometry(conn, f"{name}_03", validate="coverage", gap_maximum_width=width)
     _add_outcome_columns(conn, name)
     _warn_on_unfilled_gaps(conn, name)
 
@@ -164,3 +162,4 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_width"')

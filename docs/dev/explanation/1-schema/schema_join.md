@@ -64,8 +64,8 @@ Tables are named `{input}_schema_join_*`.
    level the input lacks; rows are sorted by the deepest level's code.
 4. **`_04_outputs`**: builds `{name}_04` (`no-overlap`, `low-overlap`,
    `value-mismatch` rows, in the shared issues-table column schema) and
-   exports the joined layer and its issues file. There is no topology
-   check, since geometry is never modified.
+   exports the joined layer and its issues file. Rounding to the output
+   grid is the only geometry change, so it runs no topology check.
 
 ## Why per-polygon plurality, not per-file majority
 

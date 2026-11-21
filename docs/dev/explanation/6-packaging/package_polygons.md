@@ -57,7 +57,7 @@ option list.
 3. **`_03_outputs`**: resolves every level's output/issues paths up front
    (`_plan_levels()`), raising `ValueError` early if `{n}` is missing from
    a caller-given template, then exports each non-skipped level through
-   the same `check_valid_topology()` + gap-issues-table shape `dissolve`
+   the same `finalize_geometry()` + gap-issues-table shape `dissolve`
    used, dropping intermediate tables afterward.
 
 ## Why the finest level's own path can equal the input path

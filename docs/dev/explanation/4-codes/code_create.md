@@ -16,7 +16,7 @@ stages, each a numbered module in `topo_tools/core/code_create/`.
 
 Loads and reprojects the one input via `core.io.read_and_reproject()`.
 `code-create` never coverage-cleans: it rewrites attribute columns only,
-geometry is untouched throughout the whole pipeline.
+geometry changes only by rounding to the output grid at export.
 
 ## `_02_levels`: resolve, don't assume
 

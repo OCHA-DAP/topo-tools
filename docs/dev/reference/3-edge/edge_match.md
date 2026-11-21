@@ -105,8 +105,9 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Outputs
 
-- `edge-match` MUST run `check_valid_topology` on the cleaned output, passthrough rows
-  excluded, raising on what remains. With `clean` False it MUST NOT run it, and
+- `edge-match` MUST round the cleaned output to the output grid and validate it as a
+  coverage, passthrough rows excluded, raising on what remains. With `clean` False it
+  MUST round the output and write `invalid-edge` rows instead of raising, and
   MUST log a warning that the output is not coverage-cleaned. In both cases it
   MUST report overlay area no output row covers as `kind='gap'` rows.
 - `edge-match` MUST export the final merged layer.

@@ -91,8 +91,9 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
 5. **`_04_clean`**: runs `coverage_clean()` in place over the clipped result,
    orphan group excluded, closing the seams that two clips of one border leave. `--no-clean` skips this
    stage (see `docs/adr/0149`).
-6. **`_05_outputs`**: runs `check_valid_topology`, or with `--no-clean` merges
-   micro-polygons and runs the bounded invalid-edge check (orphan group excluded).
+6. **`_05_outputs`**: rounds to the output grid and validates the coverage via
+   `finalize_geometry`, or with `--no-clean` merges micro-polygons, rounds, and runs
+   the bounded invalid-edge check (orphan group excluded).
    Both modes add `kind='gap'` rows for overlay area no output row covers. It then
    builds the issues report from the dropped input polygons collected in
    stages 2/3 (or the passthrough input polygons and gap-filled overlay
@@ -321,7 +322,7 @@ never came from overlay polygon vertex identity in the first place (see
 
 ## Overlay-layer gaps
 
-`_05_outputs.py` runs `check_valid_topology` at its default `gap_maximum_width`
+`_05_outputs.py` runs `finalize_geometry` at its default `gap_maximum_width`
 and reports overlay area no output row covers as a `kind='gap'` row. A
 zero-tolerance gate would fail on a real case: matching South Africa's admin4
 into its own admin0 reproduces the interior hole for Lesotho, which is the
