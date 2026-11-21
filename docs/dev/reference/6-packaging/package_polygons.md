@@ -40,7 +40,9 @@ sidebar:
 - Each level's output MUST pass the coverage check
   (no overlap or micro-polygon; a gap at or below `SNAP_TOLERANCE` blocks
   export, a wider one does not). Micro-polygons are merged on input, and their `micro-polygon` rows go in the
-  finest level's issues report.
+  finest level's issues report. A unit whose rounded geometry is empty
+  MUST be dropped and reported in its level's issues report as an
+  `empty-geometry` row, its `reason` naming the level's code value.
 - `package-polygons` MUST also export an issues report per level, using the same columns as every other tool's issues report. A level's issues report MUST
   be produced only when it has at least one row.
 - `package-polygons` MAY take `output_name_field`/`output_code_field`

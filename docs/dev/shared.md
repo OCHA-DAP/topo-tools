@@ -123,8 +123,9 @@ in sync.
 - Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
   rounded once by `finalize_geometry()` as the last geometry change. A row
   with empty geometry MUST be dropped with a logged warning, and reported as
-  a `kind='empty-geometry'` row by every tool whose issues report uses the
-  shared schema. Issues reports MUST keep their own empty-geometry rows. Any
+  a `kind='empty-geometry'` row, `fixed` FALSE, by every tool whose issues
+  report uses the shared schema (`schema-join` leaves its `unit_a` null,
+  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows. Any
   topology validation MUST run on the rounded result, and internal tables
   MUST NOT be rounded.
 

@@ -279,8 +279,9 @@ all its area: that unit is gone from the output (with its own
 `empty-geometry` row), the row's `reason` reads `unit {n} removed`, adding
 `fully covered by unit {m}` only when the input unit {m} covers unit {n}
 (a unit merged away as a micro-polygon gets its `micro-polygon` row
-instead), and `fixed` is FALSE so it gets reviewed. For a gap row, `filled_area_m2` is how much
-of the gap's own area ended up covered by the cleaned output (`0` if left
+instead), and `fixed` is FALSE so it gets reviewed. For a gap row,
+`filled_area_m2` is how much of the gap's own area ended up covered by
+the cleaned output (`0` if left
 unfilled by design), and `fixed` is TRUE only when no gap still open in
 `{name}_03` (`gap_issues_sql()`, wider than `SNAP_TOLERANCE`, the same
 gaps `topo-detect` reports) overlaps it with positive area. An open gap

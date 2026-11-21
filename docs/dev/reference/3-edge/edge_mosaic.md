@@ -112,8 +112,10 @@ See [edge-match](edge_match.md) for the rules `edge-mosaic` shares with it.
   MUST hold the gap-filled overlay polygon's fid and `reason` MUST explain that the
   overlay polygon had no matched input polygons and was kept unclipped in the output;
   `unit_a` and `source_file` MUST be null, since the row is the overlay polygon
-  itself, not an input polygon. A field that doesn't apply to a row's kind
-  MUST be null. Every row kind, `invalid-edge` and `micro-polygon` included,
+  itself, not an input polygon. For an `empty-geometry` row (an output row
+  dropped because its rounded geometry is empty), `unit_a` MUST hold its
+  input polygon's fid and `fixed` MUST be FALSE. A field that doesn't apply
+  to a row's kind MUST be null. Every row kind, `invalid-edge` and `micro-polygon` included,
   MUST use the same input polygon fids: with multiple input files, each
   file's own row numbers offset by the rows of the files processed before it.
 - `edge-mosaic` MUST produce the issues report only when it has at least one

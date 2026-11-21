@@ -24,7 +24,9 @@ def _build_issues(conn: DuckDBPyConnection, name: str, min_overlap: float) -> No
     """Build `{name}_04`: no-overlap, low-overlap, and value-mismatch rows."""
     source_file = short_source_file_sql("c.source_file")
     empty = ""
-    if sql := empty_issues_sql(conn, f"{name}_03", source_file_expr="NULL"):
+    if sql := empty_issues_sql(
+        conn, f"{name}_03", source_file_expr=short_source_file_sql("source_file")
+    ):
         # A dropped row has no output row, so the reason names its input fid.
         empty = f"""UNION ALL BY NAME SELECT * EXCLUDE (overlay_fid) REPLACE (
             NULL::BIGINT AS unit_a, reason || ' (input fid ' || unit_a || ')' AS reason

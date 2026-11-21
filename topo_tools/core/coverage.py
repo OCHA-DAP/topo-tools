@@ -1433,32 +1433,50 @@ def check_valid_topology(
     check_micro_polygons(conn, table)
 
 
-def _round_and_drop_empty(conn: DuckDBPyConnection, table: str) -> None:
+def _round_and_drop_empty(
+    conn: DuckDBPyConnection, table: str, label_columns: tuple[str, ...] = ()
+) -> None:
     """Round `table.geom`, moving rows left empty to `{table}_empty` as issue rows."""
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
-    conn.execute(f'ALTER TABLE "{table}" ADD COLUMN _was_empty BOOLEAN')
-    conn.execute(f"""--sql
-        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION}),
-                             _was_empty = ST_IsEmpty(geom)
-    """)
     fid = "fid" if "fid" in columns else "NULL::BIGINT"
     overlay = "overlay_fid" if "overlay_fid" in columns else "NULL::BIGINT"
     source = "source_file" if "source_file" in columns else "NULL::VARCHAR"
+    label = " || ', ' || ".join(
+        f"""'{c}=' || coalesce("{c}"::VARCHAR, 'NULL')""" for c in label_columns
+    )
+    label = f" || ' (' || {label} || ')'" if label else ""
+
+    def move_empty(reason: str) -> int:
+        conn.execute(f"""--sql
+            INSERT INTO "{table}_empty" BY NAME
+            SELECT 'empty-geometry' AS kind, {fid} AS unit_a,
+                   {overlay} AS overlay_fid, '{reason}'{label} AS reason,
+                   FALSE AS fixed, {source} AS source_file, geom
+            FROM "{table}" WHERE ST_IsEmpty(geom)
+        """)
+        return conn.execute(f"""--sql
+            DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
+        """).fetchall()[0][0]
+
     conn.execute(f"""--sql
-        CREATE TABLE "{table}_empty" AS
-        SELECT 'empty-geometry-' || row_number() OVER (ORDER BY {fid}) AS key,
-               'empty-geometry' AS kind, {fid} AS unit_a, {overlay} AS overlay_fid,
-               CASE WHEN _was_empty THEN 'empty before rounding to the output grid'
-                    ELSE 'narrower than the 1e-9 output grid' END AS reason,
-               TRUE AS fixed, {source} AS source_file, geom
-        FROM "{table}" WHERE ST_IsEmpty(geom)
+        CREATE TABLE "{table}_empty" (
+            key VARCHAR, kind VARCHAR, unit_a BIGINT, overlay_fid BIGINT,
+            reason VARCHAR, fixed BOOLEAN, source_file VARCHAR, geom GEOMETRY
+        )
     """)
-    dropped = conn.execute(f"""--sql
-        DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
-    """).fetchall()[0][0]
-    conn.execute(f'ALTER TABLE "{table}" DROP COLUMN _was_empty')
+    dropped = move_empty("empty before rounding to the output grid")
+    conn.execute(f"""--sql
+        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+    """)
+    dropped += move_empty("narrower than the 1e-9 output grid")
     if dropped:
         logger.warning("dropped %d row(s) with empty geometry from %s", dropped, table)
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{table}_empty" AS
+            SELECT * REPLACE (
+                'empty-geometry-' || row_number() OVER (ORDER BY unit_a) AS key
+            ) FROM "{table}_empty"
+        """)
     else:
         conn.execute(f'DROP TABLE "{table}_empty"')
 
@@ -1484,6 +1502,7 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
     where: str | None = None,
     issues_table: str | None = None,
     drop_empty: bool = True,
+    label_columns: tuple[str, ...] = (),
 ) -> None:
     """Round `table.geom` to the grid, move empty rows to `{table}_empty`, validate.
 
@@ -1495,7 +1514,7 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
             UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
         """)
     else:
-        _round_and_drop_empty(conn, table)
+        _round_and_drop_empty(conn, table, label_columns)
     if validate == "none":
         return
     if validate == "issues":

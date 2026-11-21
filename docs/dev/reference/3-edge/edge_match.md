@@ -116,6 +116,9 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   clip intersection, every clip-detached piece with an edge neighbour, and every passthrough input polygon and gap-filled overlay polygon
   (`merge` set only), so a human can audit what didn't make it into the output or what may
   need review.
+- An output row whose rounded geometry is empty MUST be dropped and
+  reported as an `empty-geometry` row, `unit_a` holding its input polygon's
+  fid and `fixed` FALSE.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,
   `source_file` MUST record the input polygon's own origin file as a
   parent-directory-plus-filename (not the full path). For a `gap-fill` row,

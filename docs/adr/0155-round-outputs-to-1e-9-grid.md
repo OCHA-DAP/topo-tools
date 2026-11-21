@@ -37,8 +37,8 @@ Neither layer gained an invalid or empty geometry or lost a vertex.
   `topo-clean` finds fully covered by another. Each drop logs a warning,
   since a tool run on its own may meet such rows, and tools with a
   shared-schema issues report add a `kind='empty-geometry'` row per dropped
-  row. `topo-clean` also reports a removed unit on its overlap row, `fixed`
-  FALSE. Issues reports keep their own rows, so a defect narrower than the
+  row, `fixed` FALSE so a lost unit gets reviewed. `topo-clean` also reports
+  a removed unit on its overlap row, `fixed` FALSE. Issues reports keep their own rows, so a defect narrower than the
   grid is still reported.
 - Every outputs stage calls it on its final table(s) before any check, issue
   row or export; `export_issues_table()` calls it with `none`. Internal

@@ -864,5 +864,4 @@ def test_clean_removed_micro_unit_names_no_covering_unit(tmp_path):
         reasons = conn.execute(
             f"SELECT reason FROM '{issues_path}' WHERE kind = 'overlap'"
         ).fetchall()
-    assert reasons
-    assert all("covered" not in (r or "") for (r,) in reasons)
+    assert reasons == [("unit 3 removed",)]

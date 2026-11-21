@@ -75,7 +75,10 @@ overwrite any input value (see `docs/adr/0109`).
     outside that join polygon and `reason` stating the covered share;
   - `value-mismatch`: an input polygon and column where the input polygon's value and its
     join polygon's value are both non-NULL and differ, with `reason` naming the
-    column and both values.
+    column and both values;
+  - `empty-geometry`: an input polygon dropped because its rounded geometry
+    is empty, with `unit_a` null (it has no output row) and `reason` naming
+    its input fid.
 - `unit_a` MUST hold the input polygon's 1-based row number in the output file, not
   its input fid, since rows are re-sorted by code.
 - `schema-join` MUST NOT write an empty issues file, and MUST remove a

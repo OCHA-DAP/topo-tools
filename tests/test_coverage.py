@@ -1071,12 +1071,21 @@ def test_finalize_geometry_drops_rows_rounding_empties():
     kept = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
     assert kept == [(1,), (3,)]
     issues = conn.execute(
-        "SELECT kind, unit_a, reason FROM t_empty ORDER BY unit_a"
+        "SELECT kind, unit_a, reason, fixed FROM t_empty ORDER BY unit_a"
     ).fetchall()
     assert issues == [
-        ("empty-geometry", 2, "narrower than the 1e-9 output grid"),
-        ("empty-geometry", 4, "empty before rounding to the output grid"),
+        ("empty-geometry", 2, "narrower than the 1e-9 output grid", False),
+        ("empty-geometry", 4, "empty before rounding to the output grid", False),
     ]
+
+
+def test_finalize_geometry_labels_dropped_rows():
+    conn = _off_grid_square()
+    conn.execute("ALTER TABLE t ADD COLUMN code VARCHAR")
+    conn.execute("INSERT INTO t VALUES (2, ST_GeomFromText('POLYGON EMPTY'), 'A1')")
+    finalize_geometry(conn, "t", validate="none", label_columns=("code",))
+    reason = conn.execute("SELECT reason FROM t_empty").fetchall()[0][0]
+    assert reason == "empty before rounding to the output grid (code=A1)"
 
 
 def test_finalize_geometry_keeps_empty_rows_when_asked():

@@ -29,6 +29,7 @@ class LevelOutput:
     table: str
     dest: Path | None
     issues_dest: Path | None
+    key_columns: tuple[str, ...] = ()
 
 
 def _export_one(
@@ -42,12 +43,18 @@ def _export_one(
     issues_table = f"{name}_03_{item.level}"
     invalid_table = f"{issues_table}_invalid"
     if check_topology:
-        finalize_geometry(conn, item.table, validate="coverage")
+        finalize_geometry(
+            conn, item.table, validate="coverage", label_columns=item.key_columns
+        )
         parts = [gap_issues_sql(conn, item.table, coverage=True)]
     else:
         # Gaps need a union, which fails on unmatched edges, like edge-mosaic's.
         finalize_geometry(
-            conn, item.table, validate="issues", issues_table=invalid_table
+            conn,
+            item.table,
+            validate="issues",
+            issues_table=invalid_table,
+            label_columns=item.key_columns,
         )
         parts = [f'SELECT * FROM "{invalid_table}"']
     if item.table == f"{name}_01":
@@ -80,7 +87,6 @@ def _export_one(
     export_issues_table(conn, issues_table, item.issues_dest)
     conn.execute(f'DROP TABLE IF EXISTS "{issues_table}"')
     conn.execute(f'DROP TABLE IF EXISTS "{invalid_table}"')
-    conn.execute(f'DROP TABLE IF EXISTS "{item.table}_empty"')
 
 
 def main(  # noqa: PLR0913
@@ -106,3 +112,5 @@ def main(  # noqa: PLR0913
                 conn.execute(f'DROP TABLE IF EXISTS "{item.table}"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_01_micro"')
+        for item in items:
+            conn.execute(f'DROP TABLE IF EXISTS "{item.table}_empty"')
