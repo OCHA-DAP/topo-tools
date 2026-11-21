@@ -1029,14 +1029,6 @@ def _off_grid_square():
     return conn
 
 
-@pytest.mark.parametrize("validate", ["coverage", "none"])
-def test_finalize_geometry_rounds_to_grid(validate):
-    conn = _off_grid_square()
-    finalize_geometry(conn, "t", validate=validate)
-    x = conn.execute("SELECT max(ST_XMax(geom)) FROM t").fetchall()[0][0]
-    assert x == 1.0
-
-
 def test_finalize_geometry_coverage_raises_on_overlap():
     conn = _off_grid_square()
     conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{_OVERLAPPING}'))")
@@ -1060,7 +1052,7 @@ def test_finalize_geometry_skips_gap_check_without_width():
         finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=1)
 
 
-def test_finalize_geometry_drops_rows_rounding_empties():
+def test_finalize_geometry_drops_empty_rows():
     conn = _off_grid_square()
     thin = "POLYGON((5 5, 6 5, 6 5.0000000004, 5 5.0000000004, 5 5))"
     conn.execute(f"""
@@ -1069,14 +1061,11 @@ def test_finalize_geometry_drops_rows_rounding_empties():
     """)
     finalize_geometry(conn, "t", validate="none")
     kept = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
-    assert kept == [(1,), (3,)]
+    assert kept == [(1,), (2,), (3,)]
     issues = conn.execute(
         "SELECT kind, unit_a, reason, fixed FROM t_empty ORDER BY unit_a"
     ).fetchall()
-    assert issues == [
-        ("empty-geometry", 2, "narrower than the 1e-9 output grid", False),
-        ("empty-geometry", 4, "empty before rounding to the output grid", False),
-    ]
+    assert issues == [("empty-geometry", 4, "empty geometry", False)]
 
 
 def test_finalize_geometry_labels_dropped_rows():
@@ -1085,30 +1074,4 @@ def test_finalize_geometry_labels_dropped_rows():
     conn.execute("INSERT INTO t VALUES (2, ST_GeomFromText('POLYGON EMPTY'), 'A1')")
     finalize_geometry(conn, "t", validate="none", label_columns=("code",))
     reason = conn.execute("SELECT reason FROM t_empty").fetchall()[0][0]
-    assert reason == "empty before rounding to the output grid (code=A1)"
-
-
-def test_finalize_geometry_keeps_empty_rows_when_asked():
-    conn = _off_grid_square()
-    conn.execute("INSERT INTO t VALUES (2, ST_GeomFromText('POLYGON EMPTY'))")
-    finalize_geometry(conn, "t", validate="none", drop_empty=False)
-    fids = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
-    assert fids == [(1,), (2,)]
-
-
-def test_finalize_geometry_cleans_edges_split_by_rounding():
-    conn = duckdb.connect()
-    conn.execute("LOAD spatial")
-    # Rounding moves fid 1's apex onto the shared edge, noding only fid 1's copy.
-    conn.execute("""
-        CREATE TABLE t AS SELECT * FROM (VALUES
-            (1, ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0.5 3e-10, 0 1, 0 0))')),
-            (2, ST_GeomFromText('POLYGON((0 0, 0 -1, 1 -1, 1 0, 0 0))'))
-        ) v(fid, geom)
-    """)
-    assert not has_invalid_edges(conn, "t")
-    finalize_geometry(conn, "t", validate="coverage")
-    assert not has_invalid_edges(conn, "t")
-    assert conn.execute("SELECT sum(ST_Area(geom)) FROM t").fetchall()[0][0] == (
-        pytest.approx(1.5)
-    )
+    assert reason == "empty geometry (code=A1)"

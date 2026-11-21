@@ -157,7 +157,7 @@ def test_fills_every_coarser_level(input_path, join_path, tmp_path, fields):
     assert not (tmp_path / "out_issues.parquet").exists()
 
 
-def test_geometry_only_rounded(input_path, join_path, tmp_path):
+def test_geometry_unchanged(input_path, join_path, tmp_path):
     out = tmp_path / "out.parquet"
     join(input_path, join_path, out)
 
@@ -165,8 +165,7 @@ def test_geometry_only_rounded(input_path, join_path, tmp_path):
         conn.execute("LOAD spatial")
         before, after = (
             conn.execute(
-                f"SELECT ST_AsWKB(ST_Normalize(ST_ReducePrecision({g}, 1e-9))) "
-                f"FROM '{p}' ORDER BY adm3_code"
+                f"SELECT ST_AsWKB(ST_Normalize({g})) FROM '{p}' ORDER BY adm3_code"
             ).fetchall()
             for p, g in ((input_path, "geom"), (out, "geometry"))
         )

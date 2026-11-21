@@ -267,7 +267,7 @@ def test_detect_steps(synthetic_input, tmp_path):
 
 
 def test_detect_keeps_sub_grid_overlap_row(tmp_path):
-    """An overlap narrower than the output grid is still reported."""
+    """An overlap narrower than 1e-9 degrees is still reported."""
     input_path = tmp_path / "ov.parquet"
     _write_wkt(
         input_path,

@@ -11,7 +11,7 @@ from topo_tools.core.io import export_geometry_table
 def main(
     conn: DuckDBPyConnection, name: str, dest: Path, *, debug: bool = False
 ) -> None:
-    """Round `{name}_02` to the output grid, unvalidated, and export it to dest."""
+    """Drop empty rows from `{name}_02`, unvalidated, and export it to dest."""
     finalize_geometry(conn, f"{name}_02", validate="none")
     export_geometry_table(conn, f"{name}_02", dest)
 
