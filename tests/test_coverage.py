@@ -1094,3 +1094,21 @@ def test_finalize_geometry_keeps_empty_rows_when_asked():
     finalize_geometry(conn, "t", validate="none", drop_empty=False)
     fids = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
     assert fids == [(1,), (2,)]
+
+
+def test_finalize_geometry_cleans_edges_split_by_rounding():
+    conn = duckdb.connect()
+    conn.execute("LOAD spatial")
+    # Rounding moves fid 1's apex onto the shared edge, noding only fid 1's copy.
+    conn.execute("""
+        CREATE TABLE t AS SELECT * FROM (VALUES
+            (1, ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0.5 3e-10, 0 1, 0 0))')),
+            (2, ST_GeomFromText('POLYGON((0 0, 0 -1, 1 -1, 1 0, 0 0))'))
+        ) v(fid, geom)
+    """)
+    assert not has_invalid_edges(conn, "t")
+    finalize_geometry(conn, "t", validate="coverage")
+    assert not has_invalid_edges(conn, "t")
+    assert conn.execute("SELECT sum(ST_Area(geom)) FROM t").fetchall()[0][0] == (
+        pytest.approx(1.5)
+    )

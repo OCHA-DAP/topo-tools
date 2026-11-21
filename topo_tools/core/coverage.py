@@ -1556,7 +1556,9 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
             CREATE OR REPLACE TEMP VIEW "{target}" AS
             SELECT * FROM "{table}" WHERE {where}
         """)
-    check_invalid_edges(conn, target)
+    if has_invalid_edges(conn, target):
+        _clean_rounded(conn, table, where)
+        check_invalid_edges(conn, target)
     if gaps_table is not None:
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE "{gaps_table}" AS
@@ -1571,6 +1573,60 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
             gaps_table=gaps_table,
         )
     check_micro_polygons(conn, target)
+
+
+def _clean_rounded(conn: DuckDBPyConnection, table: str, where: str | None) -> None:
+    """Coverage-clean `table`'s `where` rows if each moves at most a grid step.
+
+    Rounding each row alone can split a shared edge; a larger move is a real defect.
+    """
+    tmp = f"{table}_round_tmp1"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{tmp}" AS
+        WITH sel AS (
+            SELECT rowid AS rid, geom, row_number() OVER (ORDER BY rowid) AS rn
+            FROM "{table}" WHERE {where or "TRUE"}
+        ),
+        coll AS (
+            SELECT ST_CoverageClean(list(geom ORDER BY rn), {SNAP_TOLERANCE}, 0) AS g
+            FROM sel
+        ),
+        dumped AS (
+            SELECT (d).path[1] AS rn, (d).geom AS sub
+            FROM (SELECT UNNEST(ST_Dump(g)) AS d FROM coll)
+        ),
+        parts AS (
+            SELECT rn,
+                   CASE WHEN count(*) = 1 THEN any_value(sub)
+                        ELSE ST_Collect(list(sub)) END AS geom
+            FROM dumped GROUP BY rn
+        )
+        SELECT sel.rid, ST_Area(sel.geom) AS area, ST_Perimeter(sel.geom) AS perimeter,
+               parts.geom AS new
+        FROM sel LEFT JOIN parts USING (rn)
+    """)
+    moved = conn.execute(f"""--sql
+        SELECT count(*) FROM "{tmp}"
+        WHERE new IS NULL
+           OR abs(ST_Area(new) - area) > 2 * {GRID_RESOLUTION} * perimeter
+    """).fetchall()[0][0]
+    if not moved:
+        logger.warning("rounding split shared edges in %s; coverage-cleaned it", table)
+        conn.execute(f"""--sql
+            UPDATE "{table}" SET geom = _rc.new FROM "{tmp}" _rc
+            WHERE "{table}".rowid = _rc.rid
+        """)
+        scale = round(1 / GRID_RESOLUTION)
+        off_grid = conn.execute(f"""--sql
+            SELECT count(*) FROM (
+                SELECT UNNEST(ST_Dump(ST_Points(new))).geom AS p FROM "{tmp}"
+            )
+            WHERE round(ST_X(p) * {scale}) / {scale} != ST_X(p)
+               OR round(ST_Y(p) * {scale}) / {scale} != ST_Y(p)
+        """).fetchall()[0][0]
+        if off_grid:
+            logger.info("%d vertex(es) in %s are off the output grid", off_grid, table)
+    conn.execute(f'DROP TABLE "{tmp}"')
 
 
 def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, not decomposable)
