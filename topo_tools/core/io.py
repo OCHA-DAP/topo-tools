@@ -176,11 +176,20 @@ def reproject_select_sql(
     # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged;
     # one already in CRS skips the transform, which roughly doubles peak memory.
     reproject = geom_type not in ("GEOMETRY", f"GEOMETRY('{CRS}')")
-    geom_expr = (
-        "ST_Force2D(ST_MakeValid(ST_Transform("
-        f"ST_MakeValid(\"{geom_col}\"), '{CRS}', true)))"
+    valid = (
+        f"ST_MakeValid(ST_Transform(ST_MakeValid(\"{geom_col}\"), '{CRS}', true))"
         if reproject
-        else f"ST_SetCRS(ST_Force2D(ST_MakeValid(\"{geom_col}\")), '{CRS}')"
+        else f'ST_MakeValid("{geom_col}")'
+    )
+    # ST_MakeValid can collapse a polygon sliver to a line; keep polygonal parts.
+    valid = (
+        f'CASE WHEN ST_Dimension("{geom_col}") = 2 '
+        f"THEN ST_CollectionExtract({valid}, 3) ELSE {valid} END"
+    )
+    geom_expr = (
+        f"ST_Force2D({valid})"
+        if reproject
+        else f"ST_SetCRS(ST_Force2D({valid}), '{CRS}')"
     )
     if not make_valid:
         geom_expr = (

@@ -142,6 +142,18 @@ def test_read_and_reproject_repairs_geometry_broken_by_reprojection(tmp_path):
         ).fetchone()[0]
 
 
+def test_read_and_reproject_drops_line_parts_left_by_make_valid(tmp_path):
+    path = tmp_path / "spike.parquet"
+    spike = "POLYGON((0 0, 2 0, 2 1, 3 1, 2 1, 2 2, 0 2, 0 0))"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"COPY (SELECT ST_GeomFromText('{spike}') AS geom) TO '{path}'")
+        read_and_reproject(conn, "out", path)
+        assert conn.execute(
+            'SELECT ST_GeometryType(geom), ST_Area(geom) FROM "out_01"'
+        ).fetchall() == [("MULTIPOLYGON", 4.0)]
+
+
 def test_read_and_reproject_raises_on_zero_rows(tmp_path):
     path = tmp_path / "empty.gpkg"
     with duckdb.connect() as conn:
