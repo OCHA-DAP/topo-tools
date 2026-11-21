@@ -31,6 +31,8 @@ Neither layer gained an invalid or empty geometry or lost a vertex.
   (invalid edges, gaps up to `gap_maximum_width` unless `None`,
   micro-polygons), `issues` (`invalid-edge` rows under `--no-clean`), or
   `none`.
+- A row whose geometry rounding empties (under about 1e-9 wide or long, a
+  digitization artifact) is dropped, never written as an empty geometry.
 - Every outputs stage calls it on its final table(s) before any check, issue
   row or export; `export_issues_table()` calls it with `none`. Internal
   tables, including `package`'s cleaned intermediate, are not rounded.

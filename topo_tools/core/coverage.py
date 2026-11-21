@@ -1442,13 +1442,21 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
     where: str | None = None,
     issues_table: str | None = None,
 ) -> None:
-    """Round `table.geom` to GRID_RESOLUTION in place, then validate rows in `where`.
+    """Round `table.geom` to GRID_RESOLUTION, drop rows it empties, then validate.
 
     `coverage` raises on a defect, `issues` writes invalid-edge rows instead.
     """
+    conn.execute(f'ALTER TABLE "{table}" ADD COLUMN _was_empty BOOLEAN')
     conn.execute(f"""--sql
-        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION}),
+                             _was_empty = ST_IsEmpty(geom)
     """)
+    dropped = conn.execute(f"""--sql
+        DELETE FROM "{table}" WHERE ST_IsEmpty(geom) AND NOT _was_empty
+    """).fetchall()[0][0]
+    conn.execute(f'ALTER TABLE "{table}" DROP COLUMN _was_empty')
+    if dropped:
+        logger.info("dropped %d row(s) narrower than the output grid", dropped)
     if validate == "none":
         return
     if validate == "issues":

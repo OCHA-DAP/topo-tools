@@ -121,9 +121,9 @@ in sync.
 ## Output precision
 
 - Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
-  rounded once by `finalize_geometry()` as the last geometry change, and any
-  topology validation MUST run on the rounded result. Internal tables MUST NOT
-  be rounded.
+  rounded once by `finalize_geometry()` as the last geometry change. A row
+  that rounding empties MUST be dropped, any topology validation MUST run on
+  the rounded result, and internal tables MUST NOT be rounded.
 
 ## CSV outputs
 

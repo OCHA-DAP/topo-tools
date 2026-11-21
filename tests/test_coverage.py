@@ -1058,3 +1058,15 @@ def test_finalize_geometry_skips_gap_check_without_width():
     finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=None)
     with pytest.raises(RuntimeError, match="GAPS"):
         finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=1)
+
+
+def test_finalize_geometry_drops_rows_rounding_empties():
+    conn = _off_grid_square()
+    thin = "POLYGON((5 5, 6 5, 6 5.0000000004, 5 5.0000000004, 5 5))"
+    conn.execute(f"""
+        INSERT INTO t VALUES (2, ST_GeomFromText('{thin}')), (3, NULL),
+        (4, ST_GeomFromText('POLYGON EMPTY'))
+    """)
+    finalize_geometry(conn, "t", validate="none")
+    kept = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
+    assert kept == [(1,), (3,), (4,)]
