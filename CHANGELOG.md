@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-21
+
+### Changed
+
+- Every tool rounds its output geometry to a 1e-9° grid (Esri FileGDB's
+  default XY resolution) and runs its topology checks on the rounded
+  result. Polygon rings may start at a different vertex or run in the
+  other direction than in the input.
+- Every tool drops output rows with empty geometry, logging a warning.
+  `edge-match`, `edge-mosaic`, `topo-clean`, `schema-join` and
+  `package-polygons` also report each one as an `empty-geometry` issue row
+  for review.
+- `topo-clean` removes a unit that another unit fully covers; its overlap
+  row reads `unit N removed` and is marked unfixed.
+
+### Fixed
+
+- `topo-clean` checks for unfilled gaps when `--step clean` and
+  `--step outputs` run separately.
+
 ## [0.24.2] - 2026-11-20
 
 ### Fixed
@@ -1118,7 +1138,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.2...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.2...v0.25.0
 [0.24.2]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.23.0...v0.24.0
