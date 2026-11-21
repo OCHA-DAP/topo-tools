@@ -16,7 +16,7 @@ def _build_issues(conn: DuckDBPyConnection, name: str) -> None:
     table = f"{name}_02"
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03" AS
-        {gap_issues_sql(conn, table, coverage=True)}
+        {gap_issues_sql(conn, table, gaps_table=f"{name}_03_tmp1")}
     """)
 
 
@@ -29,9 +29,12 @@ def main(
     debug: bool = False,
 ) -> None:
     """Output the dissolved layer + issues report to dest/issues_dest."""
-    finalize_geometry(conn, f"{name}_02", validate="coverage")
+    finalize_geometry(
+        conn, f"{name}_02", validate="coverage", gaps_table=f"{name}_03_tmp1"
+    )
 
     _build_issues(conn, name)
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp1"')
 
     remaining = conn.execute(f"""--sql
         SELECT COUNT(*) FROM "{name}_03" WHERE kind = 'gap'

@@ -20,7 +20,7 @@ logger = getLogger(__name__)
 _NO_ROWS_SQL = "SELECT NULL::VARCHAR AS key WHERE FALSE"
 
 
-def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
+def _add_outcome_columns(conn: DuckDBPyConnection, name: str, gaps: str) -> None:
     """Extend `{name}_02` with what actually happened to each issue during the fix.
 
     An overlap row is fixed unless a unit lost all its area; a gap or notch row is
@@ -40,7 +40,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     open_gaps = f"{name}_04_tmp2"
     conn.execute(
         f'CREATE OR REPLACE TABLE "{open_gaps}" AS '
-        f"SELECT * FROM ({gap_issues_sql(conn, f'{name}_03', coverage=True)})"
+        f"SELECT * FROM ({gap_issues_sql(conn, f'{name}_03', gaps_table=gaps)})"
     )
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02" AS
@@ -160,8 +160,16 @@ def main(
 ) -> None:
     """Validate `{name}_03`, gaps up to the width filled, and export it + issues."""
     width = conn.execute(f'SELECT width FROM "{name}_03_width"').fetchall()[0][0]
-    finalize_geometry(conn, f"{name}_03", validate="coverage", gap_maximum_width=width)
-    _add_outcome_columns(conn, name)
+    gaps = f"{name}_04_tmp3"
+    finalize_geometry(
+        conn,
+        f"{name}_03",
+        validate="coverage",
+        gap_maximum_width=width,
+        gaps_table=gaps,
+    )
+    _add_outcome_columns(conn, name, gaps)
+    conn.execute(f'DROP TABLE IF EXISTS "{gaps}"')
     _warn_on_unfilled_gaps(conn, name)
 
     export_geometry_table(conn, f"{name}_03", dest)
