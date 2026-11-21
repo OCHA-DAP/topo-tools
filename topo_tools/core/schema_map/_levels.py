@@ -29,7 +29,6 @@ def detect_levels(
     prefix = level_prefix(schema)
     pattern = re.compile(rf"^{re.escape(prefix)}(\d+)")
     found = sorted({int(m.group(1)) for c in columns if (m := pattern.match(c))})
-    found = [n for n in found if n >= 1]
     if not found:
         msg = f"no {prefix!r}-prefixed level column found in {table}"
         raise ValueError(msg)
@@ -49,4 +48,7 @@ def detect_levels(
     levels = list(range(1, max_level + 1))
     if schema.code_field.format(n=0) in columns:
         levels.insert(0, 0)
+    if not levels:
+        msg = f"missing code column for level 0: {schema.code_field.format(n=0)}"
+        raise ValueError(msg)
     return levels
