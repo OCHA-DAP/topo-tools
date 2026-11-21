@@ -103,8 +103,9 @@ def test_clean_full_run(synthetic_input, tmp_path):
                 f"SELECT DISTINCT kind FROM '{issues_path}'"
             ).fetchall()
         }
-    assert row_count == len(_SYNTHETIC_WKT)
-    assert kinds == {"gap", "overlap", "sliver-gap"}
+    # fid 8 lies fully inside fid 7, so the fix removes it.
+    assert row_count == len(_SYNTHETIC_WKT) - 1
+    assert kinds == {"gap", "overlap", "sliver-gap", "empty-geometry"}
 
 
 def test_clean_closes_notch(tmp_path):
@@ -135,8 +136,8 @@ def test_clean_issues_report_overlap_outcome(synthetic_input, tmp_path):
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        a_change, b_change, fixed = conn.execute(f"""
-            SELECT unit_a_area_change_m2, unit_b_area_change_m2, fixed
+        a_change, b_change, fixed, reason = conn.execute(f"""
+            SELECT unit_a_area_change_m2, unit_b_area_change_m2, fixed, reason
             FROM '{issues_path}'
             WHERE kind = 'overlap'
               AND ST_Within(geometry, ST_MakeEnvelope(30, 0, 32, 2))
@@ -146,7 +147,8 @@ def test_clean_issues_report_overlap_outcome(synthetic_input, tmp_path):
     swallowed, untouched = sorted([a_change, b_change])
     assert swallowed < clearly_lost_a_lot_m2
     assert untouched == pytest.approx(0.0)
-    assert fixed is True
+    assert fixed is False
+    assert reason == "unit 8 removed, fully covered by unit 7"
 
 
 @pytest.mark.parametrize("with_overlap", [False, True])
@@ -488,6 +490,7 @@ def test_partly_filled_gap_is_not_fixed(tmp_path):
             VALUES ('gap-1', 'gap', ST_MakeEnvelope(1, 1, 2, 2))
         """)
         conn.execute("CREATE TABLE stage_03_micro AS FROM stage_02 WHERE FALSE")
+        conn.execute("CREATE TABLE stage_03_width AS SELECT NULL::DOUBLE AS width")
         issues_path = tmp_path / "issues.parquet"
         outputs_stage.main(conn, "stage", tmp_path / "out.parquet", issues_path)
         rows = conn.execute(f"SELECT key, fixed FROM '{issues_path}'").fetchall()
@@ -508,6 +511,7 @@ def test_notch_fixed_matches_location_not_just_unit_pair(tmp_path):
             ('notch-2', 'notch', 1, 2, ST_MakeEnvelope(0.01, -0.01, 0.011, -0.009))
         """)
         conn.execute("CREATE TABLE stage_03_micro AS FROM stage_02 WHERE FALSE")
+        conn.execute("CREATE TABLE stage_03_width AS SELECT NULL::DOUBLE AS width")
         issues_path = tmp_path / "issues.parquet"
         outputs_stage.main(conn, "stage", tmp_path / "out.parquet", issues_path)
         rows = conn.execute(
@@ -581,7 +585,7 @@ def test_clean_rejects_eroded_output(monkeypatch):
 
     with (
         _overlapping_pair_conn() as conn,
-        pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"),
+        pytest.raises(RuntimeError, match="invalid or collapsed"),
     ):
         clean_stage.main(
             conn,
@@ -620,7 +624,7 @@ def test_clean_rejects_collapsed_fid(monkeypatch):
     """)
     conn.execute(_empty_issues_table_sql("stage_02"))
 
-    with conn, pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"):
+    with conn, pytest.raises(RuntimeError, match="invalid or collapsed"):
         clean_stage.main(
             conn,
             "stage",
@@ -663,7 +667,7 @@ def test_clean_rejects_bad_geometry_type(monkeypatch):
     """)
     conn.execute(_empty_issues_table_sql("stage_02"))
 
-    with conn, pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"):
+    with conn, pytest.raises(RuntimeError, match="invalid or collapsed"):
         clean_stage.main(
             conn,
             "stage",
@@ -804,3 +808,60 @@ def test_clean_steps(synthetic_input, tmp_path):
         )
     assert output_path.exists()
     assert issues_path.exists()
+
+
+def test_clean_steps_raise_on_gap_left_within_fill_width(monkeypatch, tmp_path):
+    """A gap at or below the filled width fails outputs, even run as its own step."""
+    input_path = tmp_path / "donut.parquet"
+    values = ", ".join(f"({f}, ST_GeomFromText('{w}'))" for f, w in _SYNTHETIC_WKT[:4])
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{input_path}'"
+        )
+
+    def leaves_gap(conn, table_in, table_out, **_kwargs):
+        conn.execute(f'CREATE OR REPLACE TABLE "{table_out}" AS FROM "{table_in}"')
+
+    monkeypatch.setattr(clean_stage, "coverage_clean", leaves_gap)
+    work_dir = tmp_path / "work"
+    for step in _STEPS[:-1]:
+        clean(
+            input_path,
+            tmp_path / "out.parquet",
+            tmp_dir=work_dir,
+            step=step,
+            maximum_gap_width="2",
+        )
+    with pytest.raises(RuntimeError, match="GAPS"):
+        clean(
+            input_path,
+            tmp_path / "out.parquet",
+            tmp_dir=work_dir,
+            step=_STEPS[-1],
+            maximum_gap_width="2",
+        )
+
+
+def test_clean_removed_micro_unit_names_no_covering_unit(tmp_path):
+    """A unit removed as a micro-polygon isn't reported as covered by its overlap."""
+    w = 3e-9
+    rows = [
+        (1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        (2, f"POLYGON(({1 + w} 0, 2 0, 2 1, {1 + w} 1, {1 + w} 0))"),
+        (3, f"POLYGON(({1 - w} 0, {1 + w} 0, {1 + w} 1, {1 - w} 1, {1 - w} 0))"),
+    ]
+    input_path = tmp_path / "micro.parquet"
+    values = ", ".join(f"({f}, ST_GeomFromText('{g}'))" for f, g in rows)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{input_path}'"
+        )
+    issues_path = tmp_path / "issues.parquet"
+    clean(input_path, tmp_path / "out.parquet", issues_path, overwrite=True)
+    with duckdb.connect() as conn:
+        reasons = conn.execute(
+            f"SELECT reason FROM '{issues_path}' WHERE kind = 'overlap'"
+        ).fetchall()
+    assert reasons == [("unit 3 removed",)]

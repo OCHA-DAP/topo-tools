@@ -7,8 +7,8 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
-    check_valid_topology,
-    invalid_edge_issues,
+    empty_issues_sql,
+    finalize_geometry,
     merge_micro_polygons,
     micro_issues_sql,
     short_source_file_sql,
@@ -88,6 +88,8 @@ def _build_issues(  # noqa: PLR0913
     )
     if micro := micro_issues_sql(conn, table, source_file_expr=short_source_file):
         parts.append(micro)
+    if empty := empty_issues_sql(conn, table, source_file_expr=short_source_file):
+        parts.append(empty)
     if code_join:
         parts.append(
             assign_issue_rows_sql(
@@ -122,15 +124,17 @@ def main(  # noqa: PLR0913
         name, passthrough=passthrough, passthrough_fids=passthrough_fids
     )
     if clean:
-        conn.execute(f"""--sql
-            CREATE OR REPLACE TEMP VIEW "{table}_coverage" AS
-            SELECT * FROM "{table}" WHERE {where}
-        """)
-        check_valid_topology(conn, f"{table}_coverage")
+        finalize_geometry(conn, table, validate="coverage", where=where)
     else:
         logger.warning("mosaic: output is not coverage-cleaned, seams may remain")
         merge_micro_polygons(conn, table, table, issues_table=f"{table}_micro")
-        invalid_edge_issues(conn, table, f"{name}_03_invalid", where=where)
+        finalize_geometry(
+            conn,
+            table,
+            validate="issues",
+            where=where,
+            issues_table=f"{name}_03_invalid",
+        )
 
     _build_issues(
         conn,
@@ -162,5 +166,6 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_cover"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_empty"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_invalid"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')

@@ -98,15 +98,19 @@ def _load_plan(  # noqa: PLR0913, PLR0917
     table = f"{name}_01"
     if schema is not None:
         levels = detect_levels(conn, table, schema)
+        keys = {n: (schema.code_field.format(n=n),) for n in levels}
     else:
-        levels = sorted(detect_levels_with_root(conn, table))
+        level_columns = detect_levels_with_root(conn, table)
+        levels = sorted(level_columns)
+        keys = {n: tuple(level_columns[n].group_by) for n in levels}
     if min_level is not None:
         levels = [n for n in levels if n >= min_level]
         if not levels:
             msg = f"no admin level at or above min_level {min_level}"
             raise ValueError(msg)
+        keys = {n: keys[n] for n in levels}
     plan = _plan_levels(
-        name, input_path, output_path, issues_path, levels, overwrite=overwrite
+        name, input_path, output_path, issues_path, keys, overwrite=overwrite
     )
     return schema, levels, plan
 
@@ -116,14 +120,14 @@ def _plan_levels(  # noqa: PLR0913
     input_path: Path | str,
     output_path: str | Path | None,
     issues_path: str | Path | None,
-    levels: list[int],
+    keys: dict[int, tuple[str, ...]],
     *,
     overwrite: bool,
 ) -> list[LevelOutput]:
     """Resolve every level's output/issues paths, checking overwrite up front."""
-    finest = max(levels)
+    finest = max(keys)
     items = []
-    for n in levels:
+    for n in sorted(keys):
         dest = _resolve_level_dest(output_path, input_path, n)
         if n == finest and isinstance(input_path, Path) and dest == input_path:
             items.append(
@@ -136,7 +140,13 @@ def _plan_levels(  # noqa: PLR0913
         check_overwrite(issues_dest, overwrite=overwrite)
         table = f"{name}_01" if n == finest else f"{name}_02_{n}"
         items.append(
-            LevelOutput(level=n, table=table, dest=dest, issues_dest=issues_dest)
+            LevelOutput(
+                level=n,
+                table=table,
+                dest=dest,
+                issues_dest=issues_dest,
+                key_columns=keys[n],
+            )
         )
     return items
 

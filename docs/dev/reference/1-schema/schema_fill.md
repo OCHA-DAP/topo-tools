@@ -50,8 +50,9 @@ sidebar:
 
 ## Outputs
 
-- `schema-fill` performs no topology hard gate at all; it only fills
-  attribute columns and stamps a depth column, never touching geometry.
+- `schema-fill` performs no topology check at all; it only fills
+  attribute columns and stamps a depth column, rounding geometry to the
+  output grid and changing it in no other way.
 - `schema-fill` MUST export the filled layer to a single output file.
 
 ## Configuration (`api.schema_fill.fill()` / CLI)

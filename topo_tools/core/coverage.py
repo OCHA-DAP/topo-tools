@@ -2,6 +2,7 @@
 
 import threading
 from logging import getLogger
+from typing import Literal
 
 from duckdb import DuckDBPyConnection, InterruptException
 
@@ -10,6 +11,7 @@ from topo_tools.core.constants import (
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
+    GRID_RESOLUTION,
     INVALID_EDGE_BATCH_SECONDS,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
@@ -1429,6 +1431,109 @@ def check_valid_topology(
     check_invalid_edges(conn, table)
     check_gaps(conn, table, gap_maximum_width=gap_maximum_width, coverage=True)
     check_micro_polygons(conn, table)
+
+
+def _round_and_drop_empty(
+    conn: DuckDBPyConnection, table: str, label_columns: tuple[str, ...] = ()
+) -> None:
+    """Round `table.geom`, moving rows left empty to `{table}_empty` as issue rows."""
+    columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
+    fid = "fid" if "fid" in columns else "NULL::BIGINT"
+    overlay = "overlay_fid" if "overlay_fid" in columns else "NULL::BIGINT"
+    source = "source_file" if "source_file" in columns else "NULL::VARCHAR"
+    label = " || ', ' || ".join(
+        f"""'{c}=' || coalesce("{c}"::VARCHAR, 'NULL')""" for c in label_columns
+    )
+    label = f" || ' (' || {label} || ')'" if label else ""
+
+    def move_empty(reason: str) -> int:
+        conn.execute(f"""--sql
+            INSERT INTO "{table}_empty" BY NAME
+            SELECT 'empty-geometry' AS kind, {fid} AS unit_a,
+                   {overlay} AS overlay_fid, '{reason}'{label} AS reason,
+                   FALSE AS fixed, {source} AS source_file, geom
+            FROM "{table}" WHERE ST_IsEmpty(geom)
+        """)
+        return conn.execute(f"""--sql
+            DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
+        """).fetchall()[0][0]
+
+    conn.execute(f"""--sql
+        CREATE TABLE "{table}_empty" (
+            key VARCHAR, kind VARCHAR, unit_a BIGINT, overlay_fid BIGINT,
+            reason VARCHAR, fixed BOOLEAN, source_file VARCHAR, geom GEOMETRY
+        )
+    """)
+    dropped = move_empty("empty before rounding to the output grid")
+    conn.execute(f"""--sql
+        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+    """)
+    dropped += move_empty("narrower than the 1e-9 output grid")
+    if dropped:
+        logger.warning("dropped %d row(s) with empty geometry from %s", dropped, table)
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{table}_empty" AS
+            SELECT * REPLACE (
+                'empty-geometry-' || row_number() OVER (ORDER BY unit_a) AS key
+            ) FROM "{table}_empty"
+        """)
+    else:
+        conn.execute(f'DROP TABLE "{table}_empty"')
+
+
+def empty_issues_sql(
+    conn: DuckDBPyConnection, table: str, *, source_file_expr: str = "source_file"
+) -> str | None:
+    """Return a SELECT over `{table}_empty`'s dropped rows, or None if absent."""
+    exists = conn.execute(
+        "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [f"{table}_empty"]
+    ).fetchone()[0]
+    if not exists:
+        return None
+    return f'SELECT * REPLACE ({source_file_expr} AS source_file) FROM "{table}_empty"'
+
+
+def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input)
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    validate: Literal["coverage", "issues", "none"],
+    gap_maximum_width: float | None = SNAP_TOLERANCE,
+    where: str | None = None,
+    issues_table: str | None = None,
+    drop_empty: bool = True,
+    label_columns: tuple[str, ...] = (),
+) -> None:
+    """Round `table.geom` to the grid, move empty rows to `{table}_empty`, validate.
+
+    `coverage` raises on a defect, `issues` writes invalid-edge rows instead.
+    """
+    conn.execute(f'DROP TABLE IF EXISTS "{table}_empty"')
+    if not drop_empty:
+        conn.execute(f"""--sql
+            UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+        """)
+    else:
+        _round_and_drop_empty(conn, table, label_columns)
+    if validate == "none":
+        return
+    if validate == "issues":
+        if issues_table is None:
+            msg = "finalize_geometry: validate='issues' needs issues_table"
+            raise ValueError(msg)
+        invalid_edge_issues(conn, table, issues_table, where=where or "TRUE")
+        return
+    target = table
+    if where is not None:
+        target = f"{table}_coverage"
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TEMP VIEW "{target}" AS
+            SELECT * FROM "{table}" WHERE {where}
+        """)
+    check_invalid_edges(conn, target)
+    if gap_maximum_width is not None:
+        check_gaps(conn, target, gap_maximum_width=gap_maximum_width, coverage=True)
+    check_micro_polygons(conn, target)
 
 
 def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, not decomposable)

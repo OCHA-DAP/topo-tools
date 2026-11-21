@@ -8,9 +8,9 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import output_renames
 from topo_tools.core.coverage import (
-    check_valid_topology,
+    empty_issues_sql,
+    finalize_geometry,
     gap_issues_sql,
-    invalid_edge_issues,
 )
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
@@ -29,6 +29,7 @@ class LevelOutput:
     table: str
     dest: Path | None
     issues_dest: Path | None
+    key_columns: tuple[str, ...] = ()
 
 
 def _export_one(
@@ -42,14 +43,24 @@ def _export_one(
     issues_table = f"{name}_03_{item.level}"
     invalid_table = f"{issues_table}_invalid"
     if check_topology:
-        check_valid_topology(conn, item.table)
+        finalize_geometry(
+            conn, item.table, validate="coverage", label_columns=item.key_columns
+        )
         parts = [gap_issues_sql(conn, item.table, coverage=True)]
     else:
         # Gaps need a union, which fails on unmatched edges, like edge-mosaic's.
-        invalid_edge_issues(conn, item.table, invalid_table)
+        finalize_geometry(
+            conn,
+            item.table,
+            validate="issues",
+            issues_table=invalid_table,
+            label_columns=item.key_columns,
+        )
         parts = [f'SELECT * FROM "{invalid_table}"']
     if item.table == f"{name}_01":
         parts.append(f'SELECT * FROM "{name}_01_micro"')
+    if empty := empty_issues_sql(conn, item.table):
+        parts.append(empty)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{issues_table}" AS
         {" UNION ALL BY NAME ".join(parts)}
@@ -101,3 +112,5 @@ def main(  # noqa: PLR0913
                 conn.execute(f'DROP TABLE IF EXISTS "{item.table}"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_01_micro"')
+        for item in items:
+            conn.execute(f'DROP TABLE IF EXISTS "{item.table}_empty"')

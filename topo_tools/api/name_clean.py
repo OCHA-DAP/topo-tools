@@ -3,6 +3,7 @@
 from logging import getLogger
 from pathlib import Path
 
+from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.duckdb_utils import (
     maybe_export_debug_tables,
     pipeline_connection,
@@ -110,6 +111,7 @@ def clean(  # noqa: PLR0913
                 create_macros(conn)
                 fix.main(conn, name)
             elif s == "outputs":
+                finalize_geometry(conn, f"{name}_01", validate="none")
                 export_geometry_table(conn, f"{name}_01", output_path)
                 outputs.main(
                     conn, name, issues_path, fixed=fix.fixed_sql(), debug=debug

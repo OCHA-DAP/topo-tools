@@ -7,8 +7,9 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import GEOMETRY_TYPE
 from topo_tools.core.coverage import (
-    check_invalid_edges,
     detect_notches,
+    empty_issues_sql,
+    finalize_geometry,
     gap_issues_sql,
 )
 from topo_tools.core.duckdb_utils import bbox_columns_sql
@@ -16,15 +17,17 @@ from topo_tools.core.io import export_geometry_table, export_issues_table
 from topo_tools.core.units import m2_per_deg2_factor
 
 logger = getLogger(__name__)
+_NO_ROWS_SQL = "SELECT NULL::VARCHAR AS key WHERE FALSE"
 
 
 def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     """Extend `{name}_02` with what actually happened to each issue during the fix.
 
-    `fixed` is TRUE for every overlap row; a gap or notch row is fixed when no
-    defect of its kind left in `{name}_03` overlaps it. A new gap gets a row.
+    An overlap row is fixed unless a unit lost all its area; a gap or notch row is
+    fixed when no defect of its kind left in `{name}_03` overlaps it.
     """
     m2_per_deg2 = m2_per_deg2_factor(conn, f"{name}_01")
+    empty_sql = empty_issues_sql(conn, f"{name}_03") or _NO_ROWS_SQL
     remaining = f"{name}_04_tmp1"
     conn.execute(
         f'CREATE OR REPLACE TABLE "{remaining}" '
@@ -42,7 +45,10 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02" AS
         WITH before AS (SELECT fid, ST_Area(geom) AS area FROM "{name}_01"),
-             after AS (SELECT fid, ST_Area(geom) AS area FROM "{name}_03"),
+             after AS (
+                 SELECT b.fid, coalesce(ST_Area(a.geom), 0) AS area
+                 FROM before b LEFT JOIN "{name}_03" a USING (fid)
+             ),
              fixed_bbox AS (
                  SELECT geom, {bbox_columns_sql("geom")} FROM "{name}_03"
              ),
@@ -87,9 +93,20 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                  THEN i.key NOT IN (SELECT issue_key FROM gap_hits)
                  WHEN i.kind = 'notch'
                  THEN i.key NOT IN (SELECT key FROM notch_hits)
+                 WHEN i.kind = 'overlap'
+                 THEN after_a.area > 0 AND after_b.area > 0
                  ELSE TRUE
             END AS fixed,
-            NULL::BIGINT AS overlay_fid, NULL::VARCHAR AS reason,
+            NULL::BIGINT AS overlay_fid,
+            CASE WHEN i.kind = 'overlap' AND after_b.area = 0
+                 THEN 'unit ' || i.unit_b || ' removed' || CASE
+                      WHEN ST_Covers(geom_a.geom, geom_b.geom)
+                      THEN ', fully covered by unit ' || i.unit_a ELSE '' END
+                 WHEN i.kind = 'overlap' AND after_a.area = 0
+                 THEN 'unit ' || i.unit_a || ' removed' || CASE
+                      WHEN ST_Covers(geom_b.geom, geom_a.geom)
+                      THEN ', fully covered by unit ' || i.unit_b ELSE '' END
+            END AS reason,
             NULL::VARCHAR AS source_file,
             i.geom
         FROM "{name}_02" i
@@ -98,9 +115,13 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
         LEFT JOIN before before_b ON before_b.fid = i.unit_b
         LEFT JOIN after after_b ON after_b.fid = i.unit_b
         LEFT JOIN gap_union gu ON gu.key = i.key
+        LEFT JOIN "{name}_01" geom_a ON geom_a.fid = i.unit_a
+        LEFT JOIN "{name}_01" geom_b ON geom_b.fid = i.unit_b
         WHERE i.kind != 'micro-polygon'
         UNION ALL BY NAME
         SELECT * FROM "{name}_03_micro"
+        UNION ALL BY NAME
+        {empty_sql}
         UNION ALL BY NAME
         SELECT * REPLACE (
             'gap-new-' || row_number() OVER (ORDER BY hash(geom)) AS key,
@@ -136,8 +157,9 @@ def main(
     *,
     debug: bool = False,
 ) -> None:
-    """Validate `{name}_03` and export the cleaned dataset + issues report."""
-    check_invalid_edges(conn, f"{name}_03")
+    """Validate `{name}_03`, gaps up to the width filled, and export it + issues."""
+    width = conn.execute(f'SELECT width FROM "{name}_03_width"').fetchall()[0][0]
+    finalize_geometry(conn, f"{name}_03", validate="coverage", gap_maximum_width=width)
     _add_outcome_columns(conn, name)
     _warn_on_unfilled_gaps(conn, name)
 
@@ -149,3 +171,5 @@ def main(
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_width"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_empty"')

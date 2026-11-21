@@ -118,6 +118,17 @@ in sync.
   signalled by omitting the `geo` metadata's `crs` key. Shapefile,
   GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
 
+## Output precision
+
+- Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
+  rounded once by `finalize_geometry()` as the last geometry change. A row
+  with empty geometry MUST be dropped with a logged warning, and reported as
+  a `kind='empty-geometry'` row, `fixed` FALSE, by every tool whose issues
+  report uses the shared schema (`schema-join` leaves its `unit_a` null,
+  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows. Any
+  topology validation MUST run on the rounded result, and internal tables
+  MUST NOT be rounded.
+
 ## CSV outputs
 
 - Every CSV a tool writes (`schema-map`'s crosswalk, `change`'s changelog,
@@ -191,9 +202,9 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
 - `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  never modify geometry. `change` applies it only through its auto-cleaned
-  inputs; its overlay drops intersections below `SNAP_TOLERANCE` squared
-  instead.
+  change geometry only by rounding it to the output grid. `change` applies
+  it only through its auto-cleaned inputs; its overlay drops intersections
+  below `SNAP_TOLERANCE` squared instead.
 
 ## Sliver gaps
 

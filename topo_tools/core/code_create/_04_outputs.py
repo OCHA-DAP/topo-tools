@@ -6,6 +6,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.code import TABLE_COPY_OPTS, CodeFormat
 from topo_tools.core.code_create._02_levels import Level
+from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.io import add_csv_bom, export_geometry_table
 
 
@@ -22,6 +23,7 @@ def main(  # noqa: PLR0913
     debug: bool = False,
 ) -> None:
     """Export table to dest; write an overflow report to issues_dest if given."""
+    finalize_geometry(conn, table, validate="none")
     export_geometry_table(conn, table, dest)
 
     if issues_dest is not None:

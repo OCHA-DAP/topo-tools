@@ -4,7 +4,11 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.coverage import short_source_file_sql
+from topo_tools.core.coverage import (
+    empty_issues_sql,
+    finalize_geometry,
+    short_source_file_sql,
+)
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 _ISSUE_COLUMNS = """
@@ -19,6 +23,14 @@ _ISSUE_COLUMNS = """
 def _build_issues(conn: DuckDBPyConnection, name: str, min_overlap: float) -> None:
     """Build `{name}_04`: no-overlap, low-overlap, and value-mismatch rows."""
     source_file = short_source_file_sql("c.source_file")
+    empty = ""
+    if sql := empty_issues_sql(
+        conn, f"{name}_03", source_file_expr=short_source_file_sql("source_file")
+    ):
+        # A dropped row has no output row, so the reason names its input fid.
+        empty = f"""UNION ALL BY NAME SELECT * EXCLUDE (overlay_fid) REPLACE (
+            NULL::BIGINT AS unit_a, reason || ' (input fid ' || unit_a || ')' AS reason
+        ) FROM ({sql})"""
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_04" AS
         SELECT 'no-overlap-' || o.out_fid AS key, 'no-overlap' AS kind,
@@ -51,6 +63,7 @@ def _build_issues(conn: DuckDBPyConnection, name: str, min_overlap: float) -> No
         FROM "{name}_03_mismatch" m
         JOIN "{name}_input_01" c ON c.fid = m.input_fid
         JOIN "{name}_03" o ON o.fid = c.fid
+        {empty}
         ORDER BY unit_a, kind
     """)
 
@@ -66,8 +79,14 @@ def main(  # noqa: PLR0913
 ) -> None:
     """Export `{name}_03` to dest and its issues to issues_dest.
 
-    No topology check: schema-join never modifies geometry.
+    No topology check: schema-join only rounds geometry to the output grid.
     """
+    finalize_geometry(conn, f"{name}_03", validate="none")
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{name}_03" AS
+        SELECT * REPLACE (row_number() OVER (ORDER BY out_fid) AS out_fid)
+        FROM "{name}_03"
+    """)
     _build_issues(conn, name, min_overlap)
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_03_export" AS
@@ -87,6 +106,7 @@ def main(  # noqa: PLR0913
             "02_share",
             "03",
             "03_mismatch",
+            "03_empty",
             "04",
         ):
             conn.execute(f'DROP TABLE IF EXISTS "{name}_{t}"')

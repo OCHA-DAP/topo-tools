@@ -26,7 +26,7 @@ _STEP_ORDER = ["inputs", "issues", "clean", "outputs"]
 _STEP_TABLES = {
     "inputs": ["{n}_01"],
     "issues": ["{n}_02"],
-    "clean": ["{n}_03"],
+    "clean": ["{n}_03", "{n}_03_width"],
     "outputs": [],
 }
 

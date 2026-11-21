@@ -3,6 +3,8 @@
 import re
 
 SNAP_TOLERANCE = 0.00000001
+# Final outputs snap to this grid, Esri FileGDB's default XY resolution.
+GRID_RESOLUTION = 0.000000001
 WORLD_BOUNDS_WKT = "POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))"
 # A clip-detached piece merges into a neighbour only below this fraction of its
 # own source part's kept piece; else it is reported.

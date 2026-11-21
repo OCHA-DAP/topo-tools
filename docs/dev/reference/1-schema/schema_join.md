@@ -55,8 +55,8 @@ overwrite any input value (see `docs/adr/0109`).
 
 ## Outputs
 
-- `schema-join` MUST NOT modify geometry, and so performs no topology
-  hard gate at all.
+- `schema-join` MUST change geometry only by rounding it to the output
+  grid, and performs no topology check.
 - The output MUST keep every input row, using `name_field`/`code_field`, or
   `adm{n}_name`/`adm{n}_code` when omitted. Columns MUST keep input order,
   each added numbered sibling right after the last existing column of its
@@ -75,7 +75,10 @@ overwrite any input value (see `docs/adr/0109`).
     outside that join polygon and `reason` stating the covered share;
   - `value-mismatch`: an input polygon and column where the input polygon's value and its
     join polygon's value are both non-NULL and differ, with `reason` naming the
-    column and both values.
+    column and both values;
+  - `empty-geometry`: an input polygon dropped because its rounded geometry
+    is empty, with `unit_a` null (it has no output row) and `reason` naming
+    its input fid.
 - `unit_a` MUST hold the input polygon's 1-based row number in the output file, not
   its input fid, since rows are re-sorted by code.
 - `schema-join` MUST NOT write an empty issues file, and MUST remove a
