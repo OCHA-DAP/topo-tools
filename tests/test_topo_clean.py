@@ -103,7 +103,8 @@ def test_clean_full_run(synthetic_input, tmp_path):
                 f"SELECT DISTINCT kind FROM '{issues_path}'"
             ).fetchall()
         }
-    assert row_count == len(_SYNTHETIC_WKT)
+    # fid 8 lies fully inside fid 7, so the fix removes it.
+    assert row_count == len(_SYNTHETIC_WKT) - 1
     assert kinds == {"gap", "overlap", "sliver-gap"}
 
 
@@ -135,8 +136,8 @@ def test_clean_issues_report_overlap_outcome(synthetic_input, tmp_path):
 
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        a_change, b_change, fixed = conn.execute(f"""
-            SELECT unit_a_area_change_m2, unit_b_area_change_m2, fixed
+        a_change, b_change, fixed, reason = conn.execute(f"""
+            SELECT unit_a_area_change_m2, unit_b_area_change_m2, fixed, reason
             FROM '{issues_path}'
             WHERE kind = 'overlap'
               AND ST_Within(geometry, ST_MakeEnvelope(30, 0, 32, 2))
@@ -146,7 +147,8 @@ def test_clean_issues_report_overlap_outcome(synthetic_input, tmp_path):
     swallowed, untouched = sorted([a_change, b_change])
     assert swallowed < clearly_lost_a_lot_m2
     assert untouched == pytest.approx(0.0)
-    assert fixed is True
+    assert fixed is False
+    assert reason == "unit 8 removed, fully covered by unit 7"
 
 
 @pytest.mark.parametrize("with_overlap", [False, True])

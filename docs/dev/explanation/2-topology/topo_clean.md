@@ -272,10 +272,12 @@ All four are computed by `_04_outputs.py`'s `_add_outcome_columns` from
 `{name}_01` and `{name}_03` after `_03_clean.py` has run, since that's the
 first point both the pre- and post-fix geometry are available together.
 For an overlap row, each `_area_change_m2` is that unit's own real area
-change (output minus input), and `fixed` is unconditionally `TRUE`:
-`check_invalid_edges(conn, f"{name}_03")` already gated the output as
-overlap-free before this runs, so any overlap row reaching the issues
-file was necessarily resolved. For a gap row, `filled_area_m2` is how much
+change (output minus input). `finalize_geometry()` has already checked the
+output as overlap-free and dropped every empty row before this runs, so an
+overlap row is resolved and `fixed` is TRUE, unless one of its units lost
+all its area: that unit is gone from the output, the row's `reason` reads
+`unit {n} removed, fully covered by unit {m}`, and `fixed` is FALSE so it
+gets reviewed. For a gap row, `filled_area_m2` is how much
 of the gap's own area ended up covered by the cleaned output (`0` if left
 unfilled by design), and `fixed` is TRUE only when no gap still open in
 `{name}_03` (`gap_issues_sql()`, wider than `SNAP_TOLERANCE`, the same

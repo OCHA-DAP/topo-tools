@@ -89,7 +89,9 @@ detection stage directly rather than owning separate logic (see
 - The issues report MUST also state each issue's actual measured outcome,
   not just the defect as originally detected: whether it was fixed (for a
   gap, no gap still open in the output overlaps it); for an overlap, how
-  much each of its two named units' own area actually changed; for a gap,
+  much each of its two named units' own area actually changed, with a unit
+  that lost all its area removed from the output and its row marked
+  unfixed with a `reason` naming the removed and covering units; for a gap,
   how much of the gap's own area ended up covered (zero if left unfilled).
   A gap open in the output that overlaps no detected gap MUST get its own
   unfixed `gap` row, so the unfixed gap rows match `topo-detect` on the

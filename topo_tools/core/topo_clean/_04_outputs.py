@@ -21,8 +21,8 @@ logger = getLogger(__name__)
 def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     """Extend `{name}_02` with what actually happened to each issue during the fix.
 
-    `fixed` is TRUE for every overlap row; a gap or notch row is fixed when no
-    defect of its kind left in `{name}_03` overlaps it. A new gap gets a row.
+    An overlap row is fixed unless a unit lost all its area; a gap or notch row is
+    fixed when no defect of its kind left in `{name}_03` overlaps it.
     """
     m2_per_deg2 = m2_per_deg2_factor(conn, f"{name}_01")
     remaining = f"{name}_04_tmp1"
@@ -42,7 +42,10 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_02" AS
         WITH before AS (SELECT fid, ST_Area(geom) AS area FROM "{name}_01"),
-             after AS (SELECT fid, ST_Area(geom) AS area FROM "{name}_03"),
+             after AS (
+                 SELECT b.fid, coalesce(ST_Area(a.geom), 0) AS area
+                 FROM before b LEFT JOIN "{name}_03" a USING (fid)
+             ),
              fixed_bbox AS (
                  SELECT geom, {bbox_columns_sql("geom")} FROM "{name}_03"
              ),
@@ -87,9 +90,18 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                  THEN i.key NOT IN (SELECT issue_key FROM gap_hits)
                  WHEN i.kind = 'notch'
                  THEN i.key NOT IN (SELECT key FROM notch_hits)
+                 WHEN i.kind = 'overlap'
+                 THEN after_a.area > 0 AND after_b.area > 0
                  ELSE TRUE
             END AS fixed,
-            NULL::BIGINT AS overlay_fid, NULL::VARCHAR AS reason,
+            NULL::BIGINT AS overlay_fid,
+            CASE WHEN i.kind = 'overlap' AND after_b.area = 0
+                 THEN 'unit ' || i.unit_b || ' removed, fully covered by unit '
+                      || i.unit_a
+                 WHEN i.kind = 'overlap' AND after_a.area = 0
+                 THEN 'unit ' || i.unit_a || ' removed, fully covered by unit '
+                      || i.unit_b
+            END AS reason,
             NULL::VARCHAR AS source_file,
             i.geom
         FROM "{name}_02" i

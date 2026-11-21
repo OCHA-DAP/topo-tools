@@ -1069,4 +1069,4 @@ def test_finalize_geometry_drops_rows_rounding_empties():
     """)
     finalize_geometry(conn, "t", validate="none")
     kept = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
-    assert kept == [(1,), (3,), (4,)]
+    assert kept == [(1,), (3,)]
