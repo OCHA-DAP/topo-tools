@@ -118,6 +118,13 @@ in sync.
   signalled by omitting the `geo` metadata's `crs` key. Shapefile,
   GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
 
+## Output precision
+
+- Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
+  rounded once by `finalize_geometry()` as the last geometry change, and any
+  topology validation MUST run on the rounded result. Internal tables MUST NOT
+  be rounded.
+
 ## CSV outputs
 
 - Every CSV a tool writes (`schema-map`'s crosswalk, `change`'s changelog,

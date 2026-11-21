@@ -8,9 +8,8 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import output_renames
 from topo_tools.core.coverage import (
-    check_valid_topology,
+    finalize_geometry,
     gap_issues_sql,
-    invalid_edge_issues,
 )
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
@@ -42,11 +41,13 @@ def _export_one(
     issues_table = f"{name}_03_{item.level}"
     invalid_table = f"{issues_table}_invalid"
     if check_topology:
-        check_valid_topology(conn, item.table)
+        finalize_geometry(conn, item.table, validate="coverage")
         parts = [gap_issues_sql(conn, item.table, coverage=True)]
     else:
         # Gaps need a union, which fails on unmatched edges, like edge-mosaic's.
-        invalid_edge_issues(conn, item.table, invalid_table)
+        finalize_geometry(
+            conn, item.table, validate="issues", issues_table=invalid_table
+        )
         parts = [f'SELECT * FROM "{invalid_table}"']
     if item.table == f"{name}_01":
         parts.append(f'SELECT * FROM "{name}_01_micro"')

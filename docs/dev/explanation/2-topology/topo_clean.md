@@ -84,7 +84,9 @@ Run `topo-tools topo-clean --help` for the full, always-current option list.
    other unit, on a copy of `{name}_01`, and the clean runs on that copy.
    An endpoint touching a third unit stays put, since moving it would cut
    a wedge out of one unit that no other unit fills.
-4. **`_04_outputs`**: validates overlaps are gone (hard gate), logs
+4. **`_04_outputs`**: rounds `{name}_03` to the 1e-9 grid and validates
+   the rounded result via `finalize_geometry()` (raising on invalid
+   edges, micro-polygons and gaps at or below the fill target), logs
    (never raises on) any gaps still unfilled by design, and exports the
    cleaned dataset plus the issues report (only when it has rows).
 
@@ -311,27 +313,22 @@ cleaning tolerance.
 
 ## The gap gate is bounded by topo-clean's own fill target
 
-`_03_clean.py`'s post-fix validation raises if the output has any overlap,
-or any unfilled gap at or below `gap_maximum_width_deg`, the width it
-actually asked `ST_CoverageClean` to close for this run (`has_gaps(conn,
-out_table, gap_maximum_width=gap_maximum_width_deg)`, skipped when
-`gap_maximum_width_deg is None`, meaning no fill was requested at all;
-see `docs/adr/0037`). A gap left wider than that by design (a real gap
-under the default, or a numeric cap narrower than some detected gap) does not raise: `topo-clean`
-can legitimately leave those unfilled. `_04_outputs.py` logs a warning
-with a count of how many detected gaps remain uncovered regardless of
-width, tested via `ST_Contains` against a point on each gap's surface;
-visibility for the issues file, not a second failure condition.
-
-`check_invalid_edges()` **is** reused as a hard gate in `_04_outputs.py`
-too, but by the time it runs, `_03_clean.py`'s own validation (above) has
-already confirmed `{name}_03` has no invalid edges, or raised before
-returning. This check is a defensive double-check for `--step outputs`
-(a persisted `_03` table from a prior run), not the primary safety net:
-any survivor here would mean `_03_clean.py`'s own validation had a bug,
-not that `ST_CoverageClean` itself misbehaved. The new gap-width check
-has no such double-check in `_04_outputs.py`: `gap_maximum_width_deg` is
-a `_03_clean.py`-local value with no persisted form to re-check against.
+`_03_clean.py`'s post-fix validation raises on any invalid edge, area
+loss, collapsed fid or non-polygon geometry, and returns
+`gap_maximum_width_deg`, the width it actually asked `ST_CoverageClean` to
+close for this run (`None` when no fill was requested at all).
+`api/topo_clean.py` passes that width to `_04_outputs.py`, whose
+`finalize_geometry()` call rounds `{name}_03` to the 1e-9 grid and then
+raises on any invalid edge, micro-polygon, or unfilled gap at or below
+that width, so the gap check runs on the rounded output (see
+`docs/adr/0037`, `docs/adr/0155`). Under `--step outputs` the width is
+unknown and the gap check is skipped. A gap left wider than the width by
+design (a real gap under the default, or a numeric cap narrower than some
+detected gap) does not raise: `topo-clean` can legitimately leave those
+unfilled. `_04_outputs.py` logs a warning with a count of how many
+detected gaps remain uncovered regardless of width, tested via
+`ST_Contains` against a point on each gap's surface; visibility for the
+issues file, not a second failure condition.
 
 ## Resilience
 

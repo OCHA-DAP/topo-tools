@@ -87,11 +87,11 @@ def _write(path, rows: list[dict]) -> None:
         conn.execute(f"COPY t TO '{path}'")
 
 
-def _read(path, geom: str = "geometry") -> tuple[list[str], list[tuple]]:
+def _read(path) -> tuple[list[str], list[tuple]]:
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         rows = conn.execute(
-            f"SELECT * EXCLUDE ({geom}), ST_AsWKB({geom}) AS wkb "
+            "SELECT * EXCLUDE (geometry), ST_AsWKB(geometry) AS wkb "
             f"FROM '{path}' ORDER BY adm3_code"
         ).fetchall()
         cols = [d[0] for d in conn.description]
@@ -157,13 +157,20 @@ def test_fills_every_coarser_level(input_path, join_path, tmp_path, fields):
     assert not (tmp_path / "out_issues.parquet").exists()
 
 
-def test_geometry_unchanged(input_path, join_path, tmp_path):
+def test_geometry_only_rounded(input_path, join_path, tmp_path):
     out = tmp_path / "out.parquet"
     join(input_path, join_path, out)
 
-    _, before = _read(input_path, geom="geom")
-    _, after = _read(out)
-    assert [r[-1] for r in before] == [r[-1] for r in after]
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        before, after = (
+            conn.execute(
+                f"SELECT ST_AsWKB(ST_Normalize(ST_ReducePrecision({g}, 1e-9))) "
+                f"FROM '{p}' ORDER BY adm3_code"
+            ).fetchall()
+            for p, g in ((input_path, "geom"), (out, "geometry"))
+        )
+    assert before == after
 
 
 def test_chains_coarsest_first(input_path, tmp_path):

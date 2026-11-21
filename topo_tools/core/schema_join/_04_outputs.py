@@ -4,7 +4,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.coverage import short_source_file_sql
+from topo_tools.core.coverage import finalize_geometry, short_source_file_sql
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 _ISSUE_COLUMNS = """
@@ -66,8 +66,9 @@ def main(  # noqa: PLR0913
 ) -> None:
     """Export `{name}_03` to dest and its issues to issues_dest.
 
-    No topology check: schema-join never modifies geometry.
+    No topology check: schema-join only rounds geometry to the output grid.
     """
+    finalize_geometry(conn, f"{name}_03", validate="none")
     _build_issues(conn, name, min_overlap)
     conn.execute(f"""--sql
         CREATE OR REPLACE TEMP VIEW "{name}_03_export" AS

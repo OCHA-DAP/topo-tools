@@ -7,8 +7,8 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import GEOMETRY_TYPE
 from topo_tools.core.coverage import (
-    check_invalid_edges,
     detect_notches,
+    finalize_geometry,
     gap_issues_sql,
 )
 from topo_tools.core.duckdb_utils import bbox_columns_sql
@@ -128,16 +128,19 @@ def _warn_on_unfilled_gaps(conn: DuckDBPyConnection, name: str) -> None:
         )
 
 
-def main(
+def main(  # noqa: PLR0913
     conn: DuckDBPyConnection,
     name: str,
     dest: Path,
     issues_dest: Path,
     *,
+    gap_maximum_width: float | None = None,
     debug: bool = False,
 ) -> None:
-    """Validate `{name}_03` and export the cleaned dataset + issues report."""
-    check_invalid_edges(conn, f"{name}_03")
+    """Validate `{name}_03`, gaps up to gap_maximum_width, and export it + issues."""
+    finalize_geometry(
+        conn, f"{name}_03", validate="coverage", gap_maximum_width=gap_maximum_width
+    )
     _add_outcome_columns(conn, name)
     _warn_on_unfilled_gaps(conn, name)
 

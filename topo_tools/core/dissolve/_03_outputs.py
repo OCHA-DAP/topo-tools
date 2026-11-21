@@ -5,7 +5,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.coverage import check_valid_topology, gap_issues_sql
+from topo_tools.core.coverage import finalize_geometry, gap_issues_sql
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 logger = getLogger(__name__)
@@ -29,7 +29,7 @@ def main(
     debug: bool = False,
 ) -> None:
     """Output the dissolved layer + issues report to dest/issues_dest."""
-    check_valid_topology(conn, f"{name}_02")
+    finalize_geometry(conn, f"{name}_02", validate="coverage")
 
     _build_issues(conn, name)
 

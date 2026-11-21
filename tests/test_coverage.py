@@ -13,6 +13,7 @@ from topo_tools.core.coverage import (
     coverage_clean,
     coverage_clean_rows,
     detect_notches,
+    finalize_geometry,
     has_gaps,
     has_invalid_edges,
     has_micro_polygons,
@@ -1013,3 +1014,47 @@ def test_coverage_clean_rows_counts_held_rows_as_filled(rows, slivers, held_area
         assert len(kinds.fetchall()) == slivers
         held = conn.execute("SELECT ST_Area(geom) FROM synth WHERE fid = 2")
         assert held.fetchall()[0][0] == pytest.approx(held_area)
+
+
+_OVERLAPPING = "POLYGON((0.5 0, 2 0, 2 1, 0.5 1, 0.5 0))"
+
+
+def _off_grid_square():
+    conn = duckdb.connect()
+    conn.execute("LOAD spatial")
+    conn.execute("""
+        CREATE TABLE t AS SELECT 1 AS fid,
+        ST_GeomFromText('POLYGON((0 0, 1.00000000033 0, 1 1, 0 1, 0 0))') AS geom
+    """)
+    return conn
+
+
+@pytest.mark.parametrize("validate", ["coverage", "none"])
+def test_finalize_geometry_rounds_to_grid(validate):
+    conn = _off_grid_square()
+    finalize_geometry(conn, "t", validate=validate)
+    x = conn.execute("SELECT max(ST_XMax(geom)) FROM t").fetchall()[0][0]
+    assert x == 1.0
+
+
+def test_finalize_geometry_coverage_raises_on_overlap():
+    conn = _off_grid_square()
+    conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{_OVERLAPPING}'))")
+    with pytest.raises(RuntimeError, match="INVALID_EDGES"):
+        finalize_geometry(conn, "t", validate="coverage")
+
+
+def test_finalize_geometry_issues_writes_rows_without_raising():
+    conn = _off_grid_square()
+    conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{_OVERLAPPING}'))")
+    finalize_geometry(conn, "t", validate="issues", issues_table="t_invalid")
+    assert conn.execute("SELECT count(*) FROM t_invalid").fetchall()[0][0] > 0
+
+
+def test_finalize_geometry_skips_gap_check_without_width():
+    conn = duckdb.connect()
+    conn.execute("LOAD spatial")
+    _write_polygon_with_hole(conn, hole_width=0.5)
+    finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=None)
+    with pytest.raises(RuntimeError, match="GAPS"):
+        finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=1)

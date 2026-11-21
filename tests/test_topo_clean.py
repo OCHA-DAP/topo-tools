@@ -581,7 +581,7 @@ def test_clean_rejects_eroded_output(monkeypatch):
 
     with (
         _overlapping_pair_conn() as conn,
-        pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"),
+        pytest.raises(RuntimeError, match="invalid or collapsed"),
     ):
         clean_stage.main(
             conn,
@@ -620,7 +620,7 @@ def test_clean_rejects_collapsed_fid(monkeypatch):
     """)
     conn.execute(_empty_issues_table_sql("stage_02"))
 
-    with conn, pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"):
+    with conn, pytest.raises(RuntimeError, match="invalid or collapsed"):
         clean_stage.main(
             conn,
             "stage",
@@ -663,7 +663,7 @@ def test_clean_rejects_bad_geometry_type(monkeypatch):
     """)
     conn.execute(_empty_issues_table_sql("stage_02"))
 
-    with conn, pytest.raises(RuntimeError, match="invalid, collapsed, or under-filled"):
+    with conn, pytest.raises(RuntimeError, match="invalid or collapsed"):
         clean_stage.main(
             conn,
             "stage",

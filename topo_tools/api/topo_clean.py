@@ -107,6 +107,7 @@ def clean(  # noqa: PLR0913
         ) as conn,
     ):
         logger.info("starting: %s", name)
+        filled_width = None
         for s in _STEP_ORDER:
             if step and step != s:
                 continue
@@ -117,14 +118,21 @@ def clean(  # noqa: PLR0913
             elif s == "issues":
                 issues.main(conn, name, debug=debug)
             elif s == "clean":
-                clean_stage.main(
+                filled_width = clean_stage.main(
                     conn,
                     name,
                     gap_maximum_width=parsed_maximum_gap_width,
                     snapping_distance=parsed_snapping_distance,
                 )
             elif s == "outputs":
-                outputs.main(conn, name, output_path, issues_path, debug=debug)
+                outputs.main(
+                    conn,
+                    name,
+                    output_path,
+                    issues_path,
+                    gap_maximum_width=filled_width,
+                    debug=debug,
+                )
         maybe_export_debug_tables(
             conn, tmp_dir_path, name, step, _STEP_TABLES, debug=debug
         )

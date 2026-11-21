@@ -16,7 +16,12 @@ from .constants import (
     RESERVED_COLUMN_NAMES,
     WORLD_BOUNDS_WKT,
 )
-from .coverage import close_notches, coverage_clean, has_valid_topology
+from .coverage import (
+    close_notches,
+    coverage_clean,
+    finalize_geometry,
+    has_valid_topology,
+)
 from .duckdb_utils import quote_identifier
 
 logger = getLogger(__name__)
@@ -327,4 +332,5 @@ def export_issues_table(conn: DuckDBPyConnection, table: str, dest: Path) -> Non
     if count == 0:
         dest.unlink(missing_ok=True)
         return
+    finalize_geometry(conn, table, validate="none")
     export_geometry_table(conn, table, dest, exclude_fid=False)

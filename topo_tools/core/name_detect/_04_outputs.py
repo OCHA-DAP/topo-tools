@@ -5,6 +5,7 @@ from pathlib import Path
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.code import TABLE_COPY_OPTS
+from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.io import add_csv_bom, export_geometry_table
 from topo_tools.core.name_detect._constants import (
     PER_NAME_KINDS,
@@ -105,6 +106,7 @@ def main(
             FROM "{name}_04" LEFT JOIN ({unions}) g USING (key)
             ORDER BY severity, level, name_column, kind, code_a, name_a
         """)
+        finalize_geometry(conn, f"{name}_04_tmp1", validate="none")
         export_geometry_table(conn, f"{name}_04_tmp1", dest, exclude_fid=False)
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_tmp1"')
 

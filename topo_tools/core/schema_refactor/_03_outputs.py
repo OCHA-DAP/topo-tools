@@ -4,6 +4,7 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.io import export_geometry_table
 
 
@@ -12,9 +13,10 @@ def main(
 ) -> None:
     """Export `{name}_02` to dest.
 
-    No topology hard-gate here: refactor only renames/drops columns, it
-    never touches geometry.
+    No topology check here: refactor only renames/drops columns, geometry is
+    only rounded to the output grid.
     """
+    finalize_geometry(conn, f"{name}_02", validate="none")
     export_geometry_table(conn, f"{name}_02", dest)
 
     if not debug:

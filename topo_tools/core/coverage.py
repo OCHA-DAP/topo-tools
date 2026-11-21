@@ -2,6 +2,7 @@
 
 import threading
 from logging import getLogger
+from typing import Literal
 
 from duckdb import DuckDBPyConnection, InterruptException
 
@@ -10,6 +11,7 @@ from topo_tools.core.constants import (
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
+    GRID_RESOLUTION,
     INVALID_EDGE_BATCH_SECONDS,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
@@ -1429,6 +1431,43 @@ def check_valid_topology(
     check_invalid_edges(conn, table)
     check_gaps(conn, table, gap_maximum_width=gap_maximum_width, coverage=True)
     check_micro_polygons(conn, table)
+
+
+def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input)
+    conn: DuckDBPyConnection,
+    table: str,
+    *,
+    validate: Literal["coverage", "issues", "none"],
+    gap_maximum_width: float | None = SNAP_TOLERANCE,
+    where: str | None = None,
+    issues_table: str | None = None,
+) -> None:
+    """Round `table.geom` to GRID_RESOLUTION in place, then validate rows in `where`.
+
+    `coverage` raises on a defect, `issues` writes invalid-edge rows instead.
+    """
+    conn.execute(f"""--sql
+        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+    """)
+    if validate == "none":
+        return
+    if validate == "issues":
+        if issues_table is None:
+            msg = "finalize_geometry: validate='issues' needs issues_table"
+            raise ValueError(msg)
+        invalid_edge_issues(conn, table, issues_table, where=where or "TRUE")
+        return
+    target = table
+    if where is not None:
+        target = f"{table}_coverage"
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TEMP VIEW "{target}" AS
+            SELECT * FROM "{table}" WHERE {where}
+        """)
+    check_invalid_edges(conn, target)
+    if gap_maximum_width is not None:
+        check_gaps(conn, target, gap_maximum_width=gap_maximum_width, coverage=True)
+    check_micro_polygons(conn, target)
 
 
 def coverage_clean(  # noqa: PLR0913 (each param is a distinct required input, not decomposable)
