@@ -5,18 +5,25 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
-from topo_tools.core.coverage import finalize_geometry, gap_issues_sql
+from topo_tools.core.coverage import (
+    empty_issues_sql,
+    finalize_geometry,
+    gap_issues_sql,
+)
 from topo_tools.core.io import export_geometry_table, export_issues_table
 
 logger = getLogger(__name__)
 
 
 def _build_issues(conn: DuckDBPyConnection, name: str) -> None:
-    """Build `{name}_03`: gaps wider than the noise floor in the dissolved output."""
+    """Build `{name}_03`: wide gaps and dropped empty rows in the dissolved output."""
     table = f"{name}_02"
+    parts = [gap_issues_sql(conn, table, coverage=True)]
+    if empty := empty_issues_sql(conn, table):
+        parts.append(empty)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03" AS
-        {gap_issues_sql(conn, table, coverage=True)}
+        {" UNION ALL BY NAME ".join(parts)}
     """)
 
 
@@ -50,3 +57,4 @@ def main(
         conn.execute(f'DROP TABLE IF EXISTS "{name}_01"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_02"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_02_empty"')

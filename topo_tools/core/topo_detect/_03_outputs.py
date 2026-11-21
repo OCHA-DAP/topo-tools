@@ -15,7 +15,7 @@ def main(
 
     No topology hard-gate here: detect is read-only inspection, not a fix.
     """
-    finalize_geometry(conn, f"{name}_02", validate="none")
+    finalize_geometry(conn, f"{name}_02", validate="none", drop_empty=False)
     export_geometry_table(conn, f"{name}_02", dest, exclude_fid=False)
 
     if not debug:

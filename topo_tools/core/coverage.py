@@ -1433,6 +1433,48 @@ def check_valid_topology(
     check_micro_polygons(conn, table)
 
 
+def _round_and_drop_empty(conn: DuckDBPyConnection, table: str) -> None:
+    """Round `table.geom`, moving rows left empty to `{table}_empty` as issue rows."""
+    columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
+    conn.execute(f'ALTER TABLE "{table}" ADD COLUMN _was_empty BOOLEAN')
+    conn.execute(f"""--sql
+        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION}),
+                             _was_empty = ST_IsEmpty(geom)
+    """)
+    fid = "fid" if "fid" in columns else "NULL::BIGINT"
+    overlay = "overlay_fid" if "overlay_fid" in columns else "NULL::BIGINT"
+    source = "source_file" if "source_file" in columns else "NULL::VARCHAR"
+    conn.execute(f"""--sql
+        CREATE TABLE "{table}_empty" AS
+        SELECT 'empty-geometry-' || row_number() OVER (ORDER BY {fid}) AS key,
+               'empty-geometry' AS kind, {fid} AS unit_a, {overlay} AS overlay_fid,
+               CASE WHEN _was_empty THEN 'empty before rounding to the output grid'
+                    ELSE 'narrower than the 1e-9 output grid' END AS reason,
+               TRUE AS fixed, {source} AS source_file, geom
+        FROM "{table}" WHERE ST_IsEmpty(geom)
+    """)
+    dropped = conn.execute(f"""--sql
+        DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
+    """).fetchall()[0][0]
+    conn.execute(f'ALTER TABLE "{table}" DROP COLUMN _was_empty')
+    if dropped:
+        logger.warning("dropped %d row(s) with empty geometry from %s", dropped, table)
+    else:
+        conn.execute(f'DROP TABLE "{table}_empty"')
+
+
+def empty_issues_sql(
+    conn: DuckDBPyConnection, table: str, *, source_file_expr: str = "source_file"
+) -> str | None:
+    """Return a SELECT over `{table}_empty`'s dropped rows, or None if absent."""
+    exists = conn.execute(
+        "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [f"{table}_empty"]
+    ).fetchone()[0]
+    if not exists:
+        return None
+    return f'SELECT * REPLACE ({source_file_expr} AS source_file) FROM "{table}_empty"'
+
+
 def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     table: str,
@@ -1441,19 +1483,19 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
     gap_maximum_width: float | None = SNAP_TOLERANCE,
     where: str | None = None,
     issues_table: str | None = None,
+    drop_empty: bool = True,
 ) -> None:
-    """Round `table.geom` to GRID_RESOLUTION, drop empty rows, then validate.
+    """Round `table.geom` to the grid, move empty rows to `{table}_empty`, validate.
 
     `coverage` raises on a defect, `issues` writes invalid-edge rows instead.
     """
-    conn.execute(f"""--sql
-        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
-    """)
-    dropped = conn.execute(f"""--sql
-        DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
-    """).fetchall()[0][0]
-    if dropped:
-        logger.info("dropped %d row(s) with empty geometry from %s", dropped, table)
+    conn.execute(f'DROP TABLE IF EXISTS "{table}_empty"')
+    if not drop_empty:
+        conn.execute(f"""--sql
+            UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
+        """)
+    else:
+        _round_and_drop_empty(conn, table)
     if validate == "none":
         return
     if validate == "issues":

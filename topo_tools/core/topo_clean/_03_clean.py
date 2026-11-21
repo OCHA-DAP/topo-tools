@@ -178,7 +178,7 @@ def main(
     gap_maximum_width: tuple[str, float | None],
     snapping_distance: tuple[str, float | None],
 ) -> None:
-    """Fix `{name}_01` into `{name}_03`; the gap width filled to `{name}_03_width`."""
+    """Fix `{name}_01` into `{name}_03`; write the filled gap width to `_03_width`."""
     gap_maximum_width_deg = _fix(
         conn,
         name,

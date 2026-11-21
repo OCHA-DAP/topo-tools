@@ -59,6 +59,6 @@ def _write_with_geometry(conn: DuckDBPyConnection, name: str, dest: Path) -> Non
         SELECT i.*, {select_geom} FROM "{name}_04" i {geometry}
         ORDER BY severity, level, kind, "column", code_a, name_a
     """)
-    finalize_geometry(conn, f"{name}_04_tmp1", validate="none")
+    finalize_geometry(conn, f"{name}_04_tmp1", validate="none", drop_empty=False)
     export_geometry_table(conn, f"{name}_04_tmp1", dest, exclude_fid=False)
     conn.execute(f'DROP TABLE IF EXISTS "{name}_04_tmp1"')

@@ -332,5 +332,5 @@ def export_issues_table(conn: DuckDBPyConnection, table: str, dest: Path) -> Non
     if count == 0:
         dest.unlink(missing_ok=True)
         return
-    finalize_geometry(conn, table, validate="none")
+    finalize_geometry(conn, table, validate="none", drop_empty=False)
     export_geometry_table(conn, table, dest, exclude_fid=False)

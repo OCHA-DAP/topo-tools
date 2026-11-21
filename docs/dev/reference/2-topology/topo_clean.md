@@ -91,7 +91,8 @@ detection stage directly rather than owning separate logic (see
   gap, no gap still open in the output overlaps it); for an overlap, how
   much each of its two named units' own area actually changed, with a unit
   that lost all its area removed from the output and its row marked
-  unfixed with a `reason` naming the removed and covering units; for a gap,
+  unfixed with a `reason` naming the removed unit, plus the covering unit
+  only when it covers the removed one in the input; for a gap,
   how much of the gap's own area ended up covered (zero if left unfilled).
   A gap open in the output that overlaps no detected gap MUST get its own
   unfixed `gap` row, so the unfixed gap rows match `topo-detect` on the

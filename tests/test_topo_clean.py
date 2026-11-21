@@ -105,7 +105,7 @@ def test_clean_full_run(synthetic_input, tmp_path):
         }
     # fid 8 lies fully inside fid 7, so the fix removes it.
     assert row_count == len(_SYNTHETIC_WKT) - 1
-    assert kinds == {"gap", "overlap", "sliver-gap"}
+    assert kinds == {"gap", "overlap", "sliver-gap", "empty-geometry"}
 
 
 def test_clean_closes_notch(tmp_path):
@@ -841,3 +841,28 @@ def test_clean_steps_raise_on_gap_left_within_fill_width(monkeypatch, tmp_path):
             step=_STEPS[-1],
             maximum_gap_width="2",
         )
+
+
+def test_clean_removed_micro_unit_names_no_covering_unit(tmp_path):
+    """A unit removed as a micro-polygon isn't reported as covered by its overlap."""
+    w = 3e-9
+    rows = [
+        (1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        (2, f"POLYGON(({1 + w} 0, 2 0, 2 1, {1 + w} 1, {1 + w} 0))"),
+        (3, f"POLYGON(({1 - w} 0, {1 + w} 0, {1 + w} 1, {1 - w} 1, {1 - w} 0))"),
+    ]
+    input_path = tmp_path / "micro.parquet"
+    values = ", ".join(f"({f}, ST_GeomFromText('{g}'))" for f, g in rows)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        conn.execute(
+            f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{input_path}'"
+        )
+    issues_path = tmp_path / "issues.parquet"
+    clean(input_path, tmp_path / "out.parquet", issues_path, overwrite=True)
+    with duckdb.connect() as conn:
+        reasons = conn.execute(
+            f"SELECT reason FROM '{issues_path}' WHERE kind = 'overlap'"
+        ).fetchall()
+    assert reasons
+    assert all("covered" not in (r or "") for (r,) in reasons)

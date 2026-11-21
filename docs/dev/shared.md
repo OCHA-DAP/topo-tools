@@ -122,8 +122,11 @@ in sync.
 
 - Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
   rounded once by `finalize_geometry()` as the last geometry change. A row
-  with empty geometry MUST be dropped, any topology validation MUST run on
-  the rounded result, and internal tables MUST NOT be rounded.
+  with empty geometry MUST be dropped with a logged warning, and reported as
+  a `kind='empty-geometry'` row by every tool whose issues report uses the
+  shared schema. Issues reports MUST keep their own empty-geometry rows. Any
+  topology validation MUST run on the rounded result, and internal tables
+  MUST NOT be rounded.
 
 ## CSV outputs
 
@@ -198,9 +201,9 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
 - `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  change geometry only by rounding it to the output grid. `change` applies it only through its auto-cleaned
-  inputs; its overlay drops intersections below `SNAP_TOLERANCE` squared
-  instead.
+  change geometry only by rounding it to the output grid. `change` applies
+  it only through its auto-cleaned inputs; its overlay drops intersections
+  below `SNAP_TOLERANCE` squared instead.
 
 ## Sliver gaps
 

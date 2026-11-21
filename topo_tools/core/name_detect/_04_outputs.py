@@ -106,7 +106,7 @@ def main(
             FROM "{name}_04" LEFT JOIN ({unions}) g USING (key)
             ORDER BY severity, level, name_column, kind, code_a, name_a
         """)
-        finalize_geometry(conn, f"{name}_04_tmp1", validate="none")
+        finalize_geometry(conn, f"{name}_04_tmp1", validate="none", drop_empty=False)
         export_geometry_table(conn, f"{name}_04_tmp1", dest, exclude_fid=False)
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_tmp1"')
 

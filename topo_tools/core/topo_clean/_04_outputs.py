@@ -8,6 +8,7 @@ from duckdb import DuckDBPyConnection
 from topo_tools.core.constants import GEOMETRY_TYPE
 from topo_tools.core.coverage import (
     detect_notches,
+    empty_issues_sql,
     finalize_geometry,
     gap_issues_sql,
 )
@@ -16,6 +17,7 @@ from topo_tools.core.io import export_geometry_table, export_issues_table
 from topo_tools.core.units import m2_per_deg2_factor
 
 logger = getLogger(__name__)
+_NO_ROWS_SQL = "SELECT NULL::VARCHAR AS key WHERE FALSE"
 
 
 def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
@@ -25,6 +27,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
     fixed when no defect of its kind left in `{name}_03` overlaps it.
     """
     m2_per_deg2 = m2_per_deg2_factor(conn, f"{name}_01")
+    empty_sql = empty_issues_sql(conn, f"{name}_03") or _NO_ROWS_SQL
     remaining = f"{name}_04_tmp1"
     conn.execute(
         f'CREATE OR REPLACE TABLE "{remaining}" '
@@ -96,11 +99,13 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
             END AS fixed,
             NULL::BIGINT AS overlay_fid,
             CASE WHEN i.kind = 'overlap' AND after_b.area = 0
-                 THEN 'unit ' || i.unit_b || ' removed, fully covered by unit '
-                      || i.unit_a
+                 THEN 'unit ' || i.unit_b || ' removed' || CASE
+                      WHEN ST_Covers(geom_a.geom, geom_b.geom)
+                      THEN ', fully covered by unit ' || i.unit_a ELSE '' END
                  WHEN i.kind = 'overlap' AND after_a.area = 0
-                 THEN 'unit ' || i.unit_a || ' removed, fully covered by unit '
-                      || i.unit_b
+                 THEN 'unit ' || i.unit_a || ' removed' || CASE
+                      WHEN ST_Covers(geom_b.geom, geom_a.geom)
+                      THEN ', fully covered by unit ' || i.unit_b ELSE '' END
             END AS reason,
             NULL::VARCHAR AS source_file,
             i.geom
@@ -110,9 +115,13 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
         LEFT JOIN before before_b ON before_b.fid = i.unit_b
         LEFT JOIN after after_b ON after_b.fid = i.unit_b
         LEFT JOIN gap_union gu ON gu.key = i.key
+        LEFT JOIN "{name}_01" geom_a ON geom_a.fid = i.unit_a
+        LEFT JOIN "{name}_01" geom_b ON geom_b.fid = i.unit_b
         WHERE i.kind != 'micro-polygon'
         UNION ALL BY NAME
         SELECT * FROM "{name}_03_micro"
+        UNION ALL BY NAME
+        {empty_sql}
         UNION ALL BY NAME
         SELECT * REPLACE (
             'gap-new-' || row_number() OVER (ORDER BY hash(geom)) AS key,
@@ -163,3 +172,4 @@ def main(
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_micro"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_width"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_03_empty"')

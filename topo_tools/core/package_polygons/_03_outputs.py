@@ -8,6 +8,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.admin_columns import output_renames
 from topo_tools.core.coverage import (
+    empty_issues_sql,
     finalize_geometry,
     gap_issues_sql,
 )
@@ -51,6 +52,8 @@ def _export_one(
         parts = [f'SELECT * FROM "{invalid_table}"']
     if item.table == f"{name}_01":
         parts.append(f'SELECT * FROM "{name}_01_micro"')
+    if empty := empty_issues_sql(conn, item.table):
+        parts.append(empty)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{issues_table}" AS
         {" UNION ALL BY NAME ".join(parts)}
@@ -77,6 +80,7 @@ def _export_one(
     export_issues_table(conn, issues_table, item.issues_dest)
     conn.execute(f'DROP TABLE IF EXISTS "{issues_table}"')
     conn.execute(f'DROP TABLE IF EXISTS "{invalid_table}"')
+    conn.execute(f'DROP TABLE IF EXISTS "{item.table}_empty"')
 
 
 def main(  # noqa: PLR0913

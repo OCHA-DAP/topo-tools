@@ -7,6 +7,7 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import (
     assign_issue_rows_sql,
+    empty_issues_sql,
     finalize_geometry,
     merge_micro_polygons,
     micro_issues_sql,
@@ -96,6 +97,8 @@ def _build_issues(  # noqa: PLR0913
         """)
     if micro := micro_issues_sql(conn, table, source_file_expr=short_source_file):
         parts.append(micro)
+    if empty := empty_issues_sql(conn, table, source_file_expr=short_source_file):
+        parts.append(empty)
     if code_join:
         parts.append(
             assign_issue_rows_sql(
@@ -167,5 +170,6 @@ def main(  # noqa: PLR0913
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_cover"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_micro"')
+        conn.execute(f'DROP TABLE IF EXISTS "{name}_04_empty"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_04_invalid"')
         conn.execute(f'DROP TABLE IF EXISTS "{name}_05"')
