@@ -56,8 +56,9 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
                  SELECT key, geom, {bbox_columns_sql("geom")}
                  FROM "{name}_02" WHERE kind = 'gap'
              ),
-             gap_union AS (
-                 SELECT g.key, ST_Union_Agg(f.geom) AS geom
+             -- Per-pair sum equals the union's area: `{name}_03` has no overlaps.
+             gap_filled AS (
+                 SELECT g.key, sum(ST_Area(ST_Intersection(g.geom, f.geom))) AS area
                  FROM gap_bbox g
                  JOIN fixed_bbox f
                    ON f.xmax >= g.xmin AND f.xmin <= g.xmax
@@ -87,7 +88,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
             (after_a.area - before_a.area) * {m2_per_deg2} AS unit_a_area_change_m2,
             (after_b.area - before_b.area) * {m2_per_deg2} AS unit_b_area_change_m2,
             CASE WHEN i.kind = 'gap'
-                 THEN ST_Area(ST_Intersection(i.geom, gu.geom)) * {m2_per_deg2}
+                 THEN gf.area * {m2_per_deg2}
             END AS filled_area_m2,
             CASE WHEN i.kind = 'gap'
                  THEN i.key NOT IN (SELECT issue_key FROM gap_hits)
@@ -114,7 +115,7 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str) -> None:
         LEFT JOIN after after_a ON after_a.fid = i.unit_a
         LEFT JOIN before before_b ON before_b.fid = i.unit_b
         LEFT JOIN after after_b ON after_b.fid = i.unit_b
-        LEFT JOIN gap_union gu ON gu.key = i.key
+        LEFT JOIN gap_filled gf ON gf.key = i.key
         LEFT JOIN "{name}_01" geom_a ON geom_a.fid = i.unit_a
         LEFT JOIN "{name}_01" geom_b ON geom_b.fid = i.unit_b
         WHERE i.kind != 'micro-polygon'
