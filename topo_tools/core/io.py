@@ -24,6 +24,7 @@ from .coverage import (
 from .duckdb_utils import quote_identifier
 
 logger = getLogger(__name__)
+_WORLD_CLIP_FLAG = "_world_clipped"
 
 # Esri FileGDB API type GUID for a feature class (spatial); stable across
 # versions, and how GDAL's own OpenFileGDB driver tells layers apart too.
@@ -121,6 +122,7 @@ def reproject_select_sql(
     layer: str | None = None,
     *,
     make_valid: bool = True,
+    flag_world_clip: bool = False,
 ) -> str:
     """Build the read+reproject-to-EPSG:4326 SELECT for one file, as unexecuted SQL.
 
@@ -199,8 +201,13 @@ def reproject_select_sql(
 
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
+    flag_sql = (
+        f", NOT {_within_world_sql('geom')} AS {_WORLD_CLIP_FLAG}"
+        if flag_world_clip
+        else ""
+    )
     return f"""
-        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom)
+        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom){flag_sql}
         FROM (
             SELECT * EXCLUDE ({exclude_sql}){rename_sql},
                    row_number() OVER () AS fid,
@@ -210,20 +217,40 @@ def reproject_select_sql(
     """
 
 
+def _within_world_sql(col: str) -> str:
+    """Build SQL true where `col` is empty or its bbox is within world bounds."""
+    return f"""(ST_IsEmpty({col}) OR (
+            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
+            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
+        ))"""
+
+
 def _world_clip_sql(col: str) -> str:
     """Build SQL clipping `col` to world bounds, only where its bbox goes past them."""
     world = f"ST_GeomFromText('{WORLD_BOUNDS_WKT}')"
     return f"""CASE
-        WHEN ST_IsEmpty({col}) OR (
-            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
-            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
-        ) THEN {col}
+        WHEN {_within_world_sql(col)} THEN {col}
         WHEN NOT ST_Intersects({col}, {world})
         THEN error('{_OUTSIDE_WORLD}')
         ELSE ST_SetCRS(ST_CollectionExtract(
             ST_Intersection(ST_MakeValid({col}), {world}), 3
         ), '{CRS}')
         END"""
+
+
+def warn_world_clipped(conn: DuckDBPyConnection, table: str, label: str) -> None:
+    """Log how many of `table`'s rows the world clip changed, then drop the flag."""
+    clipped = conn.execute(
+        f'SELECT count(*) FILTER (WHERE {_WORLD_CLIP_FLAG}) FROM "{table}"'
+    ).fetchall()[0][0]
+    if clipped:
+        logger.warning(
+            "%s: clipped %d feature(s) extending past 180° longitude or 90° "
+            "latitude to world bounds",
+            label,
+            clipped,
+        )
+    conn.execute(f'ALTER TABLE "{table}" DROP COLUMN {_WORLD_CLIP_FLAG}')
 
 
 def sort_paths_by_column_count_desc(
@@ -242,7 +269,7 @@ def read_and_reproject(
     conn: DuckDBPyConnection, name: str, path: Path | str, layer: str | None = None
 ) -> None:
     """Read geodata, reproject to EPSG:4326, store as canonical table `{name}_01`."""
-    select_sql = reproject_select_sql(conn, path, layer)
+    select_sql = reproject_select_sql(conn, path, layer, flag_world_clip=True)
     try:
         conn.execute(f'CREATE OR REPLACE TABLE "{name}_01" AS {select_sql}')
     except duckdb.Error as e:
@@ -254,6 +281,7 @@ def read_and_reproject(
             "invalid geometry (e.g. an unclosed ring) that ST_MakeValid cannot repair"
         )
         raise ValueError(msg) from e
+    warn_world_clipped(conn, f"{name}_01", str(path))
 
     count = conn.execute(f'SELECT COUNT(*) FROM "{name}_01"').fetchone()[0]
     if count == 0:

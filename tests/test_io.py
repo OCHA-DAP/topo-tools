@@ -265,7 +265,7 @@ def _write_wkt(conn, path, wkts):
     conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
 
 
-def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path):
+def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path, caplog):
     path = tmp_path / "antimeridian.parquet"
     inside = "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
     past = "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))"
@@ -278,6 +278,7 @@ def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path):
         ).fetchall()
     assert rows[0][0] == "POLYGON ((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
     assert rows[1][1] == _ANTIMERIDIAN
+    assert "clipped 1 feature(s)" in caplog.text
 
 
 def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):

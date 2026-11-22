@@ -117,6 +117,9 @@ in sync.
   as GeoParquet 2.0 following geoparquet-io's conventions: the default CRS is
   signalled by omitting the `geo` metadata's `crs` key. Shapefile,
   GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
+- Every read MUST clip a feature whose bbox extends past ±180° longitude or
+  ±90° latitude to those bounds, logging a warning with the count of clipped
+  features, and MUST raise on a feature entirely outside them.
 
 ## Output precision
 
@@ -257,9 +260,6 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 - In `edge-mosaic`'s per-file loop, only polygons from the same input file
   are candidate neighbours.
 
-## Hard gates at each tool's output stage
-
-- Every tool below that runs a topology hard gate MUST also raise if its
 ## Input coverage defects
 
 - A tool that keeps geometry as it is (`schema-*`, `code-*`, `name-*`,
@@ -269,6 +269,9 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   `package-points`, `package-lines`) MUST raise on an overlap in it.
 - Only `topo-clean`, `package`, and the `edge-*` tools fix coverage defects.
 
+## Hard gates at each tool's output stage
+
+- Every tool below that runs a topology hard gate MUST also raise if its
   final output has any micro-polygon.
 
 - `edge-extend` MUST raise if its final output has any overlap or any gap of any
