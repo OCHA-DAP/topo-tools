@@ -331,27 +331,29 @@ def read_reproject_and_clean(  # noqa: PLR0913 (each param is a distinct require
         start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
         logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
+        if keep_raw:
+            _restore_removed_rows(conn, table, f"{name}_00")
+
+
+def _restore_removed_rows(conn: DuckDBPyConnection, table: str, raw: str) -> None:
+    """Re-add rows the clean merged away, as read, so every input row is matched."""
+    removed = f'SELECT r.* FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)'
+    count = conn.execute(f"SELECT count(*) FROM ({removed})").fetchall()[0][0]
+    if count:
+        logger.warning("%s: kept %d row(s) the clean removed, as read", table, count)
+        conn.execute(f'INSERT INTO "{table}" BY NAME {removed}')
 
 
 def raw_rows_sql(conn: DuckDBPyConnection, table: str, raw: str) -> str:
-    """Select `table`'s rows with `raw`'s geom, plus `raw` rows the clean removed."""
+    """Select `table`'s rows with `raw`'s geom where `raw` exists."""
     exists = conn.execute(
         "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [raw]
     ).fetchall()[0][0]
     if not exists:
         return f'SELECT * FROM "{table}"'
-    dropped = conn.execute(
-        f'SELECT count(*) FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)'
-    ).fetchall()[0][0]
-    if dropped:
-        logger.warning(
-            "%s: %d row(s) the input clean removed are written as read", table, dropped
-        )
     return f"""
         SELECT t.* REPLACE (coalesce(r.geom, t.geom) AS geom)
         FROM "{table}" t LEFT JOIN "{raw}" r USING (fid)
-        UNION ALL BY NAME
-        SELECT r.* FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)
     """
 
 

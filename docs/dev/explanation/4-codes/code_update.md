@@ -16,8 +16,10 @@ in `topo_tools/core/code_update/`.
 ## `_01_inputs`/`_02_levels`: two independent resolutions, one shared format
 
 OLD and NEW are loaded, reprojected, and coverage-cleaned independently
-(`core.io.read_reproject_and_clean()`), NEW's uncleaned geometry kept as
-`{name}_b_00` for `_07_outputs` to write. Their per-level code/name columns
+(`core.io.read_reproject_and_clean()`), NEW's uncleaned rows kept as
+`{name}_b_00` and any row the clean removes put back into `{name}_b_01` as
+read, so every NEW row is matched and coded. `_07_outputs` writes
+`{name}_07`, NEW's coded rows with their geometry from `{name}_b_00`. Their per-level code/name columns
 are then resolved independently too, each via the identical explicit-
 pair-or-structural-fallback contract `code-create` uses
 (`docs/dev/explanation/4-codes/code_create.md`): `--code-field-a`/`--name-field-a`

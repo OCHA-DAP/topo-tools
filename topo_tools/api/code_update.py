@@ -36,7 +36,7 @@ _STEP_TABLES = {
     "inputs": ["{n}_a_01", "{n}_b_00", "{n}_b_01"],
     "levels": [],
     "process": [],
-    "outputs": [],
+    "outputs": ["{n}_07"],
 }
 
 

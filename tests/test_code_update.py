@@ -814,23 +814,35 @@ def test_output_keeps_input_geometry(tmp_path):
             "wkt": "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))",
         },
     ]
+    new_rows = [
+        {"adm1_code": r["adm1_pcode"], "adm1_nm": r["adm1_name"], "wkt": r["wkt"]}
+        for r in rows
+    ]
     old_path = tmp_path / "old.parquet"
     new_path = tmp_path / "new.parquet"
     _write_synthetic(old_path, rows)
-    _write_synthetic(new_path, rows)
+    _write_synthetic(new_path, new_rows)
     output_path = tmp_path / "new_coded.parquet"
+    changelog_path = tmp_path / "changelog.csv"
     code_update(
         old_path,
         new_path,
         output_path,
-        tmp_path / "changelog.csv",
+        changelog_path,
         name_field_a="adm{n}_name",
         code_field_a="adm{n}_pcode",
-        name_field_b="adm{n}_name",
-        code_field_b="adm{n}_pcode",
+        name_field_b="adm{n}_nm",
+        code_field_b="adm{n}_code",
     )
 
     order = "ST_AsText(ST_Normalize({}))"
     written = _fetch(output_path, order.format("geometry"), "1")
     source = _fetch(new_path, order.format("geom"), "1")
     assert written == source
+    codes = _fetch(output_path, "adm1_pcode", "1")
+    assert sorted(c for (c,) in codes) == ["AA.001", "AA.002", "AA.003"]
+    with duckdb.connect() as conn:
+        logged = conn.execute(
+            f"SELECT count(DISTINCT new_name) FROM '{changelog_path}'"
+        ).fetchall()[0][0]
+    assert logged == len(rows)

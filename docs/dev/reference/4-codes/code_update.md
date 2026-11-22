@@ -11,8 +11,9 @@ sidebar:
 
 - `code-update` MUST read, reproject to EPSG:4326, and coverage-clean both
   OLD (already coded) and NEW (uncoded candidate) inputs via
-  `core.io.read_reproject_and_clean()`, and MUST write NEW's uncleaned
-  input geometry to the output.
+  `core.io.read_reproject_and_clean()`, and MUST match, code and write
+  every NEW row with its uncleaned input geometry, including a row the
+  clean removes.
 
 ## Level resolution and format detection
 
