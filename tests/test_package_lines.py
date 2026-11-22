@@ -674,6 +674,36 @@ def test_single_level_auto_detect_writes_code_and_name(tmp_path):
     }
 
 
+def test_single_level_with_repeated_names_is_one_level(tmp_path):
+    """Codes sharing a name don't make the name column a coarser level."""
+    names = ["France", "France", "Chad", "Mali", "Niger", "Togo"]
+    rows = [
+        {
+            "adm0_pcode": f"U{i}",
+            "adm0_name": name,
+            "wkt": f"POLYGON(({i} 0,{i} 1,{i + 1} 1,{i + 1} 0,{i} 0))",
+        }
+        for i, name in enumerate(names)
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "lines.parquet"
+    package_lines(input_path, output_path)
+    with duckdb.connect() as conn:
+        result = conn.execute(
+            f"SELECT * EXCLUDE geometry FROM '{output_path}' "
+            "WHERE b_code IS NOT NULL ORDER BY a_code"
+        )
+        columns = [d[0] for d in result.description]
+        out = result.fetchall()
+    assert columns == ["a_code", "a_name", "b_code", "b_name", "adm_lvl"]
+    assert len(out) == len(names) - 1
+    assert out[0][:4] in {
+        ("U0", "France", "U1", "France"),
+        ("U1", "France", "U0", "France"),
+    }
+
+
 def test_min_level_above_every_level_raises(tmp_path):
     input_path = tmp_path / "in.parquet"
     _write_synthetic(
