@@ -165,7 +165,7 @@ def test_geometry_unchanged(input_path, join_path, tmp_path):
         conn.execute("LOAD spatial")
         before, after = (
             conn.execute(
-                f"SELECT ST_AsWKB(ST_Normalize({g})) FROM '{p}' ORDER BY adm3_code"
+                f"SELECT ST_AsWKB({g}) FROM '{p}' ORDER BY adm3_code"
             ).fetchall()
             for p, g in ((input_path, "geom"), (out, "geometry"))
         )
