@@ -1084,3 +1084,28 @@ def test_finalize_geometry_labels_dropped_rows():
     finalize_geometry(conn, "t", validate="none", label_columns=("code",))
     reason = conn.execute("SELECT reason FROM t_empty").fetchall()[0][0]
     assert reason == "empty geometry (code=A1)"
+
+
+def test_has_invalid_edges_skips_geometry_already_checked_valid(monkeypatch):
+    right = "(2, 'POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))')"
+    rows = f"(1, 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'), {right}"
+    bad = f"(1, 'POLYGON((0 0, 1.5 0, 1.5 1, 0 1, 0 0))'), {right}"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        for table, values in (("a", rows), ("b", rows), ("c", bad), ("d", bad)):
+            conn.execute(f"""
+                CREATE TABLE {table} AS SELECT fid, ST_GeomFromText(w) AS geom
+                FROM (VALUES {values}) t(fid, w) ORDER BY fid DESC
+            """)
+        assert not has_invalid_edges(conn, "a")
+        assert has_invalid_edges(conn, "c")
+        calls = []
+        real = coverage._invalid_part_pairs  # noqa: SLF001
+        monkeypatch.setattr(
+            coverage,
+            "_invalid_part_pairs",
+            lambda *a, **k: calls.append(1) or real(*a, **k),
+        )
+        assert not has_invalid_edges(conn, "b")
+        assert has_invalid_edges(conn, "d")
+    assert len(calls) == 1
