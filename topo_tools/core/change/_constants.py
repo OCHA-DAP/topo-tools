@@ -13,10 +13,3 @@ TAU_SAME_DEFAULT = 0.98
 # Intersection crumbs below this area are dropped as noise before shared-area
 # aggregation: the area-equivalent of the shared SNAP_TOLERANCE noise floor.
 INTERSECTION_SLIVER_DEG2 = SNAP_TOLERANCE**2
-
-# Tabular changelog export has no geometry column, so extend's GDAL-vector
-# COPY_OPTS doesn't apply: FORMAT CSV/PARQUET need no spatial extension.
-TABLE_COPY_OPTS = {
-    ".csv": "(FORMAT CSV, HEADER)",
-    ".parquet": "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15)",
-}

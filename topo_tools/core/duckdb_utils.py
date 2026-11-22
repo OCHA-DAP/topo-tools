@@ -19,6 +19,8 @@ from duckdb import connect as duckdb_connect
 
 from topo_tools.core.constants import (
     CRS,
+    GEOPARQUET_COPY,
+    PARQUET_COPY,
     PARQUET_OPTS,
     SUBDIVIDE_MAX_VERTICES,
     SUBDIVIDE_MIN_VERTICES,
@@ -26,10 +28,6 @@ from topo_tools.core.constants import (
 
 logger = getLogger(__name__)
 
-_GEO_PARQUET = (
-    "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"
-)
-_PARQUET = "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15)"
 _MEM_Q = "SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()"
 
 
@@ -267,7 +265,7 @@ def export_debug_tables(
             "SELECT COUNT(*) > 0 FROM information_schema.columns "
             f"WHERE table_name = '{table}' AND data_type = 'GEOMETRY'"
         ).fetchall()[0][0]
-        opts = _GEO_PARQUET if has_geom else _PARQUET
+        opts = GEOPARQUET_COPY if has_geom else PARQUET_COPY
         conn.execute(f"COPY \"{table}\" TO '{out}' {opts}")
 
 

@@ -4,10 +4,9 @@ from pathlib import Path
 
 from duckdb import DuckDBPyConnection
 
+from topo_tools.core.constants import TABLE_COPY_OPTS
 from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.io import add_csv_bom, export_geometry_table
-
-from ._constants import TABLE_COPY_OPTS
 
 
 def main(

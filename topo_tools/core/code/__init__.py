@@ -14,7 +14,6 @@ from topo_tools.core.code._codes import (
     parse_code,
 )
 from topo_tools.core.code._columns import write_root_code
-from topo_tools.core.code._constants import TABLE_COPY_OPTS
 from topo_tools.core.code._detect_format import (
     detect_code_format,
     detect_undelimited_format,
@@ -23,6 +22,7 @@ from topo_tools.core.code._detect_format import (
 from topo_tools.core.code._next_available import next_available_integer
 from topo_tools.core.code._rewrite import rewrite_child_code
 from topo_tools.core.code._seed import check_unique_names, seed_code_from_names
+from topo_tools.core.constants import TABLE_COPY_OPTS
 
 __all__ = [
     "TABLE_COPY_OPTS",
