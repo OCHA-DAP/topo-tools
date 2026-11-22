@@ -733,6 +733,17 @@ def has_micro_polygons(conn: DuckDBPyConnection, table: str) -> bool:
     """).fetchall()[0][0]
 
 
+def check_valid_geometry(conn: DuckDBPyConnection, table: str) -> None:
+    """Raise RuntimeError if any row of `table.geom` fails ST_IsValid."""
+    invalid = conn.execute(
+        f'SELECT count(*) FILTER (WHERE NOT ST_IsValid(geom)) FROM "{table}"'
+    ).fetchall()[0][0]
+    if invalid:
+        error = f"INVALID_GEOMETRY: {table} ({invalid} row(s))"
+        logger.error(error)
+        raise RuntimeError(error)
+
+
 def check_micro_polygons(conn: DuckDBPyConnection, table: str) -> None:
     """Raise RuntimeError if any polygon part of `table.geom` is a micro-polygon."""
     if has_micro_polygons(conn, table):
@@ -1523,6 +1534,7 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
     _drop_empty(conn, table, label_columns)
     if validate == "none":
         return
+    check_valid_geometry(conn, table)
     if validate == "issues":
         if issues_table is None:
             msg = "finalize_geometry: validate='issues' needs issues_table"

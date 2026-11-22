@@ -1043,6 +1043,15 @@ def test_finalize_geometry_issues_writes_rows_without_raising():
     assert conn.execute("SELECT count(*) FROM t_invalid").fetchall()[0][0] > 0
 
 
+@pytest.mark.parametrize("validate", ["coverage", "issues"])
+def test_finalize_geometry_raises_on_invalid_geometry(validate):
+    conn = _off_grid_square()
+    bowtie = "POLYGON((3 0, 4 1, 4 0, 3 1, 3 0))"
+    conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{bowtie}'))")
+    with pytest.raises(RuntimeError, match="INVALID_GEOMETRY"):
+        finalize_geometry(conn, "t", validate=validate, issues_table="t_invalid")
+
+
 def test_finalize_geometry_skips_gap_check_without_width():
     conn = duckdb.connect()
     conn.execute("LOAD spatial")

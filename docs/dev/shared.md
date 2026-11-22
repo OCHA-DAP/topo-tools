@@ -149,6 +149,8 @@ in sync.
   MUST report only holes at or below that width, treating a wider hole as a
   possible legitimate absence rather than a defect. Omitting the width MUST
   preserve the unscoped, any-size-hole behavior.
+- Every polygon output validated as a coverage or for `invalid-edge` issue
+  rows MUST also raise on any row that fails `ST_IsValid`.
 
 ## Common settings
 
