@@ -260,6 +260,15 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 ## Hard gates at each tool's output stage
 
 - Every tool below that runs a topology hard gate MUST also raise if its
+## Input coverage defects
+
+- A tool that keeps geometry as it is (`schema-*`, `code-*`, `name-*`,
+  `change`, and every `*-detect` tool) MUST write its input geometry unchanged,
+  overlaps and gaps included. It MAY clean a copy for its own matching.
+- A tool that builds new geometry from a layer (`package-polygons`,
+  `package-points`, `package-lines`) MUST raise on an overlap in it.
+- Only `topo-clean`, `package`, and the `edge-*` tools fix coverage defects.
+
   final output has any micro-polygon.
 
 - `edge-extend` MUST raise if its final output has any overlap or any gap of any

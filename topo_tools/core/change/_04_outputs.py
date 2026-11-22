@@ -6,7 +6,11 @@ from duckdb import DuckDBPyConnection
 
 from topo_tools.core.constants import TABLE_COPY_OPTS
 from topo_tools.core.coverage import finalize_geometry
-from topo_tools.core.io import add_csv_bom, export_geometry_table
+from topo_tools.core.io import (
+    add_csv_bom,
+    export_geometry_table,
+    restore_raw_geometry,
+)
 
 
 def main(
@@ -22,8 +26,10 @@ def main(
     No topology hard-gate here (unlike extend/match/clean): change is a
     read-only comparison, not a fix, so there's nothing to validate against.
     """
+    restore_raw_geometry(conn, f"{name}_a_01", f"{name}_a_00")
+    restore_raw_geometry(conn, f"{name}_b_01", f"{name}_b_00")
     # Every new-version unit plus every "removed" old-version unit (no new
-    # polygon stands in for it), together tiling the comparison area once.
+    # polygon stands in for it), together covering the comparison area.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_04" AS
         SELECT b.geom AS geom, pc.cluster_id AS cluster_id,

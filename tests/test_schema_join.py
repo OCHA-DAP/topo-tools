@@ -468,12 +468,25 @@ def test_added_columns_go_within_their_level(join_path, tmp_path):
         ]
 
 
-@pytest.mark.parametrize("layer", ["input", "join"])
-def test_raises_on_overlapping_layer(layer, tmp_path):
-    rows = {"input": _input_rows(), "join": _join_rows()}
-    rows[layer] = [*rows[layer], dict(rows[layer][0])]
+def test_raises_on_overlapping_join_layer(tmp_path):
+    rows = {"input": _input_rows(), "join": [*_join_rows(), dict(_join_rows()[0])]}
     paths = {k: tmp_path / f"{k}.parquet" for k in rows}
     for k, path in paths.items():
         _write(path, rows[k])
     with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
         join(paths["input"], paths["join"], tmp_path / "out.parquet")
+
+
+def test_overlapping_input_passes_through(tmp_path):
+    rows = {"input": [*_input_rows(), dict(_input_rows()[0])], "join": _join_rows()}
+    paths = {k: tmp_path / f"{k}.parquet" for k in rows}
+    for k, path in paths.items():
+        _write(path, rows[k])
+    out = tmp_path / "out.parquet"
+    join(paths["input"], paths["join"], out)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        sql = "SELECT ST_AsWKB({}) AS g FROM '{}' ORDER BY g"
+        written = conn.execute(sql.format("geometry", out)).fetchall()
+        source = conn.execute(sql.format("geom", paths["input"])).fetchall()
+    assert written == source

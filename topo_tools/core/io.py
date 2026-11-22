@@ -265,20 +265,25 @@ def read_and_reproject(
         raise ValueError(msg)
 
 
-def read_reproject_and_clean(
+def read_reproject_and_clean(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     name: str,
     path: Path | str,
     layer: str | None = None,
     *,
     fix_notches: bool = False,
+    keep_raw: bool = False,
 ) -> None:
-    """Read, reproject, and coverage-clean geodata into table `{name}_01`."""
+    """Read, reproject, and coverage-clean geodata into table `{name}_01`.
+
+    keep_raw saves the uncleaned `fid, geom` as `{name}_00` when a clean runs.
+    """
     start = time.monotonic()
     read_and_reproject(conn, name, path, layer)
     logger.info("read %s in %.0fs", path, time.monotonic() - start)
 
     table = f"{name}_01"
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_00"')
     if fix_notches:
         start = time.monotonic()
         close_notches(conn, table)
@@ -288,9 +293,22 @@ def read_reproject_and_clean(
     logger.info("coverage checked in %.0fs", time.monotonic() - start)
     if not valid:
         logger.info("cleaning coverage: invalid edges or gaps detected")
+        if keep_raw:
+            conn.execute(f'CREATE TABLE "{name}_00" AS SELECT fid, geom FROM "{table}"')
         start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
         logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
+
+
+def restore_raw_geometry(conn: DuckDBPyConnection, table: str, raw: str) -> None:
+    """Put `raw`'s uncleaned geom back on `table`'s rows by fid, if `raw` exists."""
+    exists = conn.execute(
+        "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [raw]
+    ).fetchall()[0][0]
+    if exists:
+        conn.execute(f"""--sql
+            UPDATE "{table}" t SET geom = r.geom FROM "{raw}" r WHERE t.fid = r.fid
+        """)
 
 
 def export_geometry_table(

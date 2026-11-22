@@ -14,7 +14,11 @@ from topo_tools.core.code_update._02_levels import SideLevels
 from topo_tools.core.code_update._06_assign import ChangeRow
 from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.duckdb_utils import quote_literal
-from topo_tools.core.io import add_csv_bom, export_geometry_table
+from topo_tools.core.io import (
+    add_csv_bom,
+    export_geometry_table,
+    restore_raw_geometry,
+)
 
 
 def _flag_overflow(changelog: list[ChangeRow], fmt: CodeFormat) -> None:
@@ -136,6 +140,7 @@ def main(  # noqa: PLR0913
         root_sql = quote_literal(fmt.root_code)
         write_root_code(conn, finest_table, root, root_sql, after)
 
+    restore_raw_geometry(conn, finest_table, f"{name}_b_00")
     finalize_geometry(conn, finest_table, validate="none")
     export_geometry_table(conn, finest_table, dest)
 

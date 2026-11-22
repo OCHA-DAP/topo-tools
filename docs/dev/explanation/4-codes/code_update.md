@@ -16,7 +16,8 @@ in `topo_tools/core/code_update/`.
 ## `_01_inputs`/`_02_levels`: two independent resolutions, one shared format
 
 OLD and NEW are loaded, reprojected, and coverage-cleaned independently
-(`core.io.read_reproject_and_clean()`). Their per-level code/name columns
+(`core.io.read_reproject_and_clean()`), NEW's uncleaned geometry kept as
+`{name}_b_00` for `_07_outputs` to write. Their per-level code/name columns
 are then resolved independently too, each via the identical explicit-
 pair-or-structural-fallback contract `code-create` uses
 (`docs/dev/explanation/4-codes/code_create.md`): `--code-field-a`/`--name-field-a`
