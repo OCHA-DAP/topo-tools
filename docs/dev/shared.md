@@ -120,14 +120,14 @@ in sync.
 
 ## Output precision
 
-- Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
-  rounded once by `finalize_geometry()` as the last geometry change. A row
-  with empty geometry MUST be dropped with a logged warning, and reported as
+- A tool MUST NOT round output coordinates (`ST_ReducePrecision` or any
+  per-row snap). A step that clips or intersects rows against another layer
+  MUST be followed by one `coverage_clean()` over the whole output, unless
+  `--no-clean` asks for its seams as `invalid-edge` rows. A row with empty
+  geometry MUST be dropped with a logged warning, and reported as
   a `kind='empty-geometry'` row, `fixed` FALSE, by every tool whose issues
   report uses the shared schema (`schema-join` leaves its `unit_a` null,
-  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows. Any
-  topology validation MUST run on the rounded result, and internal tables
-  MUST NOT be rounded.
+  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows.
 
 ## CSV outputs
 
@@ -202,7 +202,7 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
 - `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  change geometry only by rounding it to the output grid. `change` applies
+  never change geometry. `change` applies
   it only through its auto-cleaned inputs; its overlay drops intersections
   below `SNAP_TOLERANCE` squared instead.
 
