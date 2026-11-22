@@ -808,6 +808,11 @@ def test_output_keeps_input_geometry(tmp_path):
             "adm1_name": "N2",
             "wkt": "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))",
         },
+        {
+            "adm1_pcode": "AA.003",
+            "adm1_name": "N3",
+            "wkt": "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))",
+        },
     ]
     old_path = tmp_path / "old.parquet"
     new_path = tmp_path / "new.parquet"

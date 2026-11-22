@@ -28,7 +28,7 @@ logger = getLogger(__name__)
 _STEP_ORDER = ["inputs", "overlap", "classify", "outputs"]
 
 _STEP_TABLES = {
-    "inputs": ["{n}_a_01", "{n}_b_01"],
+    "inputs": ["{n}_a_00", "{n}_a_01", "{n}_b_00", "{n}_b_01"],
     "overlap": ["{n}_02"],
     "classify": ["{n}_03a", "{n}_03b", "{n}_03c"],
     "outputs": [],

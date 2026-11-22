@@ -304,7 +304,7 @@ def read_reproject_and_clean(  # noqa: PLR0913 (each param is a distinct require
 ) -> None:
     """Read, reproject, and coverage-clean geodata into table `{name}_01`.
 
-    keep_raw saves the uncleaned `fid, geom` as `{name}_00` when a clean runs.
+    keep_raw saves the uncleaned rows as `{name}_00` when a clean runs.
     """
     start = time.monotonic()
     read_and_reproject(conn, name, path, layer)
@@ -322,21 +322,32 @@ def read_reproject_and_clean(  # noqa: PLR0913 (each param is a distinct require
     if not valid:
         logger.info("cleaning coverage: invalid edges or gaps detected")
         if keep_raw:
-            conn.execute(f'CREATE TABLE "{name}_00" AS SELECT fid, geom FROM "{table}"')
+            conn.execute(f'CREATE TABLE "{name}_00" AS SELECT * FROM "{table}"')
         start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
         logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
 
 
-def restore_raw_geometry(conn: DuckDBPyConnection, table: str, raw: str) -> None:
-    """Put `raw`'s uncleaned geom back on `table`'s rows by fid, if `raw` exists."""
+def raw_rows_sql(conn: DuckDBPyConnection, table: str, raw: str) -> str:
+    """Select `table`'s rows with `raw`'s geom, plus `raw` rows the clean removed."""
     exists = conn.execute(
         "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [raw]
     ).fetchall()[0][0]
-    if exists:
-        conn.execute(f"""--sql
-            UPDATE "{table}" t SET geom = r.geom FROM "{raw}" r WHERE t.fid = r.fid
-        """)
+    if not exists:
+        return f'SELECT * FROM "{table}"'
+    dropped = conn.execute(
+        f'SELECT count(*) FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)'
+    ).fetchall()[0][0]
+    if dropped:
+        logger.warning(
+            "%s: %d row(s) the input clean removed are written as read", table, dropped
+        )
+    return f"""
+        SELECT t.* REPLACE (coalesce(r.geom, t.geom) AS geom)
+        FROM "{table}" t LEFT JOIN "{raw}" r USING (fid)
+        UNION ALL BY NAME
+        SELECT r.* FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)
+    """
 
 
 def export_geometry_table(

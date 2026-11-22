@@ -348,18 +348,21 @@ def test_change_steps(old_layer, new_layer, tmp_path):
 
 
 def test_change_overlay_keeps_input_geometry(tmp_path):
-    rows = [
+    new_rows = [
         ("A1", "POLYGON((0 0, 1.01 0, 1.01 1, 0 1, 0 0))"),
         ("A2", "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"),
+        ("A3", "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))"),
     ]
-    path = tmp_path / "overlapping.parquet"
-    _write_synthetic(path, rows)
+    removed = ("R1", "POLYGON((10 10, 11 10, 11 11, 10 11, 10 10))")
+    old, new = tmp_path / "old.parquet", tmp_path / "new.parquet"
+    _write_synthetic(old, [*new_rows, removed])
+    _write_synthetic(new, new_rows)
     overlay = tmp_path / "overlay.parquet"
-    change(path, path, tmp_path / "out.csv", overlay, overwrite=True)
+    change(old, new, tmp_path / "out.csv", overlay, overwrite=True)
 
     sql = "SELECT ST_AsText(ST_Normalize({})) AS g FROM '{}' ORDER BY g"
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
         written = conn.execute(sql.format("geometry", overlay)).fetchall()
-        source = conn.execute(sql.format("geom", path)).fetchall()
+        source = conn.execute(sql.format("geom", old)).fetchall()
     assert written == source
