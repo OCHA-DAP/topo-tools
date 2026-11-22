@@ -198,16 +198,17 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 - Every `coverage_clean` call merges micro-polygons before
   `ST_CoverageClean` runs, so `edge-extend`, `edge-match`, `edge-mosaic`,
   `topo-clean` and every auto-cleaned input apply this rule. The clip
-  (`core.clip`) applies it to its clipped output, `topo-clean` again
-  after its fix, and `package-polygons`, `package-points` and
+  (`core.clip`) applies it to its clipped output, `topo-clean` to its
+  output when no clean ran, and `package-polygons`, `package-points` and
   `package-lines` to their input.
 - Each merged or dropped part MUST be reported as a `micro-polygon` row
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
-- `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  never change geometry. `change` applies
-  it only through its auto-cleaned inputs; its overlay drops intersections
-  below `SNAP_TOLERANCE` squared instead.
+- `schema-join`, `schema-map`, `change` and `code-update` MUST NOT apply
+  this rule to their output, since they write their input geometry.
+  `change` and `code-update` apply it only to the cleaned copy they match
+  on; `change`'s overlap step drops intersections below `SNAP_TOLERANCE`
+  squared.
 
 ## Sliver gaps
 
@@ -263,11 +264,15 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 ## Input coverage defects
 
 - A tool that keeps geometry as it is (`schema-*`, `code-*`, `name-*`,
-  `change`, and every `*-detect` tool) MUST write its input geometry unchanged,
-  overlaps and gaps included. It MAY clean a copy for its own matching.
+  `change`, and every `*-detect` tool) MUST write its input geometry as
+  read (after the read's `ST_MakeValid` repair and world clip),
+  overlaps, gaps and micro-polygons included. It MAY clean a copy for its
+  own matching.
 - A tool that builds new geometry from a layer (`package-polygons`,
   `package-points`, `package-lines`) MUST raise on an overlap in it.
 - Only `topo-clean`, `package`, and the `edge-*` tools fix coverage defects.
+  `package-polygons`, `package-points` and `package-lines` merge
+  micro-polygons in their input (see Micro-polygons) and fix nothing else.
 
 ## Hard gates at each tool's output stage
 

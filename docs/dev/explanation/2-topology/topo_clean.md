@@ -74,12 +74,12 @@ Run `topo-tools topo-clean --help` for the full, always-current option list.
    `gap_maximum_width`, see "`has_invalid_edges()` alone cannot
    stand in for gap detection" below; that check is only about
    overlaps/mismatched edges, so a gap-only input still needs
-   `ST_CoverageClean` to actually run), validated against invalid edges, a
-   total-area floor, and a per-fid collapse/geometry-type check, raising
-   immediately if any fails (see "Validating a coverage-clean result"
-   below). `coverage_clean` merges micro-polygons before cleaning, and a
-   second `merge_micro_polygons` pass runs on the fixed output; both
-   passes' merge rows land in `{name}_03_micro`. When `{name}_02` has a
+   `ST_CoverageClean` to actually run), validated against a total-area
+   floor and a per-fid collapse/geometry-type check, raising immediately if
+   any fails (see "Validating a coverage-clean result" below).
+   `coverage_clean` merges micro-polygons before and after cleaning; when no
+   clean runs, one `merge_micro_polygons` pass runs on the copied output
+   instead. Either way the merge rows land in `{name}_03_micro`. When `{name}_02` has a
    notch row, `close_notches()` first moves each flagged endpoint onto the
    other unit, on a copy of `{name}_01`, and the clean runs on that copy.
    An endpoint touching a third unit stays put, since moving it would cut
@@ -173,11 +173,11 @@ own `include/geos/coverage/CoverageCleaner.h`/`src/coverage/CoverageCleaner.cpp`
 
 `_03_clean.py`'s `main()` makes a single `ST_CoverageClean` call at the
 resolved target width (from the default, `all` or an explicit value) and
-validates
-it against **both** `has_invalid_edges()` *and* a total-area sanity
-floor: the invalid-edges check alone passes a totally empty result as
-"no violations," confirmed directly, so it can't catch a collapsed output
-on its own. `main()` raises immediately if either check fails.
+validates it against a total-area sanity floor, a per-fid collapse check
+and a geometry-type check, raising immediately if any fails. An
+invalid-edge check passes a totally empty result, so it can't catch a
+collapsed output; `_04_outputs` runs the invalid-edge check on the final
+table through `finalize_geometry()`.
 
 An earlier escalation-ladder retry approach was removed after the two
 failure modes it worked around both turned out to be
@@ -317,8 +317,8 @@ cleaning tolerance.
 
 ## The gap gate is bounded by topo-clean's own fill target
 
-`_03_clean.py`'s post-fix validation raises on any invalid edge, area
-loss, collapsed fid or non-polygon geometry, and returns
+`_03_clean.py`'s post-fix validation raises on area loss, a collapsed
+fid or non-polygon geometry, and returns
 `gap_maximum_width_deg`, the width it actually asked `ST_CoverageClean` to
 close for this run (`None` when no fill was requested at all).
 `api/topo_clean.py` passes that width to `_04_outputs.py`, whose
