@@ -238,11 +238,8 @@ def _world_clip_sql(col: str) -> str:
         END"""
 
 
-def warn_world_clipped(conn: DuckDBPyConnection, table: str, label: str) -> None:
-    """Log how many of `table`'s rows the world clip changed, then drop the flag."""
-    clipped = conn.execute(
-        f'SELECT count(*) FILTER (WHERE {_WORLD_CLIP_FLAG}) FROM "{table}"'
-    ).fetchall()[0][0]
+def log_world_clipped(label: str, clipped: int) -> None:
+    """Warn that `clipped` of `label`'s features were clipped to world bounds."""
     if clipped:
         logger.warning(
             "%s: clipped %d feature(s) extending past 180° longitude or 90° "
@@ -250,6 +247,14 @@ def warn_world_clipped(conn: DuckDBPyConnection, table: str, label: str) -> None
             label,
             clipped,
         )
+
+
+def warn_world_clipped(conn: DuckDBPyConnection, table: str, label: str) -> None:
+    """Log how many of `table`'s rows the world clip changed, then drop the flag."""
+    clipped = conn.execute(
+        f'SELECT count(*) FILTER (WHERE {_WORLD_CLIP_FLAG}) FROM "{table}"'
+    ).fetchall()[0][0]
+    log_world_clipped(label, clipped)
     conn.execute(f'ALTER TABLE "{table}" DROP COLUMN {_WORLD_CLIP_FLAG}')
 
 
