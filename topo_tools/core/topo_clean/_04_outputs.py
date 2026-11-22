@@ -12,7 +12,7 @@ from topo_tools.core.coverage import (
     finalize_geometry,
     gap_issues_sql,
 )
-from topo_tools.core.duckdb_utils import bbox_columns_sql
+from topo_tools.core.duckdb_utils import bbox_columns_sql, subdivide_sql
 from topo_tools.core.io import export_geometry_table, export_issues_table
 from topo_tools.core.units import m2_per_deg2_factor
 
@@ -49,14 +49,17 @@ def _add_outcome_columns(conn: DuckDBPyConnection, name: str, gaps: str) -> None
                  SELECT b.fid, coalesce(ST_Area(a.geom), 0) AS area
                  FROM before b LEFT JOIN "{name}_03" a USING (fid)
              ),
+             fixed_parts AS (
+                 SELECT UNNEST({subdivide_sql("geom")}) AS geom FROM "{name}_03"
+             ),
              fixed_bbox AS (
-                 SELECT geom, {bbox_columns_sql("geom")} FROM "{name}_03"
+                 SELECT geom, {bbox_columns_sql("geom")} FROM fixed_parts
              ),
              gap_bbox AS (
                  SELECT key, geom, {bbox_columns_sql("geom")}
                  FROM "{name}_02" WHERE kind = 'gap'
              ),
-             -- Per-pair sum equals the union's area: `{name}_03` has no overlaps.
+             -- Per-pair sum equals the union's area: the pieces don't overlap.
              gap_filled AS (
                  SELECT g.key, sum(ST_Area(ST_Intersection(g.geom, f.geom))) AS area
                  FROM gap_bbox g
