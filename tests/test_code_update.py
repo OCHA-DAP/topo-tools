@@ -805,13 +805,13 @@ def test_output_keeps_input_geometry(tmp_path):
         },
         {
             "adm1_pcode": "AA.002",
-            "adm1_name": "N2",
-            "wkt": "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))",
+            "adm1_name": "N3",
+            "wkt": "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))",
         },
         {
             "adm1_pcode": "AA.003",
-            "adm1_name": "N3",
-            "wkt": "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))",
+            "adm1_name": "N2",
+            "wkt": "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))",
         },
     ]
     new_rows = [
@@ -841,8 +841,5 @@ def test_output_keeps_input_geometry(tmp_path):
     assert written == source
     codes = _fetch(output_path, "adm1_pcode", "1")
     assert sorted(c for (c,) in codes) == ["AA.001", "AA.002", "AA.003"]
-    with duckdb.connect() as conn:
-        logged = conn.execute(
-            f"SELECT count(DISTINCT new_name) FROM '{changelog_path}'"
-        ).fetchall()[0][0]
-    assert logged == len(rows)
+    logged = {r["new_code"]: r["code_outcome"] for r in _read_changelog(changelog_path)}
+    assert logged == dict.fromkeys(["AA.001", "AA.002", "AA.003"], "retained")

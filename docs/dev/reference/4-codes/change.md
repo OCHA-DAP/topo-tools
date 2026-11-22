@@ -13,8 +13,8 @@ sidebar:
   file per call.
 - `change` MUST load and coverage-clean both layers via the shared
   `core.io.read_reproject_and_clean()` helper before comparison, and MUST
-  classify and write every input row with its uncleaned geometry, including
-  a row the clean removes.
+  classify every input row, including a row the clean removes, and write
+  each overlay row with its uncleaned geometry.
 
 ## Overlap computation
 

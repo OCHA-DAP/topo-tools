@@ -182,5 +182,5 @@ def main(  # noqa: PLR0913
     conn.execute(f'DROP TABLE IF EXISTS "{changelog_table}"')
 
     if not debug:
-        for table in (finest_table, f"{name}_b_00", out):
+        for table in (finest_table, f"{name}_a_00", f"{name}_b_00", out):
             conn.execute(f'DROP TABLE IF EXISTS "{table}"')
