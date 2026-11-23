@@ -566,6 +566,16 @@ def _group_digit(cols: list[str]) -> int | None:
     return digits[0][0]
 
 
+def _group_level_name(cols: list[str]) -> str | None:
+    """Return the name text through the first digit most columns share, e.g. adm0."""
+    names = Counter(
+        c[: m.end()].lower() for c in cols if (m := _LEVEL_DIGIT_RE.search(c))
+    ).most_common(2)
+    if not names or (len(names) > 1 and names[0][1] == names[1][1]):
+        return None
+    return names[0][0]
+
+
 def _bridged_edges(
     groups: list[tuple[int, list[str]]],
     edges: dict[tuple[int, int], tuple[bool, bool, bool]],
@@ -608,6 +618,7 @@ def _build_chain(
         embeds for _joins, embeds, _strong in edges.values()
     )
     bridged_edges = _bridged_edges(groups, edges)
+    level_names = [_group_level_name(cols) for _count, cols in groups]
 
     # Only an unbroken, fully-populated constant prefix from index 0 is the
     # genuine root; a sparse column can coincidentally have one distinct value.
@@ -650,7 +661,14 @@ def _build_chain(
                 root_freebie
                 or embeds
                 or (strong and chain_has_embed[coarser_idx])
-                or no_embedding_anywhere
+                # Containment alone can't split two columns named for one level.
+                or (
+                    no_embedding_anywhere
+                    and (
+                        level_names[coarser_idx] is None
+                        or level_names[coarser_idx] != level_names[finer_idx]
+                    )
+                )
                 or (coarser_idx, finer_idx) in bridged_edges
             )
             if not justified:
@@ -1011,6 +1029,24 @@ def _vetoed_rows(
     return rows
 
 
+def _has_name_partner(
+    conn: DuckDBPyConnection,
+    table: str,
+    level: tuple[int, list[str]],
+    columns: list[str],
+    counts: dict[str, int],
+) -> bool:
+    """Check another column names `level`'s units, as `_bracket_level` would."""
+    count, (code,) = level
+    return count > 1 and any(
+        c != code
+        and counts[c] <= count
+        and _collapse_ratio(counts, c, count) <= _WINNER_MAX_COLLAPSE_RATIO
+        and _containment_holds(conn, table, coarser=c, finer=code)
+        for c in columns
+    )
+
+
 def resolve_columns(
     conn: DuckDBPyConnection,
     table: str,
@@ -1041,7 +1077,11 @@ def resolve_columns(
     chain, vetoed = _build_chain(conn, table, level_groups)
     # A lone level with a lone column has no parent to embed and no sibling
     # to pair with, indistinguishable from an arbitrary non-hierarchy column.
-    if len(chain) == 1 and len(chain[0][1]) < _MIN_ROOT_EVIDENCE_COLUMNS:
+    if (
+        len(chain) == 1
+        and len(chain[0][1]) < _MIN_ROOT_EVIDENCE_COLUMNS
+        and not _has_name_partner(conn, table, chain[0], chainable_columns, counts)
+    ):
         chain = []
 
     if not chain:

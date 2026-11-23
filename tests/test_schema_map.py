@@ -780,3 +780,23 @@ def test_numbered_names_beside_an_embedding_code_stay_names(tmp_path):
     rows_out = _crosswalk(out)
     assert rows_out["adm1_pcode"]["target_column"] == "adm1_code"
     assert rows_out["adm1_name"]["target_column"] == "adm1_name"
+
+
+@pytest.mark.parametrize(
+    ("coarser", "finer"), [("prov_2019", "dist_2019"), ("iso3", "adm3_pcode")]
+)
+def test_shared_digit_in_unrelated_names_keeps_two_levels(coarser, finer, tmp_path):
+    path = tmp_path / "shared_digit.parquet"
+    rows = [
+        (_unit_square(4 * p + d), f"P{p}", f"Z{p}{d}x")
+        for p in range(3)
+        for d in range(4)
+    ]
+    _write_table(path, ["geom", coarser, finer], rows)
+    out = tmp_path / "crosswalk.csv"
+    map(path, output_path=out, overwrite=True)
+
+    rows_out = _crosswalk(out)
+    targets = [rows_out[c]["target_column"] for c in (coarser, finer)]
+    assert all(targets), targets
+    assert targets[0] != targets[1], targets
