@@ -43,6 +43,7 @@ from topo_tools.core.io import (
     check_overwrite,
     default_output_path,
     input_basename,
+    log_world_clipped,
     reproject_select_sql,
     resolve_input_path,
     sort_paths_by_column_count_desc,
@@ -331,14 +332,16 @@ def _original_bboxes(
     """Return each original file's (xmin, ymin, xmax, ymax) extent, None if empty."""
     result = []
     for path in originals:
+        select = reproject_select_sql(
+            conn, path, make_valid=False, flag_world_clip=True
+        )
         row = conn.execute(f"""--sql
-            SELECT MIN(xmin), MIN(ymin), MAX(xmax), MAX(ymax)
-            FROM (
-                SELECT {bbox_columns_sql("geom")}
-                FROM ({reproject_select_sql(conn, path, make_valid=False)})
-            )
+            SELECT MIN(xmin), MIN(ymin), MAX(xmax), MAX(ymax),
+                   count(*) FILTER (WHERE _world_clipped)
+            FROM (SELECT {bbox_columns_sql("geom")}, _world_clipped FROM ({select}))
         """).fetchone()
-        result.append((path, None if row[0] is None else tuple(row)))
+        log_world_clipped(str(path), row[4])
+        result.append((path, None if row[0] is None else tuple(row[:4])))
     return result
 
 

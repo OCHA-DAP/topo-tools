@@ -12,6 +12,7 @@ from topo_tools.api.edge_match import match
 from topo_tools.api.edge_mosaic import (
     _load_nearby_originals,
     _needs_originals,
+    _original_bboxes,
     _paired_original,
     _warn_keyless,
     mosaic,
@@ -1866,3 +1867,13 @@ def test_no_nearby_original_loads_none(tmp_path):
             keyless={},
         )
         assert _paired_original(conn, "t") is None
+
+
+def test_original_bboxes_warns_on_world_clip(tmp_path, caplog):
+    path = tmp_path / "orig.parquet"
+    _write_synthetic(path, [(1, "POLYGON((179 0, 180.5 0, 180.5 1, 179 1, 179 0))")])
+    with caplog.at_level(logging.WARNING), duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        ((_, bbox),) = _original_bboxes(conn, [path])
+    assert f"{path}: clipped 1 feature(s)" in caplog.text
+    assert bbox == (179, 0, 180, 1)

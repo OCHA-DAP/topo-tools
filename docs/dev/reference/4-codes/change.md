@@ -12,7 +12,9 @@ sidebar:
 - `change` MUST accept exactly one old-version file and one new-version
   file per call.
 - `change` MUST load and coverage-clean both layers via the shared
-  `core.io.read_reproject_and_clean()` helper before comparison.
+  `core.io.read_reproject_and_clean()` helper before comparison, and MUST
+  classify every input row, including a row the clean removes, and write
+  each overlay row with its uncleaned geometry.
 
 ## Overlap computation
 

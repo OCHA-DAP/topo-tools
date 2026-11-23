@@ -91,8 +91,8 @@ Run `topo-tools edge-match --help` for the full, always-current option list.
 5. **`_04_clean`**: runs `coverage_clean()` in place over the clipped result,
    orphan group excluded, closing the seams that two clips of one border leave. `--no-clean` skips this
    stage (see `docs/adr/0149`).
-6. **`_05_outputs`**: rounds to the output grid and validates the coverage via
-   `finalize_geometry`, or with `--no-clean` merges micro-polygons, rounds, and runs
+6. **`_05_outputs`**: validates the coverage via
+   `finalize_geometry`, or with `--no-clean` merges micro-polygons and runs
    the bounded invalid-edge check (orphan group excluded).
    Both modes add `kind='gap'` rows for overlay area no output row covers. It then
    builds the issues report from the dropped input polygons collected in

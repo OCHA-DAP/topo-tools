@@ -3,8 +3,6 @@
 import re
 
 SNAP_TOLERANCE = 0.00000001
-# Final outputs snap to this grid, Esri FileGDB's default XY resolution.
-GRID_RESOLUTION = 0.000000001
 WORLD_BOUNDS_WKT = "POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))"
 # A clip-detached piece merges into a neighbour only below this fraction of its
 # own source part's kept piece; else it is reported.
@@ -136,12 +134,17 @@ CLIP_PAIR_VERTEX_BUDGET = 20_000_000
 # core.coverage.invalid_edge_issues stops a batch of part pairs after this long.
 INVALID_EDGE_BATCH_SECONDS = 300
 
-_PARQUET_EXPORT = (
+PARQUET_COPY = "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15)"
+GEOPARQUET_COPY = (
     "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"
 )
 COPY_OPTS = {
-    ".parquet": _PARQUET_EXPORT,
+    ".parquet": GEOPARQUET_COPY,
     ".gpkg": "WITH (FORMAT GDAL, DRIVER 'GPKG')",
     ".geojson": "WITH (FORMAT GDAL, DRIVER 'GeoJSON')",
     ".shp": "WITH (FORMAT GDAL, DRIVER 'ESRI Shapefile')",
+}
+TABLE_COPY_OPTS = {
+    ".csv": "(FORMAT CSV, HEADER)",
+    ".parquet": PARQUET_COPY,
 }

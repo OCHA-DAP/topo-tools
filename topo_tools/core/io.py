@@ -19,12 +19,12 @@ from .constants import (
 from .coverage import (
     close_notches,
     coverage_clean,
-    finalize_geometry,
     has_valid_topology,
 )
 from .duckdb_utils import quote_identifier
 
 logger = getLogger(__name__)
+_WORLD_CLIP_FLAG = "_world_clipped"
 
 # Esri FileGDB API type GUID for a feature class (spatial); stable across
 # versions, and how GDAL's own OpenFileGDB driver tells layers apart too.
@@ -122,6 +122,7 @@ def reproject_select_sql(
     layer: str | None = None,
     *,
     make_valid: bool = True,
+    flag_world_clip: bool = False,
 ) -> str:
     """Build the read+reproject-to-EPSG:4326 SELECT for one file, as unexecuted SQL.
 
@@ -176,11 +177,20 @@ def reproject_select_sql(
     # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged;
     # one already in CRS skips the transform, which roughly doubles peak memory.
     reproject = geom_type not in ("GEOMETRY", f"GEOMETRY('{CRS}')")
-    geom_expr = (
-        "ST_Force2D(ST_MakeValid(ST_Transform("
-        f"ST_MakeValid(\"{geom_col}\"), '{CRS}', true)))"
+    valid = (
+        f"ST_MakeValid(ST_Transform(ST_MakeValid(\"{geom_col}\"), '{CRS}', true))"
         if reproject
-        else f"ST_SetCRS(ST_Force2D(ST_MakeValid(\"{geom_col}\")), '{CRS}')"
+        else f'ST_MakeValid("{geom_col}")'
+    )
+    # ST_MakeValid can collapse a polygon sliver to a line; keep polygonal parts.
+    valid = (
+        f'CASE WHEN ST_Dimension("{geom_col}") = 2 '
+        f"THEN ST_CollectionExtract({valid}, 3) ELSE {valid} END"
+    )
+    geom_expr = (
+        f"ST_Force2D({valid})"
+        if reproject
+        else f"ST_SetCRS(ST_Force2D({valid}), '{CRS}')"
     )
     if not make_valid:
         geom_expr = (
@@ -191,8 +201,13 @@ def reproject_select_sql(
 
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
+    flag_sql = (
+        f", NOT {_within_world_sql('geom')} AS {_WORLD_CLIP_FLAG}"
+        if flag_world_clip
+        else ""
+    )
     return f"""
-        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom)
+        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom){flag_sql}
         FROM (
             SELECT * EXCLUDE ({exclude_sql}){rename_sql},
                    row_number() OVER () AS fid,
@@ -202,20 +217,45 @@ def reproject_select_sql(
     """
 
 
+def _within_world_sql(col: str) -> str:
+    """Build SQL true where `col` is empty or its bbox is within world bounds."""
+    return f"""(ST_IsEmpty({col}) OR (
+            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
+            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
+        ))"""
+
+
 def _world_clip_sql(col: str) -> str:
     """Build SQL clipping `col` to world bounds, only where its bbox goes past them."""
     world = f"ST_GeomFromText('{WORLD_BOUNDS_WKT}')"
     return f"""CASE
-        WHEN ST_IsEmpty({col}) OR (
-            ST_XMin({col}) >= -180 AND ST_XMax({col}) <= 180
-            AND ST_YMin({col}) >= -90 AND ST_YMax({col}) <= 90
-        ) THEN {col}
+        WHEN {_within_world_sql(col)} THEN {col}
         WHEN NOT ST_Intersects({col}, {world})
         THEN error('{_OUTSIDE_WORLD}')
         ELSE ST_SetCRS(ST_CollectionExtract(
             ST_Intersection(ST_MakeValid({col}), {world}), 3
         ), '{CRS}')
         END"""
+
+
+def log_world_clipped(label: str, clipped: int) -> None:
+    """Warn that `clipped` of `label`'s features were clipped to world bounds."""
+    if clipped:
+        logger.warning(
+            "%s: clipped %d feature(s) extending past 180° longitude or 90° "
+            "latitude to world bounds",
+            label,
+            clipped,
+        )
+
+
+def warn_world_clipped(conn: DuckDBPyConnection, table: str, label: str) -> None:
+    """Log how many of `table`'s rows the world clip changed, then drop the flag."""
+    clipped = conn.execute(
+        f'SELECT count(*) FILTER (WHERE {_WORLD_CLIP_FLAG}) FROM "{table}"'
+    ).fetchall()[0][0]
+    log_world_clipped(label, clipped)
+    conn.execute(f'ALTER TABLE "{table}" DROP COLUMN {_WORLD_CLIP_FLAG}')
 
 
 def sort_paths_by_column_count_desc(
@@ -234,7 +274,7 @@ def read_and_reproject(
     conn: DuckDBPyConnection, name: str, path: Path | str, layer: str | None = None
 ) -> None:
     """Read geodata, reproject to EPSG:4326, store as canonical table `{name}_01`."""
-    select_sql = reproject_select_sql(conn, path, layer)
+    select_sql = reproject_select_sql(conn, path, layer, flag_world_clip=True)
     try:
         conn.execute(f'CREATE OR REPLACE TABLE "{name}_01" AS {select_sql}')
     except duckdb.Error as e:
@@ -246,6 +286,7 @@ def read_and_reproject(
             "invalid geometry (e.g. an unclosed ring) that ST_MakeValid cannot repair"
         )
         raise ValueError(msg) from e
+    warn_world_clipped(conn, f"{name}_01", str(path))
 
     count = conn.execute(f'SELECT COUNT(*) FROM "{name}_01"').fetchone()[0]
     if count == 0:
@@ -257,20 +298,25 @@ def read_and_reproject(
         raise ValueError(msg)
 
 
-def read_reproject_and_clean(
+def read_reproject_and_clean(  # noqa: PLR0913 (each param is a distinct required input)
     conn: DuckDBPyConnection,
     name: str,
     path: Path | str,
     layer: str | None = None,
     *,
     fix_notches: bool = False,
+    keep_raw: bool = False,
 ) -> None:
-    """Read, reproject, and coverage-clean geodata into table `{name}_01`."""
+    """Read, reproject, and coverage-clean geodata into table `{name}_01`.
+
+    keep_raw saves the uncleaned rows as `{name}_00` when a clean runs.
+    """
     start = time.monotonic()
     read_and_reproject(conn, name, path, layer)
     logger.info("read %s in %.0fs", path, time.monotonic() - start)
 
     table = f"{name}_01"
+    conn.execute(f'DROP TABLE IF EXISTS "{name}_00"')
     if fix_notches:
         start = time.monotonic()
         close_notches(conn, table)
@@ -280,9 +326,35 @@ def read_reproject_and_clean(
     logger.info("coverage checked in %.0fs", time.monotonic() - start)
     if not valid:
         logger.info("cleaning coverage: invalid edges or gaps detected")
+        if keep_raw:
+            conn.execute(f'CREATE TABLE "{name}_00" AS SELECT * FROM "{table}"')
         start = time.monotonic()
         coverage_clean(conn, table, table, fids=None)
         logger.info("coverage cleaned in %.0fs", time.monotonic() - start)
+        if keep_raw:
+            _restore_removed_rows(conn, table, f"{name}_00")
+
+
+def _restore_removed_rows(conn: DuckDBPyConnection, table: str, raw: str) -> None:
+    """Re-add rows the clean merged away, as read, so every input row is matched."""
+    removed = f'SELECT r.* FROM "{raw}" r ANTI JOIN "{table}" t USING (fid)'
+    count = conn.execute(f"SELECT count(*) FROM ({removed})").fetchall()[0][0]
+    if count:
+        logger.warning("%s: kept %d row(s) the clean removed, as read", table, count)
+        conn.execute(f'INSERT INTO "{table}" BY NAME {removed}')
+
+
+def raw_rows_sql(conn: DuckDBPyConnection, table: str, raw: str) -> str:
+    """Select `table`'s rows with `raw`'s geom where `raw` exists."""
+    exists = conn.execute(
+        "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [raw]
+    ).fetchall()[0][0]
+    if not exists:
+        return f'SELECT * FROM "{table}"'
+    return f"""
+        SELECT t.* REPLACE (coalesce(r.geom, t.geom) AS geom)
+        FROM "{table}" t LEFT JOIN "{raw}" r USING (fid)
+    """
 
 
 def export_geometry_table(
@@ -332,5 +404,4 @@ def export_issues_table(conn: DuckDBPyConnection, table: str, dest: Path) -> Non
     if count == 0:
         dest.unlink(missing_ok=True)
         return
-    finalize_geometry(conn, table, validate="none", drop_empty=False)
     export_geometry_table(conn, table, dest, exclude_fid=False)

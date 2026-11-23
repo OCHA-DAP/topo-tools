@@ -63,7 +63,11 @@ Run `topo-tools change --help` for the full, always-current option list.
 
 1. **`_01_inputs`**: loads and coverage-cleans both layers by calling the
    shared `core.io.read_reproject_and_clean()` helper twice
-   (`{name}_a_01` = old, `{name}_b_01` = new).
+   (`{name}_a_01` = old, `{name}_b_01` = new), saving each side's uncleaned
+   rows as `{name}_a_00`/`{name}_b_00` when a clean runs. A row the clean
+   removes (a merged micro-polygon) goes back into `_01` as read, so every
+   input row is matched and classified; `_04_outputs` writes the overlay
+   with each row's geometry from `_00`, joined by `fid`.
    Unlike `topo-clean`, `change` isn't trying to detect defects in the raw
    input (it's comparing two whole layers), so pre-cleaning each side
    reduces the risk of native GEOS choking on invalid geometry during

@@ -96,8 +96,8 @@ def _fix(
     *,
     gap_maximum_width: tuple[str, float | None],
     snapping_distance: tuple[str, float | None],
-) -> float | None:
-    """Fix defects in `{name}_01` into `{name}_03`; return the gap width filled."""
+) -> tuple[float | None, bool]:
+    """Fix `{name}_01` into `{name}_03`; return the gap width filled, and if cleaned."""
     source = f"{name}_01"
     table = source
     out_table = f"{name}_03"
@@ -117,7 +117,7 @@ def _fix(
             f'CREATE OR REPLACE TABLE "{out_table}" AS SELECT * FROM "{table}"'
         )
         conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp0"')
-        return None
+        return None, False
 
     snap_mode, snap_value = snapping_distance
     snapping_distance_deg = SNAP_TOLERANCE if snap_mode == "default" else snap_value
@@ -141,13 +141,12 @@ def _fix(
     collapsed, drifted = _defect_unrelated_fid_outcomes(conn, name, source, out_table)
     conn.execute(f'DROP TABLE IF EXISTS "{name}_03_tmp0"')
     bad_types = _bad_geometry_type_count(conn, out_table)
-    invalid_edges = has_invalid_edges(conn, out_table)
-    if invalid_edges or output_area < min_area or collapsed or bad_types:
+    if output_area < min_area or collapsed or bad_types:
         msg = (
             f"invalid or collapsed coverage-clean output (area "
             f"{output_area} vs input {input_area}, {collapsed} fid(s) with no "
             f"detected defect collapsed to empty, {bad_types} fid(s) with a "
-            f"non-polygon geometry type, invalid edges: {invalid_edges}) at "
+            f"non-polygon geometry type) at "
             f"gap_maximum_width={gap_maximum_width_deg} on {source}"
         )
         raise RuntimeError(msg)
@@ -168,7 +167,7 @@ def _fix(
         output_area,
         source,
     )
-    return gap_maximum_width_deg
+    return gap_maximum_width_deg, True
 
 
 def main(
@@ -179,21 +178,23 @@ def main(
     snapping_distance: tuple[str, float | None],
 ) -> None:
     """Fix `{name}_01` into `{name}_03`; write the filled gap width to `_03_width`."""
-    gap_maximum_width_deg = _fix(
+    gap_maximum_width_deg, cleaned = _fix(
         conn,
         name,
         gap_maximum_width=gap_maximum_width,
         snapping_distance=snapping_distance,
     )
     out_table = f"{name}_03"
-    merge_micro_polygons(conn, out_table, out_table, issues_table=f"{name}_03_tmp2")
+    # coverage_clean() already merges micro-polygons in its own output.
+    if not cleaned:
+        merge_micro_polygons(conn, out_table, out_table, issues_table=f"{name}_03_tmp2")
     parts = [
         f'SELECT * FROM "{t}"'
         for t in (f"{name}_03_tmp1", f"{name}_03_tmp2")
         if conn.execute(
             "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [t]
         ).fetchone()[0]
-    ]
+    ] or [f'SELECT * FROM "{name}_02" WHERE FALSE']
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{name}_03_micro" AS
         SELECT * REPLACE (

@@ -105,9 +105,9 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
 
 ## Outputs
 
-- `edge-match` MUST round the cleaned output to the output grid and validate it as a
+- `edge-match` MUST validate the cleaned output as a
   coverage, passthrough rows excluded, raising on what remains. With `clean` False it
-  MUST round the output and write `invalid-edge` rows instead of raising, and
+  MUST write `invalid-edge` rows instead of raising, and
   MUST log a warning that the output is not coverage-cleaned. In both cases it
   MUST report overlay area no output row covers as `kind='gap'` rows.
 - `edge-match` MUST export the final merged layer.
@@ -116,7 +116,7 @@ See [edge-extend](edge_extend.md) for the rules `edge-match` shares with it.
   clip intersection, every clip-detached piece with an edge neighbour, and every passthrough input polygon and gap-filled overlay polygon
   (`merge` set only), so a human can audit what didn't make it into the output or what may
   need review.
-- An output row whose rounded geometry is empty MUST be dropped and
+- An output row whose geometry is empty MUST be dropped and
   reported as an `empty-geometry` row, `unit_a` holding its input polygon's
   fid and `fixed` FALSE.
 - For an `unassigned`/`dropped_group`/`clip-empty`/`passthrough` row,

@@ -6,6 +6,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from topo_tools.core.assign import load_input
 from topo_tools.core.io import (
     _auto_resolve_layer,
     default_output_path,
@@ -142,6 +143,18 @@ def test_read_and_reproject_repairs_geometry_broken_by_reprojection(tmp_path):
         ).fetchone()[0]
 
 
+def test_read_and_reproject_drops_line_parts_left_by_make_valid(tmp_path):
+    path = tmp_path / "spike.parquet"
+    spike = "POLYGON((0 0, 2 0, 2 1, 3 1, 2 1, 2 2, 0 2, 0 0))"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(f"COPY (SELECT ST_GeomFromText('{spike}') AS geom) TO '{path}'")
+        read_and_reproject(conn, "out", path)
+        assert conn.execute(
+            'SELECT ST_GeometryType(geom), ST_Area(geom) FROM "out_01"'
+        ).fetchall() == [("MULTIPOLYGON", 4.0)]
+
+
 def test_read_and_reproject_raises_on_zero_rows(tmp_path):
     path = tmp_path / "empty.gpkg"
     with duckdb.connect() as conn:
@@ -253,7 +266,7 @@ def _write_wkt(conn, path, wkts):
     conn.execute(f"COPY (SELECT * FROM (VALUES {values}) t(id, geom)) TO '{path}'")
 
 
-def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path):
+def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path, caplog):
     path = tmp_path / "antimeridian.parquet"
     inside = "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
     past = "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))"
@@ -266,6 +279,7 @@ def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path):
         ).fetchall()
     assert rows[0][0] == "POLYGON ((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
     assert rows[1][1] == _ANTIMERIDIAN
+    assert "clipped 1 feature(s)" in caplog.text
 
 
 def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):
@@ -276,3 +290,17 @@ def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):
         with pytest.raises(ValueError, match="outside world bounds") as e:
             read_and_reproject(conn, "out", path)
     assert "unclosed ring" not in str(e.value)
+
+
+def test_load_input_warns_on_world_clip(tmp_path, caplog):
+    inside = "POLYGON((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
+    past = "POLYGON((179.5 0, 180.0000001 0, 180.0000001 1, 179.5 1, 179.5 0))"
+    paths = [tmp_path / "a.parquet", tmp_path / "b.parquet"]
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_wkt(conn, paths[0], [inside])
+        _write_wkt(conn, paths[1], [past])
+        load_input(conn, "m", paths)
+        columns = [r[0] for r in conn.execute('DESCRIBE "m_input_01"').fetchall()]
+    assert "clipped 1 feature(s)" in caplog.text
+    assert "_world_clipped" not in columns

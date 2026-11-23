@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Moves `docs/adr/0037`'s gap check from `topo-clean`'s clean stage
+Superseded by ADR-0156. Moves `docs/adr/0037`'s gap check from `topo-clean`'s clean stage
 to its outputs stage; the check itself stands.
 
 ## Context
