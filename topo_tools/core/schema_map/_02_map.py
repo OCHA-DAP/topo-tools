@@ -566,6 +566,16 @@ def _group_digit(cols: list[str]) -> int | None:
     return digits[0][0]
 
 
+def _group_level_name(cols: list[str]) -> str | None:
+    """Return the name text through the first digit most columns share, e.g. adm0."""
+    names = Counter(
+        c[: m.end()].lower() for c in cols if (m := _LEVEL_DIGIT_RE.search(c))
+    ).most_common(2)
+    if not names or (len(names) > 1 and names[0][1] == names[1][1]):
+        return None
+    return names[0][0]
+
+
 def _bridged_edges(
     groups: list[tuple[int, list[str]]],
     edges: dict[tuple[int, int], tuple[bool, bool, bool]],
@@ -608,7 +618,7 @@ def _build_chain(
         embeds for _joins, embeds, _strong in edges.values()
     )
     bridged_edges = _bridged_edges(groups, edges)
-    digits = [_group_digit(cols) for _count, cols in groups]
+    level_names = [_group_level_name(cols) for _count, cols in groups]
 
     # Only an unbroken, fully-populated constant prefix from index 0 is the
     # genuine root; a sparse column can coincidentally have one distinct value.
@@ -655,8 +665,8 @@ def _build_chain(
                 or (
                     no_embedding_anywhere
                     and (
-                        digits[coarser_idx] is None
-                        or digits[coarser_idx] != digits[finer_idx]
+                        level_names[coarser_idx] is None
+                        or level_names[coarser_idx] != level_names[finer_idx]
                     )
                 )
                 or (coarser_idx, finer_idx) in bridged_edges
