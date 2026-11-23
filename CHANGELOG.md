@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-23
+
+### Changed
+
+- No tool rounds its output geometry. A step that clips or intersects rows
+  against another layer runs one coverage clean over the whole output, and
+  every validated polygon output raises on a row failing `ST_IsValid`.
+- `change`, `code-update` and `schema-join` write each input row's geometry
+  as read and clean only an internal copy for matching. `change` and
+  `code-update` match, classify and code every input row, including one the
+  clean merges away. `schema-join` accepts an overlapping input layer.
+- Every read logs a warning with the count of features it clips to ±180°
+  longitude or ±90° latitude.
+- `package` skips repeated invalid-edge checks on geometry already checked
+  valid in the same run.
+
+### Fixed
+
+- `topo-clean` runs on global admin0 layers without running out of memory.
+- Reading an invalid polygon input keeps only polygonal parts of the repair.
+- `--name-field`/`--code-field` resolve on a layer whose only level is 0.
+- Level detection keeps a code column and its repeated-name column on one
+  level, so `package-lines` names its sides from the real level columns.
+- `package-lines` on a file with no detectable level writes its lines, with
+  no SQL syntax error.
+
 ## [0.25.0] - 2026-11-21
 
 ### Changed
@@ -1138,7 +1164,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.2...v0.25.0
 [0.24.2]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.0...v0.24.1
