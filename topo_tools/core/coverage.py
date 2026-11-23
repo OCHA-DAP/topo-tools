@@ -333,8 +333,25 @@ def _invalid_part_pairs(
     _drop_shared_segments(conn)
 
 
+_VALID_EDGE_FINGERPRINTS: set[tuple] = set()
+
+
+def _geometry_fingerprint(conn: DuckDBPyConnection, table: str) -> tuple:
+    """Row count, XOR of per-row WKB md5s and vertex total of `table.geom`."""
+    return tuple(
+        conn.execute(f"""--sql
+            SELECT count(*), bit_xor(md5_number(ST_AsWKB(geom))), sum(ST_NPoints(geom))
+            FROM "{table}"
+        """).fetchall()[0]
+    )
+
+
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     """Return True if `table.geom` has any overlaps or unmatched shared edges."""
+    # Skip geometry this process already checked valid, e.g. package's re-reads.
+    fingerprint = _geometry_fingerprint(conn, table)
+    if fingerprint in _VALID_EDGE_FINGERPRINTS:
+        return False
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _ie_parts AS
         WITH d AS (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
@@ -346,6 +363,8 @@ def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     invalid = conn.execute("SELECT count(*) > 0 FROM _ie_edges").fetchone()[0]
     for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+    if not invalid:
+        _VALID_EDGE_FINGERPRINTS.add(fingerprint)
     return invalid
 
 

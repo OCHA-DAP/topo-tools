@@ -120,3 +120,10 @@ def test_fid_follows_group_by_order(conn):
     dissolve_stage.main(conn, "t_rev", "t_out", group_by=["adm2_pcode"])
     rows = conn.execute('SELECT fid, adm2_pcode FROM "t_out" ORDER BY fid').fetchall()
     assert rows == [(1, "A1"), (2, "A2"), (3, "B1")]
+
+
+def test_ungrouped_dissolve_with_no_kept_column(conn):
+    conn.execute('CREATE TABLE t_geo AS SELECT fid, status, geom FROM "t_01"')
+    dissolve_stage.main(conn, "t_geo", "t_out", group_by=[])
+    columns = [row[0] for row in conn.execute('DESCRIBE "t_out"').fetchall()]
+    assert columns == ["fid", "geom"]
