@@ -2101,6 +2101,16 @@ def close_notches(conn: DuckDBPyConnection, table: str) -> int:
             "b", "bi", "ta", lim=lim, pair=(ua, ub), own=ub
         ):
             conn.execute(q)
+        # b's moves can pull its edge off a vertex a shared with it; a follows once.
+        conn.execute("""--sql
+            UPDATE _notch_w
+            SET ai = (SELECT g FROM _notch_a_out),
+                tb = ST_Intersection(ST_Boundary((SELECT g FROM _notch_b_out)), win)
+        """)
+        for q in _project_notch_side_sql(
+            "a", "ai", "tb", lim=lim, pair=(ua, ub), own=ua
+        ):
+            conn.execute(q)
         # Each side's vertices go into the other's segments, so closed edges are shared.
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE _notch_one AS

@@ -694,13 +694,14 @@ def test_close_notches_keeps_only_polygons():
         assert {t for (t,) in types} <= {"POLYGON", "MULTIPOLYGON"}
 
 
-def test_close_notches_survives_slivers_that_pinch_on_their_own_edge():
+@pytest.mark.parametrize("order", ["ASC", "DESC"])
+def test_close_notches_survives_slivers_that_pinch_on_their_own_edge(order):
     fixture = Path(__file__).parent / "fixtures" / "sxm_maf_notch.parquet"
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         conn.execute(f"""
             CREATE TABLE units AS
-            SELECT row_number() OVER (ORDER BY adm0_id DESC) AS fid, geometry AS geom
+            SELECT row_number() OVER (ORDER BY adm0_id {order}) AS fid, geometry AS geom
             FROM '{fixture}' ORDER BY fid
         """)
         assert close_notches(conn, "units") == 1
