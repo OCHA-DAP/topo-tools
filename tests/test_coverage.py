@@ -1029,14 +1029,6 @@ def _off_grid_square():
     return conn
 
 
-@pytest.mark.parametrize("validate", ["coverage", "none"])
-def test_finalize_geometry_rounds_to_grid(validate):
-    conn = _off_grid_square()
-    finalize_geometry(conn, "t", validate=validate)
-    x = conn.execute("SELECT max(ST_XMax(geom)) FROM t").fetchall()[0][0]
-    assert x == 1.0
-
-
 def test_finalize_geometry_coverage_raises_on_overlap():
     conn = _off_grid_square()
     conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{_OVERLAPPING}'))")
@@ -1051,6 +1043,15 @@ def test_finalize_geometry_issues_writes_rows_without_raising():
     assert conn.execute("SELECT count(*) FROM t_invalid").fetchall()[0][0] > 0
 
 
+@pytest.mark.parametrize("validate", ["coverage", "issues"])
+def test_finalize_geometry_raises_on_invalid_geometry(validate):
+    conn = _off_grid_square()
+    bowtie = "POLYGON((3 0, 4 1, 4 0, 3 1, 3 0))"
+    conn.execute(f"INSERT INTO t VALUES (2, ST_GeomFromText('{bowtie}'))")
+    with pytest.raises(RuntimeError, match="INVALID_GEOMETRY"):
+        finalize_geometry(conn, "t", validate=validate, issues_table="t_invalid")
+
+
 def test_finalize_geometry_skips_gap_check_without_width():
     conn = duckdb.connect()
     conn.execute("LOAD spatial")
@@ -1060,7 +1061,7 @@ def test_finalize_geometry_skips_gap_check_without_width():
         finalize_geometry(conn, "synth", validate="coverage", gap_maximum_width=1)
 
 
-def test_finalize_geometry_drops_rows_rounding_empties():
+def test_finalize_geometry_drops_empty_rows():
     conn = _off_grid_square()
     thin = "POLYGON((5 5, 6 5, 6 5.0000000004, 5 5.0000000004, 5 5))"
     conn.execute(f"""
@@ -1069,14 +1070,11 @@ def test_finalize_geometry_drops_rows_rounding_empties():
     """)
     finalize_geometry(conn, "t", validate="none")
     kept = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
-    assert kept == [(1,), (3,)]
+    assert kept == [(1,), (2,), (3,)]
     issues = conn.execute(
         "SELECT kind, unit_a, reason, fixed FROM t_empty ORDER BY unit_a"
     ).fetchall()
-    assert issues == [
-        ("empty-geometry", 2, "narrower than the 1e-9 output grid", False),
-        ("empty-geometry", 4, "empty before rounding to the output grid", False),
-    ]
+    assert issues == [("empty-geometry", 4, "empty geometry", False)]
 
 
 def test_finalize_geometry_labels_dropped_rows():
@@ -1085,12 +1083,29 @@ def test_finalize_geometry_labels_dropped_rows():
     conn.execute("INSERT INTO t VALUES (2, ST_GeomFromText('POLYGON EMPTY'), 'A1')")
     finalize_geometry(conn, "t", validate="none", label_columns=("code",))
     reason = conn.execute("SELECT reason FROM t_empty").fetchall()[0][0]
-    assert reason == "empty before rounding to the output grid (code=A1)"
+    assert reason == "empty geometry (code=A1)"
 
 
-def test_finalize_geometry_keeps_empty_rows_when_asked():
-    conn = _off_grid_square()
-    conn.execute("INSERT INTO t VALUES (2, ST_GeomFromText('POLYGON EMPTY'))")
-    finalize_geometry(conn, "t", validate="none", drop_empty=False)
-    fids = conn.execute("SELECT fid FROM t ORDER BY fid").fetchall()
-    assert fids == [(1,), (2,)]
+def test_has_invalid_edges_skips_geometry_already_checked_valid(monkeypatch):
+    right = "(2, 'POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))')"
+    rows = f"(1, 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'), {right}"
+    bad = f"(1, 'POLYGON((0 0, 1.5 0, 1.5 1, 0 1, 0 0))'), {right}"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        for table, values in (("a", rows), ("b", rows), ("c", bad), ("d", bad)):
+            conn.execute(f"""
+                CREATE TABLE {table} AS SELECT fid, ST_GeomFromText(w) AS geom
+                FROM (VALUES {values}) t(fid, w) ORDER BY fid DESC
+            """)
+        assert not has_invalid_edges(conn, "a")
+        assert has_invalid_edges(conn, "c")
+        calls = []
+        real = coverage._invalid_part_pairs  # noqa: SLF001
+        monkeypatch.setattr(
+            coverage,
+            "_invalid_part_pairs",
+            lambda *a, **k: calls.append(1) or real(*a, **k),
+        )
+        assert not has_invalid_edges(conn, "b")
+        assert has_invalid_edges(conn, "d")
+    assert len(calls) == 1

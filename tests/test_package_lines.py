@@ -788,3 +788,30 @@ def test_multi_country_outer_edges_are_depth_minus_one(tmp_path):
             SELECT DISTINCT adm_lvl, b_pcode IS NULL FROM '{output_path}' ORDER BY ALL
         """).fetchall()
     assert depths == [(-1, True), (0, False), (1, False), (2, False)]
+
+
+def test_explicit_fields_on_admin0_only_layer(tmp_path):
+    """A layer whose only level is adm0 resolves explicit fields to level 0."""
+    rows = [
+        {"adm0_pcode": r["adm0_pcode"], "adm0_name": r["adm0_name"], "wkt": w}
+        for r, w in zip(
+            _country_rows(["SEN", "GMB"])[::4],
+            [
+                "POLYGON((0 0,0 10,40 10,40 0,0 0))",
+                "POLYGON((40 0,40 10,80 10,80 0,40 0))",
+            ],
+            strict=True,
+        )
+    ]
+    input_path = tmp_path / "in.parquet"
+    _write_synthetic(input_path, rows)
+    output_path = tmp_path / "lines.parquet"
+    package_lines(
+        input_path, output_path, name_field="adm{n}_name", code_field="adm{n}_pcode"
+    )
+    with duckdb.connect() as conn:
+        shared = conn.execute(f"""
+            SELECT adm_lvl, a_pcode, b_pcode FROM '{output_path}'
+            WHERE b_pcode IS NOT NULL
+        """).fetchall()
+    assert shared == [(0, "GMB", "SEN")]

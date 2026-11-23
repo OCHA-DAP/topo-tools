@@ -117,17 +117,20 @@ in sync.
   as GeoParquet 2.0 following geoparquet-io's conventions: the default CRS is
   signalled by omitting the `geo` metadata's `crs` key. Shapefile,
   GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
+- Every read MUST clip a feature whose bbox extends past ±180° longitude or
+  ±90° latitude to those bounds, logging a warning with the count of clipped
+  features, and MUST raise on a feature entirely outside them.
 
 ## Output precision
 
-- Every geometry a tool writes MUST sit on the 1e-9° grid (`GRID_RESOLUTION`),
-  rounded once by `finalize_geometry()` as the last geometry change. A row
-  with empty geometry MUST be dropped with a logged warning, and reported as
+- A tool MUST NOT round output coordinates (`ST_ReducePrecision` or any
+  per-row snap). A step that clips or intersects rows against another layer
+  MUST be followed by one `coverage_clean()` over the whole output, unless
+  `--no-clean` asks for its seams as `invalid-edge` rows. A row with empty
+  geometry MUST be dropped with a logged warning, and reported as
   a `kind='empty-geometry'` row, `fixed` FALSE, by every tool whose issues
   report uses the shared schema (`schema-join` leaves its `unit_a` null,
-  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows. Any
-  topology validation MUST run on the rounded result, and internal tables
-  MUST NOT be rounded.
+  since its `unit_a` is an output row number). Issues reports MUST keep their own empty-geometry rows.
 
 ## CSV outputs
 
@@ -146,6 +149,8 @@ in sync.
   MUST report only holes at or below that width, treating a wider hole as a
   possible legitimate absence rather than a defect. Omitting the width MUST
   preserve the unscoped, any-size-hole behavior.
+- Every polygon output validated as a coverage or for `invalid-edge` issue
+  rows MUST also raise on any row that fails `ST_IsValid`.
 
 ## Common settings
 
@@ -195,16 +200,17 @@ CLI maps flags/env vars onto those same kwargs 1:1.
 - Every `coverage_clean` call merges micro-polygons before
   `ST_CoverageClean` runs, so `edge-extend`, `edge-match`, `edge-mosaic`,
   `topo-clean` and every auto-cleaned input apply this rule. The clip
-  (`core.clip`) applies it to its clipped output, `topo-clean` again
-  after its fix, and `package-polygons`, `package-points` and
+  (`core.clip`) applies it to its clipped output, `topo-clean` to its
+  output when no clean ran, and `package-polygons`, `package-points` and
   `package-lines` to their input.
 - Each merged or dropped part MUST be reported as a `micro-polygon` row
   (see Issues report schema) by every tool that writes an issues report
   for that clean.
-- `schema-join` and `schema-map` MUST NOT apply this rule, since they
-  change geometry only by rounding it to the output grid. `change` applies
-  it only through its auto-cleaned inputs; its overlay drops intersections
-  below `SNAP_TOLERANCE` squared instead.
+- `schema-join`, `schema-map`, `change` and `code-update` MUST NOT apply
+  this rule to their output, since they write their input geometry.
+  `change` and `code-update` apply it only to the cleaned copy they match
+  on; `change`'s overlap step drops intersections below `SNAP_TOLERANCE`
+  squared.
 
 ## Sliver gaps
 
@@ -256,6 +262,19 @@ CLI maps flags/env vars onto those same kwargs 1:1.
   polygon MUST NOT be reported.
 - In `edge-mosaic`'s per-file loop, only polygons from the same input file
   are candidate neighbours.
+
+## Input coverage defects
+
+- A tool that keeps geometry as it is (`schema-*`, `code-*`, `name-*`,
+  `change`, and every `*-detect` tool) MUST write its input geometry as
+  read (after the read's `ST_MakeValid` repair and world clip),
+  overlaps, gaps and micro-polygons included. It MAY clean a copy for its
+  own matching.
+- A tool that builds new geometry from a layer (`package-polygons`,
+  `package-points`, `package-lines`) MUST raise on an overlap in it.
+- Only `topo-clean`, `package`, and the `edge-*` tools fix coverage defects.
+  `package-polygons`, `package-points` and `package-lines` merge
+  micro-polygons in their input (see Micro-polygons) and fix nothing else.
 
 ## Hard gates at each tool's output stage
 

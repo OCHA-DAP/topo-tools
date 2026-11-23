@@ -11,7 +11,6 @@ from topo_tools.core.constants import (
     DETACHED_MAX_ORIGINAL_SHARE,
     DETACHED_MERGE_MAX_RATIO,
     DETACHED_MIN_NECK_RATIO,
-    GRID_RESOLUTION,
     INVALID_EDGE_BATCH_SECONDS,
     NOTCH_MAX_GAP_RATIO,
     NOTCH_MIN_SCORE,
@@ -334,8 +333,25 @@ def _invalid_part_pairs(
     _drop_shared_segments(conn)
 
 
+_VALID_EDGE_FINGERPRINTS: set[tuple] = set()
+
+
+def _geometry_fingerprint(conn: DuckDBPyConnection, table: str) -> tuple:
+    """Row count, XOR of per-row WKB md5s and vertex total of `table.geom`."""
+    return tuple(
+        conn.execute(f"""--sql
+            SELECT count(*), bit_xor(md5_number(ST_AsWKB(geom))), sum(ST_NPoints(geom))
+            FROM "{table}"
+        """).fetchall()[0]
+    )
+
+
 def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     """Return True if `table.geom` has any overlaps or unmatched shared edges."""
+    # Skip geometry this process already checked valid, e.g. package's re-reads.
+    fingerprint = _geometry_fingerprint(conn, table)
+    if fingerprint in _VALID_EDGE_FINGERPRINTS:
+        return False
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE _ie_parts AS
         WITH d AS (SELECT UNNEST(ST_Dump(geom)).geom AS geom FROM "{table}")
@@ -347,6 +363,8 @@ def has_invalid_edges(conn: DuckDBPyConnection, table: str) -> bool:
     invalid = conn.execute("SELECT count(*) > 0 FROM _ie_edges").fetchone()[0]
     for tmp in ("_ie_parts", "_ie_near", "_ie_batch", "_ie_edges"):
         conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+    if not invalid:
+        _VALID_EDGE_FINGERPRINTS.add(fingerprint)
     return invalid
 
 
@@ -516,10 +534,11 @@ def gap_issues_sql(
     *,
     min_width: float = SNAP_TOLERANCE,
     coverage: bool = False,
+    gaps_table: str | None = None,
 ) -> str:
     """Build SQL for `table.geom`'s gap-kind issue rows, in the shared issues schema."""
     m2_per_deg2 = m2_per_deg2_factor(conn, table)
-    width_m = f"(ST_MaximumInscribedCircle(geom)).radius * 2 * {METERS_PER_DEGREE}"
+    width_m = f"width * {METERS_PER_DEGREE}"
     thinness_ratio = "4 * pi() * ST_Area(geom) / POWER(ST_Perimeter(geom), 2)"
     return f"""
         SELECT 'gap-' || row_number() OVER (ORDER BY hash(geom)) AS key, 'gap' AS kind,
@@ -532,9 +551,24 @@ def gap_issues_sql(
                NULL::DOUBLE AS unit_b_area_change_m2,
                NULL::DOUBLE AS filled_area_m2, FALSE AS fixed,
                NULL::VARCHAR AS source_file, geom
-        FROM {gap_geometries_sql(table, coverage=coverage)} g
-        WHERE (ST_MaximumInscribedCircle(geom)).radius * 2 > {min_width}
+        FROM {_gaps_source(table, coverage=coverage, gaps_table=gaps_table)} g
+        WHERE width > {min_width}
     """
+
+
+def gap_table_sql(table: str, *, coverage: bool = False) -> str:
+    """Build SQL for `table.geom`'s gaps as (geom, width: inscribed diameter)."""
+    return f"""
+        SELECT geom, (ST_MaximumInscribedCircle(geom)).radius * 2 AS width
+        FROM {gap_geometries_sql(table, coverage=coverage)}
+    """
+
+
+def _gaps_source(table: str, *, coverage: bool, gaps_table: str | None) -> str:
+    """Return `gaps_table` quoted, or a gap_table_sql() subquery over `table`."""
+    if gaps_table is not None:
+        return f'"{gaps_table}"'
+    return f"({gap_table_sql(table, coverage=coverage)})"
 
 
 def uncovered_overlay_issues_sql(
@@ -640,6 +674,7 @@ def has_gaps(
     *,
     gap_maximum_width: float = SNAP_TOLERANCE,
     coverage: bool = False,
+    gaps_table: str | None = None,
 ) -> bool:
     """Return True if `table.geom` has an interior hole at or below gap_maximum_width.
 
@@ -656,8 +691,9 @@ def has_gaps(
 
     return conn.execute(f"""--sql
         SELECT EXISTS (
-            SELECT 1 FROM {gap_geometries_sql(table, coverage=coverage)} h
-            WHERE (ST_MaximumInscribedCircle(h.geom)).radius * 2 <= {gap_maximum_width}
+            SELECT 1
+            FROM {_gaps_source(table, coverage=coverage, gaps_table=gaps_table)} h
+            WHERE h.width <= {gap_maximum_width}
         )
     """).fetchall()[0][0]
 
@@ -668,9 +704,16 @@ def check_gaps(
     *,
     gap_maximum_width: float = SNAP_TOLERANCE,
     coverage: bool = False,
+    gaps_table: str | None = None,
 ) -> None:
     """Raise RuntimeError if `table.geom`'s union has a qualifying interior hole."""
-    if has_gaps(conn, table, gap_maximum_width=gap_maximum_width, coverage=coverage):
+    if has_gaps(
+        conn,
+        table,
+        gap_maximum_width=gap_maximum_width,
+        coverage=coverage,
+        gaps_table=gaps_table,
+    ):
         error = f"GAPS: {table}"
         logger.error(error)
         raise RuntimeError(error)
@@ -707,6 +750,17 @@ def has_micro_polygons(conn: DuckDBPyConnection, table: str) -> bool:
             WHERE {is_micro_sql("geom")}
         )
     """).fetchall()[0][0]
+
+
+def check_valid_geometry(conn: DuckDBPyConnection, table: str) -> None:
+    """Raise RuntimeError if any row of `table.geom` fails ST_IsValid."""
+    invalid = conn.execute(
+        f'SELECT count(*) FILTER (WHERE NOT ST_IsValid(geom)) FROM "{table}"'
+    ).fetchall()[0][0]
+    if invalid:
+        error = f"INVALID_GEOMETRY: {table} ({invalid} row(s))"
+        logger.error(error)
+        raise RuntimeError(error)
 
 
 def check_micro_polygons(conn: DuckDBPyConnection, table: str) -> None:
@@ -1433,10 +1487,10 @@ def check_valid_topology(
     check_micro_polygons(conn, table)
 
 
-def _round_and_drop_empty(
+def _drop_empty(
     conn: DuckDBPyConnection, table: str, label_columns: tuple[str, ...] = ()
 ) -> None:
-    """Round `table.geom`, moving rows left empty to `{table}_empty` as issue rows."""
+    """Move rows with empty geometry to `{table}_empty` as issue rows."""
     columns = {r[0] for r in conn.execute(f'DESCRIBE "{table}"').fetchall()}
     fid = "fid" if "fid" in columns else "NULL::BIGINT"
     overlay = "overlay_fid" if "overlay_fid" in columns else "NULL::BIGINT"
@@ -1446,29 +1500,16 @@ def _round_and_drop_empty(
     )
     label = f" || ' (' || {label} || ')'" if label else ""
 
-    def move_empty(reason: str) -> int:
-        conn.execute(f"""--sql
-            INSERT INTO "{table}_empty" BY NAME
-            SELECT 'empty-geometry' AS kind, {fid} AS unit_a,
-                   {overlay} AS overlay_fid, '{reason}'{label} AS reason,
-                   FALSE AS fixed, {source} AS source_file, geom
-            FROM "{table}" WHERE ST_IsEmpty(geom)
-        """)
-        return conn.execute(f"""--sql
-            DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
-        """).fetchall()[0][0]
-
     conn.execute(f"""--sql
-        CREATE TABLE "{table}_empty" (
-            key VARCHAR, kind VARCHAR, unit_a BIGINT, overlay_fid BIGINT,
-            reason VARCHAR, fixed BOOLEAN, source_file VARCHAR, geom GEOMETRY
-        )
+        CREATE TABLE "{table}_empty" AS
+        SELECT NULL::VARCHAR AS key, 'empty-geometry' AS kind, {fid}::BIGINT AS unit_a,
+               {overlay}::BIGINT AS overlay_fid, 'empty geometry'{label} AS reason,
+               FALSE AS fixed, {source}::VARCHAR AS source_file, geom
+        FROM "{table}" WHERE ST_IsEmpty(geom)
     """)
-    dropped = move_empty("empty before rounding to the output grid")
-    conn.execute(f"""--sql
-        UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
-    """)
-    dropped += move_empty("narrower than the 1e-9 output grid")
+    dropped = conn.execute(f"""--sql
+        DELETE FROM "{table}" WHERE ST_IsEmpty(geom)
+    """).fetchall()[0][0]
     if dropped:
         logger.warning("dropped %d row(s) with empty geometry from %s", dropped, table)
         conn.execute(f"""--sql
@@ -1501,22 +1542,18 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
     gap_maximum_width: float | None = SNAP_TOLERANCE,
     where: str | None = None,
     issues_table: str | None = None,
-    drop_empty: bool = True,
     label_columns: tuple[str, ...] = (),
+    gaps_table: str | None = None,
 ) -> None:
-    """Round `table.geom` to the grid, move empty rows to `{table}_empty`, validate.
+    """Move empty rows to `{table}_empty`, then validate `table.geom`.
 
-    `coverage` raises on a defect, `issues` writes invalid-edge rows instead.
+    `coverage` raises on a defect and writes `gaps_table` (gap_table_sql) if given.
     """
     conn.execute(f'DROP TABLE IF EXISTS "{table}_empty"')
-    if not drop_empty:
-        conn.execute(f"""--sql
-            UPDATE "{table}" SET geom = ST_ReducePrecision(geom, {GRID_RESOLUTION})
-        """)
-    else:
-        _round_and_drop_empty(conn, table, label_columns)
+    _drop_empty(conn, table, label_columns)
     if validate == "none":
         return
+    check_valid_geometry(conn, table)
     if validate == "issues":
         if issues_table is None:
             msg = "finalize_geometry: validate='issues' needs issues_table"
@@ -1531,8 +1568,19 @@ def finalize_geometry(  # noqa: PLR0913 (each param is a distinct required input
             SELECT * FROM "{table}" WHERE {where}
         """)
     check_invalid_edges(conn, target)
+    if gaps_table is not None:
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{gaps_table}" AS
+            {gap_table_sql(target, coverage=True)}
+        """)
     if gap_maximum_width is not None:
-        check_gaps(conn, target, gap_maximum_width=gap_maximum_width, coverage=True)
+        check_gaps(
+            conn,
+            target,
+            gap_maximum_width=gap_maximum_width,
+            coverage=True,
+            gaps_table=gaps_table,
+        )
     check_micro_polygons(conn, target)
 
 

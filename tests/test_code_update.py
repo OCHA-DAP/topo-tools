@@ -794,3 +794,52 @@ def test_template_writes_root_code_at_level_0(tmp_path):
     ]
     assert columns.index("adm0_code") == columns.index("adm1_name") + 1
     assert _fetch(output_path, "DISTINCT adm0_code", "1") == [("BH",)]
+
+
+def test_output_keeps_input_geometry(tmp_path):
+    rows = [
+        {
+            "adm1_pcode": "AA.001",
+            "adm1_name": "N1",
+            "wkt": "POLYGON((0 0, 1.01 0, 1.01 1, 0 1, 0 0))",
+        },
+        {
+            "adm1_pcode": "AA.002",
+            "adm1_name": "N3",
+            "wkt": "POLYGON((5 5, 6 5, 6 5.000000001, 5 5.000000001, 5 5))",
+        },
+        {
+            "adm1_pcode": "AA.003",
+            "adm1_name": "N2",
+            "wkt": "POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))",
+        },
+    ]
+    new_rows = [
+        {"adm1_code": r["adm1_pcode"], "adm1_nm": r["adm1_name"], "wkt": r["wkt"]}
+        for r in rows
+    ]
+    old_path = tmp_path / "old.parquet"
+    new_path = tmp_path / "new.parquet"
+    _write_synthetic(old_path, rows)
+    _write_synthetic(new_path, new_rows)
+    output_path = tmp_path / "new_coded.parquet"
+    changelog_path = tmp_path / "changelog.csv"
+    code_update(
+        old_path,
+        new_path,
+        output_path,
+        changelog_path,
+        name_field_a="adm{n}_name",
+        code_field_a="adm{n}_pcode",
+        name_field_b="adm{n}_nm",
+        code_field_b="adm{n}_code",
+    )
+
+    order = "ST_AsText(ST_Normalize({}))"
+    written = _fetch(output_path, order.format("geometry"), "1")
+    source = _fetch(new_path, order.format("geom"), "1")
+    assert written == source
+    codes = _fetch(output_path, "adm1_pcode", "1")
+    assert sorted(c for (c,) in codes) == ["AA.001", "AA.002", "AA.003"]
+    logged = {r["new_code"]: r["code_outcome"] for r in _read_changelog(changelog_path)}
+    assert logged == dict.fromkeys(["AA.001", "AA.002", "AA.003"], "retained")

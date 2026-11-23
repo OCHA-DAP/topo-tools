@@ -33,10 +33,10 @@ logger = getLogger(__name__)
 _STEP_ORDER = ["inputs", "levels", "process", "outputs"]
 
 _STEP_TABLES = {
-    "inputs": ["{n}_a_01", "{n}_b_01"],
+    "inputs": ["{n}_a_00", "{n}_a_01", "{n}_b_00", "{n}_b_01"],
     "levels": [],
     "process": [],
-    "outputs": [],
+    "outputs": ["{n}_07"],
 }
 
 

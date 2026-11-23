@@ -79,7 +79,7 @@ def main(  # noqa: PLR0913
 ) -> None:
     """Export `{name}_03` to dest and its issues to issues_dest.
 
-    No topology check: schema-join only rounds geometry to the output grid.
+    No topology check: schema-join never changes geometry.
     """
     finalize_geometry(conn, f"{name}_03", validate="none")
     conn.execute(f"""--sql

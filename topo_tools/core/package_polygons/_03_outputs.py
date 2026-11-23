@@ -44,9 +44,13 @@ def _export_one(
     invalid_table = f"{issues_table}_invalid"
     if check_topology:
         finalize_geometry(
-            conn, item.table, validate="coverage", label_columns=item.key_columns
+            conn,
+            item.table,
+            validate="coverage",
+            label_columns=item.key_columns,
+            gaps_table=f"{issues_table}_tmp1",
         )
-        parts = [gap_issues_sql(conn, item.table, coverage=True)]
+        parts = [gap_issues_sql(conn, item.table, gaps_table=f"{issues_table}_tmp1")]
     else:
         # Gaps need a union, which fails on unmatched edges, like edge-mosaic's.
         finalize_geometry(
@@ -86,6 +90,7 @@ def _export_one(
     )
     export_issues_table(conn, issues_table, item.issues_dest)
     conn.execute(f'DROP TABLE IF EXISTS "{issues_table}"')
+    conn.execute(f'DROP TABLE IF EXISTS "{issues_table}_tmp1"')
     conn.execute(f'DROP TABLE IF EXISTS "{invalid_table}"')
 
 

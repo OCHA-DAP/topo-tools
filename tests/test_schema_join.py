@@ -157,7 +157,7 @@ def test_fills_every_coarser_level(input_path, join_path, tmp_path, fields):
     assert not (tmp_path / "out_issues.parquet").exists()
 
 
-def test_geometry_only_rounded(input_path, join_path, tmp_path):
+def test_geometry_unchanged(input_path, join_path, tmp_path):
     out = tmp_path / "out.parquet"
     join(input_path, join_path, out)
 
@@ -165,8 +165,7 @@ def test_geometry_only_rounded(input_path, join_path, tmp_path):
         conn.execute("LOAD spatial")
         before, after = (
             conn.execute(
-                f"SELECT ST_AsWKB(ST_Normalize(ST_ReducePrecision({g}, 1e-9))) "
-                f"FROM '{p}' ORDER BY adm3_code"
+                f"SELECT ST_AsWKB({g}) FROM '{p}' ORDER BY adm3_code"
             ).fetchall()
             for p, g in ((input_path, "geom"), (out, "geometry"))
         )
@@ -469,12 +468,25 @@ def test_added_columns_go_within_their_level(join_path, tmp_path):
         ]
 
 
-@pytest.mark.parametrize("layer", ["input", "join"])
-def test_raises_on_overlapping_layer(layer, tmp_path):
-    rows = {"input": _input_rows(), "join": _join_rows()}
-    rows[layer] = [*rows[layer], dict(rows[layer][0])]
+def test_raises_on_overlapping_join_layer(tmp_path):
+    rows = {"input": _input_rows(), "join": [*_join_rows(), dict(_join_rows()[0])]}
     paths = {k: tmp_path / f"{k}.parquet" for k in rows}
     for k, path in paths.items():
         _write(path, rows[k])
     with pytest.raises(ValueError, match=r"pair\(s\) overlap"):
         join(paths["input"], paths["join"], tmp_path / "out.parquet")
+
+
+def test_overlapping_input_passes_through(tmp_path):
+    rows = {"input": [*_input_rows(), dict(_input_rows()[0])], "join": _join_rows()}
+    paths = {k: tmp_path / f"{k}.parquet" for k in rows}
+    for k, path in paths.items():
+        _write(path, rows[k])
+    out = tmp_path / "out.parquet"
+    join(paths["input"], paths["join"], out)
+    with duckdb.connect() as conn:
+        conn.execute("LOAD spatial")
+        sql = "SELECT ST_AsWKB({}) AS g FROM '{}' ORDER BY g"
+        written = conn.execute(sql.format("geometry", out)).fetchall()
+        source = conn.execute(sql.format("geom", paths["input"])).fetchall()
+    assert written == source

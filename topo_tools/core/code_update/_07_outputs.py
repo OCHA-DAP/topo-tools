@@ -14,7 +14,11 @@ from topo_tools.core.code_update._02_levels import SideLevels
 from topo_tools.core.code_update._06_assign import ChangeRow
 from topo_tools.core.coverage import finalize_geometry
 from topo_tools.core.duckdb_utils import quote_literal
-from topo_tools.core.io import add_csv_bom, export_geometry_table
+from topo_tools.core.io import (
+    add_csv_bom,
+    export_geometry_table,
+    raw_rows_sql,
+)
 
 
 def _flag_overflow(changelog: list[ChangeRow], fmt: CodeFormat) -> None:
@@ -136,8 +140,13 @@ def main(  # noqa: PLR0913
         root_sql = quote_literal(fmt.root_code)
         write_root_code(conn, finest_table, root, root_sql, after)
 
-    finalize_geometry(conn, finest_table, validate="none")
-    export_geometry_table(conn, finest_table, dest)
+    out = f"{name}_07"
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE "{out}" AS
+        {raw_rows_sql(conn, finest_table, f"{name}_b_00")}
+    """)
+    finalize_geometry(conn, out, validate="none")
+    export_geometry_table(conn, out, dest)
 
     changelog_table = f"{name}_changelog"
     conn.execute(f"""--sql
@@ -173,4 +182,5 @@ def main(  # noqa: PLR0913
     conn.execute(f'DROP TABLE IF EXISTS "{changelog_table}"')
 
     if not debug:
-        conn.execute(f'DROP TABLE IF EXISTS "{finest_table}"')
+        for table in (finest_table, f"{name}_a_00", f"{name}_b_00", out):
+            conn.execute(f'DROP TABLE IF EXISTS "{table}"')

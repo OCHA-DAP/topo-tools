@@ -5,7 +5,11 @@ from pathlib import Path
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import check_no_overlaps, check_valid_topology
-from topo_tools.core.io import read_and_reproject, reproject_select_sql
+from topo_tools.core.io import (
+    read_and_reproject,
+    reproject_select_sql,
+    warn_world_clipped,
+)
 
 
 def load_input(
@@ -17,7 +21,8 @@ def load_input(
     alone can't distinguish same-named files across directories).
     """
     union_sql = " UNION ALL BY NAME ".join(
-        f"(SELECT *, '{path}' AS source_file FROM ({reproject_select_sql(conn, path)}))"
+        f"(SELECT *, '{path}' AS source_file "
+        f"FROM ({reproject_select_sql(conn, path, flag_world_clip=True)}))"
         for path in input_paths
     )
     conn.execute(f"""--sql
@@ -25,6 +30,7 @@ def load_input(
         SELECT * EXCLUDE (fid), row_number() OVER () AS fid
         FROM ({union_sql})
     """)
+    warn_world_clipped(conn, f"{name}_input_01", ", ".join(map(str, input_paths)))
 
 
 def check_input(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:

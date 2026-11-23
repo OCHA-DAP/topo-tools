@@ -10,12 +10,8 @@ from topo_tools.core.change import _02_overlap as overlap
 from topo_tools.core.change import _03_classify as classify
 from topo_tools.core.change import _04_outputs as outputs
 from topo_tools.core.change._columns import detect_unit_columns
-from topo_tools.core.change._constants import (
-    TABLE_COPY_OPTS,
-    TAU_MATCH_DEFAULT,
-    TAU_SAME_DEFAULT,
-)
-from topo_tools.core.constants import COPY_OPTS
+from topo_tools.core.change._constants import TAU_MATCH_DEFAULT, TAU_SAME_DEFAULT
+from topo_tools.core.constants import COPY_OPTS, TABLE_COPY_OPTS
 from topo_tools.core.duckdb_utils import (
     maybe_export_debug_tables,
     pipeline_connection,
@@ -32,7 +28,7 @@ logger = getLogger(__name__)
 _STEP_ORDER = ["inputs", "overlap", "classify", "outputs"]
 
 _STEP_TABLES = {
-    "inputs": ["{n}_a_01", "{n}_b_01"],
+    "inputs": ["{n}_a_00", "{n}_a_01", "{n}_b_00", "{n}_b_01"],
     "overlap": ["{n}_02"],
     "classify": ["{n}_03a", "{n}_03b", "{n}_03c"],
     "outputs": [],
