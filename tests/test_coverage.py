@@ -699,12 +699,18 @@ def test_close_notches_survives_slivers_that_pinch_on_their_own_edge():
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         conn.execute(f"""
-            CREATE TABLE units AS SELECT row_number() OVER () AS fid, geometry AS geom
-            FROM '{fixture}'
+            CREATE TABLE units AS
+            SELECT row_number() OVER (ORDER BY adm0_id DESC) AS fid, geometry AS geom
+            FROM '{fixture}' ORDER BY fid
         """)
         assert close_notches(conn, "units") == 1
-        valid = conn.execute("SELECT bool_and(ST_IsValid(geom)) FROM units")
-        assert valid.fetchall()[0][0]
+        assert detect_notches(conn, "units", "after") == 0
+        valid, types = conn.execute(
+            "SELECT bool_and(ST_IsValid(geom)), list(DISTINCT ST_GeometryType(geom)) "
+            "FROM units"
+        ).fetchall()[0]
+        assert valid
+        assert set(types) <= {"POLYGON", "MULTIPOLYGON"}
 
 
 @pytest.mark.parametrize(("rise_m", "notches"), [(15, 1), (22, 0)])

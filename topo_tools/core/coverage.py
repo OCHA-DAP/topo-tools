@@ -1954,7 +1954,9 @@ def _project_notch_side_sql(  # noqa: PLR0913 (each param is a distinct required
             _notch_w w""",
         f"""CREATE OR REPLACE TABLE {p}_out AS
             SELECT ST_MakeValid(ST_Union_Agg(
-                       ST_MakeValid(ST_MakePolygon(shell, holes))
+                       ST_CollectionExtract(
+                           ST_MakeValid(ST_MakePolygon(shell, holes)), 3
+                       )
                    )) AS g FROM (
                 SELECT pid, any_value(line) FILTER (WHERE rn = 0) AS shell,
                        COALESCE(list(line ORDER BY rn) FILTER (WHERE rn > 0), [])
