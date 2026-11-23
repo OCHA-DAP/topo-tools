@@ -152,12 +152,17 @@ def main(  # noqa: PLR0913
     exprs |= {c: f'{func}("{c}") AS "{c}"' for c, func in overridden_cols.items()}
 
     # Input column order, so an admin hierarchy keeps its own level order.
-    select_sql = ", ".join(exprs[c] for c in column_types if c in exprs)
+    select_sql = ", ".join(
+        [
+            *(exprs[c] for c in column_types if c in exprs),
+            "ST_MakeValid(ST_Union_Agg(geom)) AS geom",
+        ]
+    )
     group_clause = f"GROUP BY {', '.join(group_cols_sql)}" if group_by else ""
     # A window in the same query as ST_Union_Agg runs the union about 3x slower.
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE "{table_out}" AS
-        SELECT {select_sql}, ST_MakeValid(ST_Union_Agg(geom)) AS geom
+        SELECT {select_sql}
         FROM "{table_in}"
         {group_clause}
     """)
