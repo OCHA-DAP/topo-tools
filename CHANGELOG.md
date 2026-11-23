@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-11-23
+
+### Fixed
+
+- `edge-extend`, `edge-match` and `topo-clean` close a notch whose moved
+  vertex pinches its unit on its own edge, a case that raised
+  `TopologyException: unable to assign free hole to a shell`.
+
 ## [0.26.0] - 2026-11-23
 
 ### Changed
@@ -1164,7 +1172,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.2...v0.25.0
 [0.24.2]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.1...v0.24.2
