@@ -851,6 +851,66 @@ def test_overlap_beside_a_matched_unit_is_an_invalid_edge():
         assert [n for _, _, n in rows] == pytest.approx([5, 3])
 
 
+def _wkt_ring(points):
+    s = 1e-3
+    return "(" + ", ".join(f"{x * s} {y * s}" for x, y in [*points, points[0]]) + ")"
+
+
+# Unit 1's hole touches its shell at (0, 0); unit 3 touches that vertex from outside.
+_PINCH_SHELL = [(0, 0), (15, 190), (90, 190), (300, 150), (300, -800), (-700, -800)]
+_PINCH_HOLE = [(0, 0), (130, -65), (220, -5), (205, 20), (140, -13)]
+_PINCH_COAST = [(0, 0), (-50, 100), (-20, 600), (100, 600), (90, 190), (15, 190)]
+
+
+def _pinch_units(conn, outside):
+    _stacked(
+        conn,
+        [
+            (1, f"POLYGON({_wkt_ring(_PINCH_SHELL)}, {_wkt_ring(_PINCH_HOLE)})"),
+            (2, f"POLYGON({_wkt_ring(_PINCH_HOLE)})"),
+            (3, f"POLYGON({_wkt_ring(outside)})"),
+        ],
+    )
+
+
+def test_edge_from_hole_touching_shell_vertex_is_not_an_invalid_edge():
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _pinch_units(conn, _PINCH_COAST)
+        flagged = conn.execute(
+            "SELECT ST_Length(ST_CoverageInvalidEdges_Agg(geom, 0)) FROM units"
+        ).fetchall()[0][0]
+        assert flagged > 0, "GEOS no longer misflags the coast edge"
+        assert not has_invalid_edges(conn, "units")
+        assert invalid_edge_issues(conn, "units", "issues") == 0
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [
+        # Runs back along unit 1's coast, 5e-9 degrees off at the far end.
+        [
+            (0, 0),
+            (-700, -799.999995),
+            (-900, -800),
+            (-900, 600),
+            (100, 600),
+            (90, 190),
+            (15, 190),
+        ],
+        # Chord from the pinch vertex across unit 1's interior.
+        [(0, 0), (300, 150), (15, 190)],
+    ],
+    ids=["near-parallel", "chord-overlap"],
+)
+def test_real_defect_at_hole_touching_shell_vertex_is_an_invalid_edge(outside):
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _pinch_units(conn, outside)
+        assert has_invalid_edges(conn, "units")
+        assert invalid_edge_issues(conn, "units", "issues") == 1
+
+
 def _overlap_beside_matched_unit(conn):
     d = SNAP_TOLERANCE / 2
     _stacked(
