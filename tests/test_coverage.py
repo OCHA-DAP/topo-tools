@@ -862,21 +862,22 @@ _PINCH_HOLE = [(0, 0), (130, -65), (220, -5), (205, 20), (140, -13)]
 _PINCH_COAST = [(0, 0), (-50, 100), (-20, 600), (100, 600), (90, 190), (15, 190)]
 
 
-def _pinch_units(conn, outside):
+def _pinch_units(conn, outside, fids=(1, 2, 3)):
     _stacked(
         conn,
         [
-            (1, f"POLYGON({_wkt_ring(_PINCH_SHELL)}, {_wkt_ring(_PINCH_HOLE)})"),
-            (2, f"POLYGON({_wkt_ring(_PINCH_HOLE)})"),
-            (3, f"POLYGON({_wkt_ring(outside)})"),
+            (fids[0], f"POLYGON({_wkt_ring(_PINCH_SHELL)}, {_wkt_ring(_PINCH_HOLE)})"),
+            (fids[1], f"POLYGON({_wkt_ring(_PINCH_HOLE)})"),
+            (fids[2], f"POLYGON({_wkt_ring(outside)})"),
         ],
     )
 
 
-def test_edge_from_hole_touching_shell_vertex_is_not_an_invalid_edge():
+@pytest.mark.parametrize("fids", [(1, 2, 3), (3, 2, 1)])
+def test_edge_from_hole_touching_shell_vertex_is_not_an_invalid_edge(fids):
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
-        _pinch_units(conn, _PINCH_COAST)
+        _pinch_units(conn, _PINCH_COAST, fids)
         flagged = conn.execute(
             "SELECT ST_Length(ST_CoverageInvalidEdges_Agg(geom, 0)) FROM units"
         ).fetchall()[0][0]
@@ -907,6 +908,22 @@ def test_real_defect_at_hole_touching_shell_vertex_is_an_invalid_edge(outside):
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         _pinch_units(conn, outside)
+        assert has_invalid_edges(conn, "units")
+        assert invalid_edge_issues(conn, "units", "issues") == 1
+
+
+def test_hole_within_snap_tolerance_of_a_matched_edge_is_an_invalid_edge():
+    d = SNAP_TOLERANCE / 2
+    hole = f"(0.2 {d}, 0.2 0.5, 0.8 0.5, 0.8 {d}, 0.2 {d})"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _stacked(
+            conn,
+            [
+                (1, "POLYGON((0 -1, 1 -1, 1 0, 0 0, 0 -1))"),
+                (2, f"POLYGON((0 0, 1 0, 1 1, 0 1, 0 0), {hole})"),
+            ],
+        )
         assert has_invalid_edges(conn, "units")
         assert invalid_edge_issues(conn, "units", "issues") == 1
 
