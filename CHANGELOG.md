@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-11-26
+
+### Fixed
+
+- Every coverage check ignores an edge GEOS flags only because it starts at
+  a vertex where a unit's hole touches its own shell. `topo-clean` and
+  `package` raised `INVALID_EDGES` on such layers, e.g. EuroRegionalMap
+  Ireland.
+
 ## [0.26.1] - 2026-11-23
 
 ### Fixed
@@ -1172,7 +1181,8 @@ Initial release: four tools, CLI + Python API for each.
   unit as unchanged/renamed/modified/relocated/split/merge/complex/created/
   removed, via spatial overlap and optional code/name identity linking.
 
-[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.2...HEAD
+[0.26.2]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/OCHA-DAP/topo-tools/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/OCHA-DAP/topo-tools/compare/v0.24.2...v0.25.0
