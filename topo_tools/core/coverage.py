@@ -275,6 +275,104 @@ def _drop_shared_segments(conn: DuckDBPyConnection) -> None:
     logger.info("invalid-edge check: %d of %d flagged pair(s) kept", after, before)
 
 
+def _drop_ring_corner_segments(conn: DuckDBPyConnection) -> None:
+    """Drop `_ie_edges` segments at a hole pinch vertex no per-ring re-check flags.
+
+    GEOS tests them against each ring's corner there; the hole's reads as interior.
+    """
+
+    def segments(source: str) -> str:
+        return _segments_sql(f"""(
+            SELECT pid, near_pid, {_XY_SQL.format(g="d.geom")} AS xy,
+                   TRUE AS inside_right
+            FROM (
+                SELECT pid, near_pid, UNNEST(ST_Dump(geom)) AS d
+                FROM {source} WHERE geom IS NOT NULL
+            )
+        )""")
+
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_pinch AS
+        WITH ids AS (
+            SELECT pid FROM _ie_edges WHERE NOT stopped
+            UNION SELECT near_pid FROM _ie_edges WHERE NOT stopped
+        ),
+        v AS (
+            SELECT DISTINCT pid, d.path[1] AS ring, p.geom AS v
+            FROM (
+                SELECT pid, UNNEST(ST_Dump(ST_Boundary(geom))) AS d
+                FROM _ie_parts SEMI JOIN ids USING (pid)
+                WHERE ST_NumInteriorRings(geom) > 0
+            ), UNNEST(ST_Dump(ST_Points(d.geom))) AS p
+        )
+        SELECT pid, [ST_X(v), ST_Y(v)] AS xy FROM v
+        GROUP BY pid, v HAVING count(*) > 1 AND max(ring) > 1
+    """)
+    if not conn.execute("SELECT count(*) FROM _ie_pinch").fetchall()[0][0]:
+        conn.execute("DROP TABLE _ie_pinch")
+        return
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_seg AS
+        SELECT DISTINCT f.pid, f.near_pid, f.k1, f.k2,
+               EXISTS (
+                   SELECT 1 FROM _ie_pinch q
+                   WHERE q.pid IN (f.pid, f.near_pid) AND q.xy IN (f.k1, f.k2)
+               ) AS at_pinch
+        FROM {segments("(SELECT * FROM _ie_edges WHERE NOT stopped)")} f
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_holed AS
+        SELECT pid, near_pid, ST_Collect(list(
+                   ST_MakeLine(ST_Point(k1[1], k1[2]), ST_Point(k2[1], k2[2]))
+               )) AS geom
+        FROM _ie_seg WHERE at_pinch GROUP BY pid, near_pid
+    """)
+    conn.execute("""--sql
+        CREATE OR REPLACE TABLE _ie_rings AS
+        WITH ids AS (SELECT pid FROM _ie_holed UNION SELECT near_pid FROM _ie_holed)
+        SELECT pid, ST_MakePolygon(d.geom) AS geom
+        FROM (
+            SELECT pid, UNNEST(ST_Dump(ST_Boundary(geom))) AS d
+            FROM _ie_parts SEMI JOIN ids USING (pid)
+        )
+    """)
+    lines = f"""(
+        SELECT h.pid, h.near_pid,
+               (SELECT ST_CoverageInvalidEdges_Agg(g, {SNAP_TOLERANCE})
+                FROM (SELECT UNNEST([a.geom, b.geom]) AS g)) AS geom
+        FROM _ie_holed h
+        JOIN _ie_rings a ON a.pid = h.pid AND ST_Intersects(a.geom, h.geom)
+        JOIN _ie_rings b ON b.pid = h.near_pid AND ST_Intersects(b.geom, h.geom)
+    )"""
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE _ie_edges AS
+        WITH kept AS (
+            SELECT f.pid, f.near_pid, f.k1, f.k2 FROM _ie_seg f
+            WHERE NOT f.at_pinch OR EXISTS (
+                SELECT 1 FROM {segments(lines)} r
+                WHERE r.pid = f.pid AND r.near_pid = f.near_pid
+                  AND r.k1 = f.k1 AND r.k2 = f.k2
+            )
+        )
+        SELECT * FROM _ie_edges WHERE stopped
+        UNION ALL
+        SELECT pid, near_pid,
+               ST_LineMerge(ST_Collect(list(
+                   ST_MakeLine(ST_Point(k1[1], k1[2]), ST_Point(k2[1], k2[2]))
+               ))) AS geom,
+               FALSE AS stopped
+        FROM kept GROUP BY pid, near_pid
+    """)
+    dropped = conn.execute("""--sql
+        SELECT count(*) FROM _ie_holed h
+        ANTI JOIN _ie_edges e ON e.pid = h.pid AND e.near_pid = h.near_pid
+    """).fetchall()[0][0]
+    if dropped:
+        logger.info("invalid-edge check: %d hole-pinch pair(s) dropped", dropped)
+    for tmp in ("_ie_pinch", "_ie_seg", "_ie_holed", "_ie_rings"):
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+
+
 def _invalid_part_pairs(
     conn: DuckDBPyConnection, on: str, *, seconds: float | None
 ) -> None:
@@ -331,6 +429,7 @@ def _invalid_part_pairs(
                 FROM _ie_batch WHERE batch = {batch}
             """)
     _drop_shared_segments(conn)
+    _drop_ring_corner_segments(conn)
 
 
 _VALID_EDGE_FINGERPRINTS: set[tuple] = set()

@@ -124,6 +124,37 @@ def test_clean_closes_notch(tmp_path):
     assert rows == [("notch", True)]
 
 
+def test_clean_accepts_edge_from_hole_touching_shell_vertex(tmp_path):
+    hole = "(0 0, 0.13 -0.065, 0.22 -0.005, 0.205 0.02, 0.14 -0.013, 0 0)"
+    shell = "(0 0, 0.015 0.19, 0.09 0.19, 0.3 0.15, 0.3 -0.8, -0.7 -0.8, 0 0)"
+    units = [
+        (1, f"POLYGON({shell}, {hole})"),
+        (2, f"POLYGON({hole})"),
+        (
+            3,
+            "POLYGON((0 0, -0.05 0.1, -0.02 0.6, 0.1 0.6, 0.09 0.19, 0.015 0.19, 0 0))",
+        ),
+        # An overlap elsewhere makes the clean run.
+        (4, "POLYGON((10 0, 11 0, 11 1, 10 1, 10 0))"),
+        (5, "POLYGON((10.95 0, 12 0, 12 1, 10.95 1, 10.95 0))"),
+    ]
+    input_path = tmp_path / "pinch.parquet"
+    values = ", ".join(f"({fid}, ST_GeomFromText('{wkt}'))" for fid, wkt in units)
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            f"CREATE TABLE synth AS SELECT * FROM (VALUES {values}) AS t(id, geom)"
+        )
+        conn.execute(f"COPY synth TO '{input_path}'")
+    issues_path = tmp_path / "issues.parquet"
+    clean(input_path, tmp_path / "out.parquet", issues_path, overwrite=True)
+    with duckdb.connect() as conn:
+        rows = conn.execute(f"SELECT kind, fixed FROM '{issues_path}'").fetchall()
+        count = conn.execute(f"SELECT count(*) FROM '{tmp_path / 'out.parquet'}'")
+        assert count.fetchall()[0][0] == len(units)
+    assert rows == [("overlap", True)]
+
+
 def test_clean_issues_report_overlap_outcome(synthetic_input, tmp_path):
     """An overlap row reports each unit's own real area change, not just the defect.
 
