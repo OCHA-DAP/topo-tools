@@ -399,8 +399,32 @@ def test_load_input_names_file_on_ring_circling_pole(tmp_path):
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         _write_wkt(conn, path, [ring])
-        with pytest.raises(ValueError, match=r"pole\.parquet: .*circles a pole"):
-            load_input(conn, "m", [path])
+        other = tmp_path / "ok.parquet"
+        _write_wkt(conn, other, ["POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"])
+        with pytest.raises(ValueError, match=r"read [^,]*pole\.parquet: .*row 1$"):
+            load_input(conn, "m", [other, path])
+
+
+@pytest.mark.parametrize(
+    ("wkt", "area"),
+    [
+        ("POLYGON((170 -10,180 -10,-180 -10,-170 -10,-170 -20,170 -20,170 -10))", 200),
+        (
+            (
+                "POLYGON((170 -10,180 -10,-180 -10,-170 -10,-170 -20,-180 -20,"
+                "180 -20,170 -20,170 -10))"
+            ),
+            200,
+        ),
+        ("POLYGON((160 -60,-150 -60,-150 -90,160 -90,160 -60))", 1500),
+        ("POLYGON((170 -80,170 -90,-170 -90,-170 -80,170 -80))", 200),
+    ],
+    ids=["one-edge-on-180", "both-edges-on-180", "pole-sector", "pole-cap"],
+)
+def test_read_and_reproject_splits_crossings_on_180_and_at_poles(tmp_path, wkt, area):
+    ((_, parts, got, xmin, xmax, valid),) = _read_wkt(tmp_path, [wkt])
+    assert (parts, xmin, xmax, valid) == (2, -180, 180, True)
+    assert got == pytest.approx(area)
 
 
 def test_read_and_reproject_wraps_tiny_part_past_180(tmp_path):

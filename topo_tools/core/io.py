@@ -190,7 +190,7 @@ def reproject_select_sql(
         base = f"ST_Transform({raw}, '{CRS}', true)"
     else:
         base = f"ST_SetCRS({raw}, '{CRS}')"
-    norm = _normalize_longitude_sql("geom")
+    norm = _normalize_longitude_sql("geom", str(path).replace("'", "''"))
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
     if make_valid:
@@ -234,15 +234,25 @@ def _let(value: str, var: str, body: str) -> str:
 
 
 def _jump_signs_sql(xy: str) -> str:
-    """Per-vertex -1/0/1 where the edge into it crosses 180° the short way."""
+    """Per-vertex -1/0/1 shift where the edge into it crosses 180°."""
     pole = 90 - SNAP_TOLERANCE
-    return f"""list_transform(range(1, len({xy}) + 1), lambda i: CASE
+    is_pole = f"""lambda i: i > 1 AND abs({xy}[i][2]) >= {pole}
+        AND abs({xy}[i - 1][2]) >= {pole}"""
+    short = f"""list_transform(range(1, len({xy}) + 1), lambda i: CASE
         WHEN i = 1 OR (abs({xy}[i][2]) >= {pole} AND abs({xy}[i - 1][2]) >= {pole})
-            OR (abs({xy}[i][1]) = 180 AND abs({xy}[i - 1][1]) = 180)
         THEN 0
         WHEN {xy}[i][1] - {xy}[i - 1][1] > 180 THEN -1
         WHEN {xy}[i][1] - {xy}[i - 1][1] < -180 THEN 1
         ELSE 0 END)"""
+    # Pole edges take the shift that closes the ring; a ring all on ±180 is a band.
+    closed = f"""CASE
+        WHEN list_bool_and(list_transform({xy}, lambda v: abs(v[1]) = 180))
+        THEN list_transform(s0, lambda v: 0)
+        WHEN list_sum(s0) = 0 OR len(pe) = 0 THEN s0
+        ELSE list_transform(range(1, len(s0) + 1),
+            lambda i: CASE WHEN i = pe[1] THEN -list_sum(s0) ELSE s0[i] END) END"""
+    poles = f"list_filter(range(1, len({xy}) + 1), {is_pole})"
+    return _let(short, "s0", _let(poles, "pe", closed))
 
 
 def _ring_xy_sql(ring: str) -> str:
@@ -277,15 +287,16 @@ def _cut_sql(poly: str) -> str:
     )
 
 
-def _ring_pieces_sql(ring: str) -> str:
+def _ring_pieces_sql(ring: str, label: str) -> str:
     """Unwrap `ring` across 180° into a polygon, then cut it into ±180."""
     unwrapped = """ST_MakeLine(list_transform(range(1, len(q) + 1), lambda i: ST_Point(
         q[i][1] + 360 * coalesce(list_sum(list_transform(
             list_filter(jp, lambda j: j <= i), lambda j: s[j])), 0),
         q[i][2])))"""
     poly = f"ST_CollectionExtract(ST_MakeValid(ST_MakePolygon({unwrapped})), 3)"
+    cut = _let(poly, "pg", _cut_sql("pg"))
     body = f"""CASE WHEN coalesce(list_sum(s), 0) <> 0
-        THEN error('{_POLE_RING}' || fid) ELSE {_let(poly, "pg", _cut_sql("pg"))} END"""
+        THEN error('{_POLE_RING}' || fid || ' of {label}') ELSE {cut} END"""
     with_jumps = _let(
         "list_filter(range(1, len(s) + 1), lambda j: s[j] <> 0)", "jp", body
     )
@@ -320,22 +331,22 @@ def _lon_normalize_needed_sql(col: str) -> str:
         ELSE false END"""
 
 
-def _normalize_part_sql(part: str) -> str:
+def _normalize_part_sql(part: str, label: str) -> str:
     """Cut each ring of polygon `part` into ±180, then subtract the holes."""
-    shell = _ring_pieces_sql(f"ST_ExteriorRing({part})")
+    shell = _ring_pieces_sql(f"ST_ExteriorRing({part})", label)
+    hole = _ring_pieces_sql(f"ST_InteriorRingN({part}, h::INTEGER)", label)
     holes = f"""ST_CollectionExtract(ST_Collect(list_transform(
-        range(1, ST_NumInteriorRings({part}) + 1),
-        lambda h: {_ring_pieces_sql(f"ST_InteriorRingN({part}, h::INTEGER)")})), 3)"""
+        range(1, ST_NumInteriorRings({part}) + 1), lambda h: {hole})), 3)"""
     diff = f"""CASE WHEN ST_NumInteriorRings({part}) = 0 THEN {shell}
         ELSE ST_Difference({shell}, {holes}) END"""
     return f"ST_CollectionExtract(ST_MakeValid({diff}), 3)"
 
 
-def _normalize_longitude_sql(col: str) -> str:
+def _normalize_longitude_sql(col: str, label: str) -> str:
     """Build SQL splitting `col`'s polygon parts at 180° and wrapping longitudes."""
+    fixed = _normalize_part_sql("d['geom']", label)
     parts = f"""list_transform(ST_Dump(ST_Force2D({col})), lambda d: CASE
-        WHEN {_part_needs_sql("d['geom']")} THEN {_normalize_part_sql("d['geom']")}
-        ELSE d['geom'] END)"""
+        WHEN {_part_needs_sql("d['geom']")} THEN {fixed} ELSE d['geom'] END)"""
     return f"""CASE WHEN {_lon_normalize_needed_sql(col)}
         THEN ST_SetCRS(ST_CollectionExtract(ST_Collect({parts}), 3), '{CRS}')
         ELSE {col} END"""
@@ -363,14 +374,14 @@ def _world_clip_sql(col: str) -> str:
 
 
 def raise_world_bounds_error(e: duckdb.Error, label: str) -> None:
-    """Re-raise a world-bounds read error from `e` as a ValueError naming `label`."""
+    """Re-raise a world-bounds read error from `e` as a ValueError naming the file."""
     text = str(e)
     if _OUTSIDE_WORLD in text:
         msg = f"failed to read {label}: {_OUTSIDE_WORLD}"
         raise ValueError(msg) from e
     if _POLE_RING in text:
-        row = text.split(_POLE_RING, 1)[1].split(maxsplit=1)[0]
-        msg = f"failed to read {label}: {_POLE_RING}{row}"
+        row, _, source = text.split(_POLE_RING, 1)[1].partition(" of ")
+        msg = f"failed to read {source.splitlines()[0]}: {_POLE_RING}{row}"
         raise ValueError(msg) from e
 
 
