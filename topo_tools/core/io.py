@@ -14,6 +14,7 @@ from .constants import (
     CRS,
     GDAL_CRS,
     RESERVED_COLUMN_NAMES,
+    SNAP_TOLERANCE,
     WORLD_BOUNDS_WKT,
 )
 from .coverage import (
@@ -30,6 +31,10 @@ _WORLD_CLIP_FLAG = "_world_clipped"
 # versions, and how GDAL's own OpenFileGDB driver tells layers apart too.
 _ESRI_FEATURE_CLASS_TYPE = "{70737809-852C-4A03-9E22-2CECEA5B9BFA}"
 _OUTSIDE_WORLD = "a feature lies entirely outside world bounds (-180 -90 180 90)"
+_POLE_RING = "a ring circles a pole without edges along it, in feature fid "
+_LON_FLAG = "_lon_normalized"
+# Pieces left this narrow by the antimeridian cut are float overshoot, dropped.
+_ANTIMERIDIAN_SLIVER_DEG = 1e-6
 
 
 def resolve_input_path(path: str | Path) -> Path | str:
@@ -177,44 +182,144 @@ def reproject_select_sql(
     # A CRS-less geometry is assumed to already be WGS84 lon/lat, so only tagged;
     # one already in CRS skips the transform, which roughly doubles peak memory.
     reproject = geom_type not in ("GEOMETRY", f"GEOMETRY('{CRS}')")
-    valid = (
-        f"ST_MakeValid(ST_Transform(ST_MakeValid(\"{geom_col}\"), '{CRS}', true))"
-        if reproject
-        else f'ST_MakeValid("{geom_col}")'
-    )
-    # ST_MakeValid can collapse a polygon sliver to a line; keep polygonal parts.
-    valid = (
-        f'CASE WHEN ST_Dimension("{geom_col}") = 2 '
-        f"THEN ST_CollectionExtract({valid}, 3) ELSE {valid} END"
-    )
-    geom_expr = (
-        f"ST_Force2D({valid})"
-        if reproject
-        else f"ST_SetCRS(ST_Force2D({valid}), '{CRS}')"
-    )
-    if not make_valid:
-        geom_expr = (
-            f"ST_Force2D(ST_Transform(\"{geom_col}\", '{CRS}', true))"
-            if reproject
-            else f"ST_SetCRS(ST_Force2D(\"{geom_col}\"), '{CRS}')"
-        )
-
+    raw = f'"{geom_col}"'
+    if reproject:
+        raw = f"ST_MakeValid({raw})" if make_valid else raw
+        base = f"ST_Transform({raw}, '{CRS}', true)"
+    else:
+        base = f"ST_SetCRS({raw}, '{CRS}')"
+    norm = _normalize_longitude_sql("geom")
     # ST_MakeValid runs again after transform, since reprojection can break
     # validity; ST_Force2D drops Z/M coords downstream GEOS ops can't handle.
-    flag_sql = (
-        f", NOT {_within_world_sql('geom')} AS {_WORLD_CLIP_FLAG}"
+    if make_valid:
+        # ST_MakeValid can collapse a polygon sliver to a line; keep polygonal parts.
+        norm = (
+            f"CASE WHEN _poly THEN ST_CollectionExtract(ST_MakeValid({norm}), 3) "
+            f"ELSE ST_MakeValid({norm}) END"
+        )
+    geom_expr = f"ST_SetCRS(ST_Force2D({norm}), '{CRS}')"
+
+    lon_flag_sql = (
+        f", {_lon_normalize_needed_sql('geom')} AS {_LON_FLAG}"
         if flag_world_clip
         else ""
     )
+    flag_sql = (
+        f", ({_LON_FLAG} OR NOT {_within_world_sql('geom')}) AS {_WORLD_CLIP_FLAG}"
+        if flag_world_clip
+        else ""
+    )
+    lon_exclude_sql = f"EXCLUDE ({_LON_FLAG}) " if flag_world_clip else ""
     return f"""
-        SELECT * REPLACE ({_world_clip_sql("geom")} AS geom){flag_sql}
+        SELECT * {lon_exclude_sql}REPLACE ({_world_clip_sql("geom")} AS geom){flag_sql}
         FROM (
-            SELECT * EXCLUDE ({exclude_sql}){rename_sql},
-                   row_number() OVER () AS fid,
-                   {geom_expr} AS geom
-            FROM ({read_expr})
+            SELECT * EXCLUDE (_poly) REPLACE ({geom_expr} AS geom){lon_flag_sql}
+            FROM (
+                SELECT * EXCLUDE ({exclude_sql}){rename_sql},
+                       row_number() OVER () AS fid,
+                       {base} AS geom,
+                       ST_Dimension("{geom_col}") = 2 AS _poly
+                FROM ({read_expr})
+            )
         )
     """
+
+
+def _let(value: str, var: str, body: str) -> str:
+    """Bind `value` to lambda parameter `var` inside `body`, evaluated once."""
+    return f"list_transform([{value}], lambda {var}: {body})[1]"
+
+
+def _jump_signs_sql(xy: str) -> str:
+    """Per-vertex -1/0/1 where the edge into it crosses 180° the short way."""
+    pole = 90 - SNAP_TOLERANCE
+    return f"""list_transform(range(1, len({xy}) + 1), lambda i: CASE
+        WHEN i = 1 OR (abs({xy}[i][2]) >= {pole} AND abs({xy}[i - 1][2]) >= {pole})
+        THEN 0
+        WHEN {xy}[i][1] - {xy}[i - 1][1] > 180 THEN -1
+        WHEN {xy}[i][1] - {xy}[i - 1][1] < -180 THEN 1
+        ELSE 0 END)"""
+
+
+def _ring_xy_sql(ring: str) -> str:
+    """List of [x, y] vertex pairs of linestring `ring`, in order."""
+    return (
+        f"list_transform(ST_Dump(ST_Points({ring})), "
+        "lambda d: [ST_X(d.geom), ST_Y(d.geom)])"
+    )
+
+
+def _unwrap_ring_sql(ring: str) -> str:
+    """Rebuild `ring` with each jump across 180° replaced by a continuous edge."""
+    unwrapped = """ST_MakeLine(list_transform(range(1, len(q) + 1), lambda i: ST_Point(
+        q[i][1] + 360 * coalesce(list_sum(list_transform(
+            list_filter(jp, lambda j: j <= i), lambda j: s[j])), 0),
+        q[i][2])))"""
+    body = f"""CASE WHEN coalesce(list_sum(s), 0) <> 0
+        THEN error('{_POLE_RING}' || fid) ELSE {unwrapped} END"""
+    with_jumps = _let(
+        "list_filter(range(1, len(s) + 1), lambda j: s[j] <> 0)", "jp", body
+    )
+    return _let(_ring_xy_sql(ring), "q", _let(_jump_signs_sql("q"), "s", with_jumps))
+
+
+def _part_needs_sql(part: str) -> str:
+    """Build SQL true where polygon `part` crosses 180° or goes past ±180."""
+    shell_jumps = _let(
+        _ring_xy_sql(f"ST_ExteriorRing({part})"), "q", _jump_signs_sql("q")
+    )
+    return f"""CASE
+        WHEN ST_GeometryType({part})::VARCHAR <> 'POLYGON' THEN false
+        WHEN ST_XMin({part}) < -180 OR ST_XMax({part}) > 180 THEN true
+        WHEN ST_XMax({part}) - ST_XMin({part}) > 180
+        THEN coalesce(list_bool_or(
+            list_transform({shell_jumps}, lambda x: x <> 0)), false)
+        ELSE false END"""
+
+
+def _lon_normalize_needed_sql(col: str) -> str:
+    """Build SQL true where any polygon part of `col` needs normalizing."""
+    # DuckDB evaluates both sides of AND on every row; CASE runs THEN only where true.
+    wide = _let(
+        f"ST_Extent({col})",
+        "b",
+        "ST_XMin(b) < -180 OR ST_XMax(b) > 180 OR ST_XMax(b) - ST_XMin(b) > 180",
+    )
+    return f"""CASE WHEN coalesce({wide}, false)
+        THEN coalesce(ST_Dimension({col}) = 2
+            AND list_bool_or(list_transform(ST_Dump({col}),
+                lambda d: {_part_needs_sql("d.geom")})), false)
+        ELSE false END"""
+
+
+def _normalize_part_sql(part: str) -> str:
+    """Unwrap polygon `part` across 180°, then cut and shift its pieces into ±180."""
+    aligned = """list_transform(hs, lambda r: ST_Translate(r, 360 * round(
+        ((ST_XMin(sh) + ST_XMax(sh)) - (ST_XMin(r) + ST_XMax(r))) / 720), 0))"""
+    poly = f"ST_CollectionExtract(ST_MakeValid(ST_MakePolygon(sh, {aligned})), 3)"
+    windows = (
+        "range(floor((ST_XMin(pg) + 180) / 360)::BIGINT, "
+        "floor((ST_XMax(pg) + 180) / 360)::BIGINT + 1)"
+    )
+    pieces = f"""ST_Collect(list_filter(list_transform({windows}, lambda w:
+        ST_Translate(ST_Intersection(pg, ST_MakeEnvelope(
+            360 * w - 180, -1000, 360 * w + 180, 1000)), -360 * w, 0)),
+        lambda g: NOT ST_IsEmpty(g)
+            AND ST_XMax(g) - ST_XMin(g) > {_ANTIMERIDIAN_SLIVER_DEG}))"""
+    holes = f"""list_transform(range(1, ST_NumInteriorRings({part}) + 1),
+        lambda h: {_unwrap_ring_sql(f"ST_InteriorRingN({part}, h::INTEGER)")})"""
+    shell = _unwrap_ring_sql(f"ST_ExteriorRing({part})")
+    return _let(shell, "sh", _let(holes, "hs", _let(poly, "pg", pieces)))
+
+
+def _normalize_longitude_sql(col: str) -> str:
+    """Build SQL splitting `col`'s polygon parts at 180° and wrapping longitudes."""
+    parts = f"""list_transform(ST_Dump(ST_Force2D({col})), lambda d: CASE
+        WHEN {_part_needs_sql("d.geom")} THEN {_normalize_part_sql("d.geom")}
+        ELSE d.geom END)"""
+    return f"""CASE WHEN {_lon_normalize_needed_sql(col)}
+        THEN ST_SetCRS(ST_CollectionExtract(ST_Collect({parts}), 3), '{CRS}')
+        ELSE {col} END"""
 
 
 def _within_world_sql(col: str) -> str:
@@ -239,11 +344,11 @@ def _world_clip_sql(col: str) -> str:
 
 
 def log_world_clipped(label: str, clipped: int) -> None:
-    """Warn that `clipped` of `label`'s features were clipped to world bounds."""
+    """Warn that `clipped` of `label`'s features were fitted to world bounds."""
     if clipped:
         logger.warning(
-            "%s: clipped %d feature(s) extending past 180° longitude or 90° "
-            "latitude to world bounds",
+            "%s: fitted %d feature(s) to world bounds (split or wrapped at 180° "
+            "longitude, clipped past 90° latitude)",
             label,
             clipped,
         )
@@ -280,6 +385,10 @@ def read_and_reproject(
     except duckdb.Error as e:
         if _OUTSIDE_WORLD in str(e):
             msg = f"failed to read {path}: {_OUTSIDE_WORLD}"
+            raise ValueError(msg) from e
+        if _POLE_RING in str(e):
+            fid = str(e).split(_POLE_RING, 1)[1].split()[0]
+            msg = f"failed to read {path}: {_POLE_RING}{fid}"
             raise ValueError(msg) from e
         msg = (
             f"failed to read/reproject {path}: {e}; the source file may contain "

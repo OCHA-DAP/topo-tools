@@ -117,9 +117,16 @@ in sync.
   as GeoParquet 2.0 following geoparquet-io's conventions: the default CRS is
   signalled by omitting the `geo` metadata's `crs` key. Shapefile,
   GeoPackage, and GeoJSON outputs MUST be written as `EPSG:4326`.
-- Every read MUST clip a feature whose bbox extends past ±180° longitude or
-  ±90° latitude to those bounds, logging a warning with the count of clipped
-  features, and MUST raise on a feature entirely outside them.
+- Every read MUST treat each polygon edge as the shorter way around the
+  globe. A part with an edge spanning more than 180° longitude is unwrapped
+  into one continuous shape, cut at ±180° and shifted back into range. A
+  part with longitudes past ±180° is cut and shifted the same way. An edge
+  with both ends at ±90° latitude runs along a pole and never counts as a
+  crossing, so a band such as Antarctica stays unchanged. A read MUST raise,
+  naming the feature, on a ring that circles a pole without such an edge.
+- Every read MUST then clip a feature past ±90° latitude to that bound and
+  MUST raise on a feature entirely outside it. A single warning gives the
+  count of features changed by either rule.
 
 ## Output precision
 

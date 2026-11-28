@@ -1875,5 +1875,5 @@ def test_original_bboxes_warns_on_world_clip(tmp_path, caplog):
     with caplog.at_level(logging.WARNING), duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
         ((_, bbox),) = _original_bboxes(conn, [path])
-    assert f"{path}: clipped 1 feature(s)" in caplog.text
-    assert bbox == (179, 0, 180, 1)
+    assert f"{path}: fitted 1 feature(s)" in caplog.text
+    assert bbox == (-180, 0, 180, 1)
