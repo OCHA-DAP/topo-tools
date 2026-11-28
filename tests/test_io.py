@@ -349,6 +349,13 @@ def test_read_and_reproject_splits_part_crossing_antimeridian(tmp_path, caplog):
         "POLYGON((-180 -90, 180 -90, 180 -60, -180 -60, -180 -90))",
         "POLYGON((-180 80, 180 80, 180 90, -180 90, -180 80))",
         "POLYGON((-180 -89.9, 180 -89.9, 180 -60, -180 -60, -180 -89.9))",
+        "POLYGON((-180 -80, 180 -80, 180 -90, 0 -90, -180 -90, -180 -80))",
+        (
+            "POLYGON((-180 -80, 180 -80, 180 -90, 100 -90, 100 -85, 80 -85, "
+            "80 -90, -180 -90, -180 -80))"
+        ),
+        "POLYGON((-180 10, 180 10, 180 20, 0 20, -180 20, -180 10))",
+        "POLYGON((-180 10, 0 10, 180 10, 180 20, -180 20, -180 10))",
     ],
     ids=[
         "band-legs",
@@ -357,6 +364,10 @@ def test_read_and_reproject_splits_part_crossing_antimeridian(tmp_path, caplog):
         "rectangle-south",
         "rectangle-north",
         "rectangle-no-pole",
+        "cap-one-side-on-180",
+        "cap-notched",
+        "band-top-on-180",
+        "band-bottom-on-180",
     ],
 )
 def test_read_and_reproject_keeps_parts_not_crossing_antimeridian(

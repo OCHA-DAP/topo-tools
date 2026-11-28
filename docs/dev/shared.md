@@ -121,11 +121,13 @@ in sync.
   globe. A part with an edge spanning more than 180° longitude is unwrapped
   into one continuous shape, cut at ±180° and shifted back into range. A
   part with longitudes past ±180° is cut and shifted the same way. An edge
-  with both ends at ±90° latitude runs along a pole and takes whatever
-  shift closes its ring. A ring with every vertex on ±180° longitude has no
-  crossing. Bands such as Antarctica therefore stay unchanged. A read MUST
-  raise, naming the file and the feature's source row, on a ring that
-  circles a pole without an edge along it.
+  from 180° to -180° crosses when that closes its ring and otherwise runs
+  the long way as a band edge. An edge with both ends at ±90° latitude runs
+  along a pole and takes whatever shift closes its ring. A ring with every
+  vertex on ±180° longitude has no crossing. Bands such as Antarctica
+  therefore stay unchanged. A read MUST raise, naming the file and the
+  feature's source row, on a ring that circles a pole without an edge
+  along it.
 - Every read MUST then clip a feature past ±90° latitude to that bound and
   MUST raise on a feature entirely outside it. A single warning gives the
   count of features changed by either rule.

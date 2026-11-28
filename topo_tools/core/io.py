@@ -236,23 +236,29 @@ def _let(value: str, var: str, body: str) -> str:
 def _jump_signs_sql(xy: str) -> str:
     """Per-vertex -1/0/1 shift where the edge into it crosses 180°."""
     pole = 90 - SNAP_TOLERANCE
-    is_pole = f"""lambda i: i > 1 AND abs({xy}[i][2]) >= {pole}
-        AND abs({xy}[i - 1][2]) >= {pole}"""
+    on_pole = f"abs({xy}[i][2]) >= {pole} AND abs({xy}[i - 1][2]) >= {pole}"
+    on_180 = f"abs({xy}[i][1]) = 180 AND abs({xy}[i - 1][1]) = 180"
     short = f"""list_transform(range(1, len({xy}) + 1), lambda i: CASE
-        WHEN i = 1 OR (abs({xy}[i][2]) >= {pole} AND abs({xy}[i - 1][2]) >= {pole})
-        THEN 0
+        WHEN i = 1 OR ({on_pole}) THEN 0
         WHEN {xy}[i][1] - {xy}[i - 1][1] > 180 THEN -1
         WHEN {xy}[i][1] - {xy}[i - 1][1] < -180 THEN 1
         ELSE 0 END)"""
-    # Pole edges take the shift that closes the ring; a ring all on ±180 is a band.
-    closed = f"""CASE
-        WHEN list_bool_and(list_transform({xy}, lambda v: abs(v[1]) = 180))
-        THEN list_transform(s0, lambda v: 0)
-        WHEN list_sum(s0) = 0 OR len(pe) = 0 THEN s0
+    band = f"""list_transform(range(1, len({xy}) + 1),
+        lambda i: CASE WHEN i > 1 AND ({on_180}) THEN 0 ELSE s0[i] END)"""
+    poles = f"list_filter(range(2, len({xy}) + 1), lambda i: {on_pole})"
+    # A 180 to -180 edge crosses if that closes the ring, else runs as a band edge;
+    # pole edges then take the shift that closes it.
+    closed = """CASE
+        WHEN list_sum(s0) = 0 THEN s0
+        WHEN list_sum(sb) = 0 THEN sb
+        WHEN len(pe) = 0 THEN s0
         ELSE list_transform(range(1, len(s0) + 1),
             lambda i: CASE WHEN i = pe[1] THEN -list_sum(s0) ELSE s0[i] END) END"""
-    poles = f"list_filter(range(1, len({xy}) + 1), {is_pole})"
-    return _let(short, "s0", _let(poles, "pe", closed))
+    pick = _let(band, "sb", _let(poles, "pe", closed))
+    return f"""CASE
+        WHEN list_bool_and(list_transform({xy}, lambda v: abs(v[1]) = 180))
+        THEN list_transform({xy}, lambda v: 0)
+        ELSE {_let(short, "s0", pick)} END"""
 
 
 def _ring_xy_sql(ring: str) -> str:
