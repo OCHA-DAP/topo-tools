@@ -279,14 +279,14 @@ def test_read_and_reproject_clips_only_rows_past_world_bounds(tmp_path, caplog):
         ).fetchall()
     assert rows[0][0] == "POLYGON ((179 0, 179.5 0, 179.5 1, 179 1, 179 0))"
     assert rows[1][1] == _ANTIMERIDIAN
-    assert "clipped 1 feature(s)" in caplog.text
+    assert "fitted 1 feature(s)" in caplog.text
 
 
 def test_read_and_reproject_raises_on_row_outside_world_bounds(tmp_path):
     path = tmp_path / "outside.parquet"
     with duckdb.connect() as conn:
         conn.execute("INSTALL spatial; LOAD spatial;")
-        _write_wkt(conn, path, ["POLYGON((181 0, 182 0, 182 1, 181 1, 181 0))"])
+        _write_wkt(conn, path, ["POLYGON((0 91, 1 91, 1 92, 0 92, 0 91))"])
         with pytest.raises(ValueError, match="outside world bounds") as e:
             read_and_reproject(conn, "out", path)
     assert "unclosed ring" not in str(e.value)
@@ -302,5 +302,186 @@ def test_load_input_warns_on_world_clip(tmp_path, caplog):
         _write_wkt(conn, paths[1], [past])
         load_input(conn, "m", paths)
         columns = [r[0] for r in conn.execute('DESCRIBE "m_input_01"').fetchall()]
-    assert "clipped 1 feature(s)" in caplog.text
+    assert "fitted 1 feature(s)" in caplog.text
     assert "_world_clipped" not in columns
+    assert "_lon_normalized" not in columns
+
+
+def _read_wkt(tmp_path, wkts):
+    path = tmp_path / "in.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial; SET geometry_always_xy = true;")
+        _write_wkt(conn, path, wkts)
+        read_and_reproject(conn, "out", path)
+        return conn.execute(
+            """SELECT ST_AsText(geom), ST_NumGeometries(geom), ST_Area(geom),
+                      ST_XMin(geom), ST_XMax(geom), ST_IsValid(geom)
+               FROM "out_01" ORDER BY id"""
+        ).fetchall()
+
+
+def test_read_and_reproject_splits_part_crossing_antimeridian(tmp_path, caplog):
+    holed = (
+        "POLYGON((179 0, -179 0, -179 1, 179 1, 179 0),"
+        "(179.5 0.2, -179.5 0.2, -179.5 0.8, 179.5 0.8, 179.5 0.2))"
+    )
+    ((_, parts, area, xmin, xmax, valid),) = _read_wkt(tmp_path, [holed])
+    assert (parts, xmin, xmax, valid) == (2, -180, 180, True)
+    assert area == pytest.approx(1.4)
+    assert "fitted 1 feature(s)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        (
+            "POLYGON((-180 -89.9, 0 -89.9, 180 -89.9, 180 -80, 90 -80, 0 -80, "
+            "-90 -80, -180 -80, -180 -89.9))"
+        ),
+        (
+            "POLYGON((-180 -90, 180 -90, 180 -80, 90 -80, 0 -80, -90 -80, "
+            "-180 -80, -180 -90))"
+        ),
+        (
+            "MULTIPOLYGON(((179 0, 179.5 0, 179.5 1, 179 1, 179 0)),"
+            "((-179.5 0, -179 0, -179 1, -179.5 1, -179.5 0)))"
+        ),
+        "POLYGON((-180 -90, 180 -90, 180 -60, -180 -60, -180 -90))",
+        "POLYGON((-180 80, 180 80, 180 90, -180 90, -180 80))",
+        "POLYGON((-180 -89.9, 180 -89.9, 180 -60, -180 -60, -180 -89.9))",
+        "POLYGON((-180 -80, 180 -80, 180 -90, 0 -90, -180 -90, -180 -80))",
+        (
+            "POLYGON((-180 -80, 180 -80, 180 -90, 100 -90, 100 -85, 80 -85, "
+            "80 -90, -180 -90, -180 -80))"
+        ),
+        "POLYGON((-180 10, 180 10, 180 20, 0 20, -180 20, -180 10))",
+        "POLYGON((-180 10, 0 10, 180 10, 180 20, -180 20, -180 10))",
+    ],
+    ids=[
+        "band-legs",
+        "band-pole-edge",
+        "parts-both-sides",
+        "rectangle-south",
+        "rectangle-north",
+        "rectangle-no-pole",
+        "cap-one-side-on-180",
+        "cap-notched",
+        "band-top-on-180",
+        "band-bottom-on-180",
+    ],
+)
+def test_read_and_reproject_keeps_parts_not_crossing_antimeridian(
+    tmp_path, caplog, wkt
+):
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        expected = conn.execute(
+            f"SELECT ST_AsText(ST_GeomFromText('{wkt}'))"
+        ).fetchall()[0][0]
+    assert _read_wkt(tmp_path, [wkt])[0][0] == expected
+    assert "fitted" not in caplog.text
+
+
+def test_read_and_reproject_wraps_longitudes_past_180(tmp_path):
+    rows = _read_wkt(
+        tmp_path,
+        [
+            "POLYGON((170 0, 190 0, 190 1, 170 1, 170 0))",
+            "POLYGON((190 0, 200 0, 200 1, 190 1, 190 0))",
+            "POLYGON((-730 0, -720 0, -720 1, -730 1, -730 0))",
+        ],
+    )
+    assert [r[1:] for r in rows] == [
+        (2, pytest.approx(20), -180, 180, True),
+        (1, pytest.approx(10), -170, -160, True),
+        (1, pytest.approx(10), -10, 0, True),
+    ]
+
+
+def test_read_and_reproject_raises_on_ring_circling_pole(tmp_path):
+    ring = "POLYGON((0 -80, 90 -75, 179 -80, -179 -80, -90 -75, 0 -80))"
+    with pytest.raises(ValueError, match=r"in\.parquet: .*circles a pole .* row 1"):
+        _read_wkt(tmp_path, [ring])
+
+
+def test_load_input_names_file_on_ring_circling_pole(tmp_path):
+    ring = "POLYGON((0 -80, 90 -75, 179 -80, -179 -80, -90 -75, 0 -80))"
+    path = tmp_path / "pole.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        _write_wkt(conn, path, [ring])
+        other = tmp_path / "ok.parquet"
+        _write_wkt(conn, other, ["POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"])
+        with pytest.raises(ValueError, match=r"read [^,]*pole\.parquet: .*row 1$"):
+            load_input(conn, "m", [other, path])
+
+
+@pytest.mark.parametrize(
+    ("wkt", "area"),
+    [
+        ("POLYGON((170 -10,180 -10,-180 -10,-170 -10,-170 -20,170 -20,170 -10))", 200),
+        (
+            (
+                "POLYGON((170 -10,180 -10,-180 -10,-170 -10,-170 -20,-180 -20,"
+                "180 -20,170 -20,170 -10))"
+            ),
+            200,
+        ),
+        ("POLYGON((160 -60,-150 -60,-150 -90,160 -90,160 -60))", 1500),
+        ("POLYGON((170 -80,170 -90,-170 -90,-170 -80,170 -80))", 200),
+    ],
+    ids=["one-edge-on-180", "both-edges-on-180", "pole-sector", "pole-cap"],
+)
+def test_read_and_reproject_splits_crossings_on_180_and_at_poles(tmp_path, wkt, area):
+    ((_, parts, got, xmin, xmax, valid),) = _read_wkt(tmp_path, [wkt])
+    assert (parts, xmin, xmax, valid) == (2, -180, 180, True)
+    assert got == pytest.approx(area)
+
+
+def test_read_and_reproject_wraps_tiny_part_past_180(tmp_path):
+    tiny = "POLYGON((190 0, 190.0000005 0, 190.0000005 1, 190 1, 190 0))"
+    ((_, parts, area, xmin, _, _),) = _read_wkt(tmp_path, [tiny])
+    assert (parts, xmin) == (1, -170)
+    assert area == pytest.approx(5e-7)
+
+
+def test_read_and_reproject_cuts_hole_crossing_antimeridian(tmp_path):
+    band = (
+        "POLYGON((-180 -90, 180 -90, 180 -60, 0 -60, -180 -60, -180 -90),"
+        "(179 -70, -179 -70, -179 -69, 179 -69, 179 -70))"
+    )
+    ((_, _, area, xmin, xmax, valid),) = _read_wkt(tmp_path, [band])
+    assert (xmin, xmax, valid) == (-180, 180, True)
+    assert area == pytest.approx(360 * 30 - 2)
+
+
+def test_reproject_select_sql_without_make_valid_merges_cut_pieces(tmp_path):
+    path = tmp_path / "band.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial; SET geometry_always_xy = true;")
+        _write_wkt(
+            conn, path, ["POLYGON((0 -90, 360 -90, 360 -60, 180 -60, 0 -60, 0 -90))"]
+        )
+        sql = reproject_select_sql(conn, path, make_valid=False)
+        valid, area = conn.execute(
+            f"SELECT ST_IsValid(geom), ST_Area(geom) FROM ({sql})"
+        ).fetchall()[0]
+    assert valid
+    assert area == pytest.approx(360 * 30)
+
+
+def test_read_and_reproject_renames_columns_clashing_with_internal_ones(tmp_path):
+    path = tmp_path / "cols.parquet"
+    with duckdb.connect() as conn:
+        conn.execute("INSTALL spatial; LOAD spatial;")
+        conn.execute(
+            f"""COPY (SELECT 1 AS d, 2 AS _poly, 3 AS _lon_normalized,
+                ST_GeomFromText('POLYGON((179 0, -179 0, -179 1, 179 1, 179 0))')
+                AS geom) TO '{path}'"""
+        )
+        read_and_reproject(conn, "out", path)
+        row = conn.execute(
+            "SELECT d, _poly_orig, _lon_normalized_orig, ST_NumGeometries(geom) "
+            'FROM "out_01"'
+        ).fetchall()[0]
+    assert row == (1, 2, 3, 2)
