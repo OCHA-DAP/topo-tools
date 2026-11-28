@@ -240,25 +240,31 @@ Pre-commit hooks run `uv-sync`, `ruff-format`, and `ruff-check` automatically.
 | --- | --- |
 | **West Africa cluster** (`sen`/`gmb`/`gnb`/`gin`/`civ`/`gha`/`tgo`/`ben`, portolan `adm2`) | Mutually neighboring countries, used for single-file tool tests (edge-extend/edge-match/topo-clean/change) and edge-mosaic's and edge-match's multi-file combine tests |
 
-A full portolan catalog (real, large-scale admin boundary data, multiple
-countries and admin levels, some with multiple historical versions) is
-available for at-scale/real-data stress testing beyond the cluster above:
+Two real-data catalogs are available for at-scale/real-data stress testing
+beyond the cluster above:
 
-- **Local copy**: `/Users/computer/GitHub/OCHA-DAP/hdx-scraper-cod-ab-global/portolan`
-- **Live/canonical source**: [source.coop/hdx/cod-ab](https://source.coop/hdx/cod-ab),
-  STAC root catalog at `https://data.source.coop/hdx/cod-ab/catalog.json`
-  (`id: portolan`; per-country `child` links, e.g. `./chl/catalog.json`)
+- **portolan** (COD-AB admin boundaries, multiple countries and admin
+  levels, some with multiple historical versions)
+  - **Local copy**: `/Users/computer/GitHub/OCHA-DAP/hdx-scraper-cod-ab-global/portolan`
+  - **Live/canonical source**: [source.coop/hdx/cod-ab](https://source.coop/hdx/cod-ab),
+    STAC root catalog at `https://data.source.coop/hdx/cod-ab/catalog.json`
+    (`id: portolan`; per-country `child` links, e.g. `./chl/catalog.json`)
+- **cod-app catalog** (`/Users/computer/GitHub/OCHA-DAP/cod-app/catalog`):
+  admin layers from many publishers (FAO, geoBoundaries, government
+  sources, OCHA, Overture, UNHCR, UNICEF, World Bank, WFP, WHO), with
+  shapes portolan lacks, such as antimeridian-crossing parts and Antarctica
 
-**HARD RULE: the portolan catalog (local copy or live source) is read-only.**
+**HARD RULE: both catalogs (local copies or live source) are read-only.**
 Never write, modify, move, or delete anything inside
-`/Users/computer/GitHub/OCHA-DAP/hdx-scraper-cod-ab-global/portolan`. No
+`/Users/computer/GitHub/OCHA-DAP/hdx-scraper-cod-ab-global/portolan` or
+`/Users/computer/GitHub/OCHA-DAP/cod-app/catalog`. No
 `--output-path`/`--overwrite`, no `--tmp-dir`, no `--debug` exports, nothing.
-Only ever read from it. Every output/tmp/debug path for a portolan-sourced
+Only ever read from them. Every output/tmp/debug path for a catalog-sourced
 test run must point outside the catalog (e.g. the session scratchpad or
 `/tmp`).
 
-See the `at-scale-testing` skill for the STAC layout and how to pick a
-file (or an old/new comparison pair, for `change`) from the catalog.
+See the `at-scale-testing` skill for both catalogs' layouts and how to pick
+a file (or an old/new comparison pair, for `change`).
 
 ## Reference Docs
 

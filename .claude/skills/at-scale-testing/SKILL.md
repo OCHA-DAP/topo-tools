@@ -1,16 +1,26 @@
 ---
 name: at-scale-testing
-description: Use when a task needs to exercise a tool at real multi-thousand-fid scale against the portolan catalog, e.g. checking a fix beyond the West Africa cluster, or testing `change` against a genuine old/new version pair.
+description: Use when a task needs to exercise a tool at real multi-thousand-fid scale against the portolan or cod-app catalog, e.g. checking a fix beyond the West Africa cluster, scanning real data for an edge-case shape, or testing `change` against a genuine old/new version pair.
 ---
 
-# Run an at-scale test against the portolan catalog
+# Run an at-scale test against a real-data catalog
 
-Use the portolan catalog (see `CLAUDE.md`'s Test Datasets section for its
-location and the read-only hard rule) when the recommended West Africa
-cluster isn't enough, e.g. checking a fix at real multi-thousand-fid
-scale, or exercising `change` against a genuine old/new version pair.
+Use the portolan or cod-app catalog (see `CLAUDE.md`'s Test Datasets
+section for their locations and the read-only hard rule) when the
+recommended West Africa cluster isn't enough, e.g. checking a fix at real
+multi-thousand-fid scale, or exercising `change` against a genuine old/new
+version pair. A fix to shared read or geometry code gets checked against
+both.
 
-## Layout
+## cod-app catalog layout
+
+The catalog's own `AGENTS.md` describes its layout. Real-data scans read
+`explorer/{publisher}/{publisher}_adm{n}/{publisher}_adm{n}.parquet`, one
+global layer per publisher and level. `global/adm{n}-polygons/` holds the
+edge-matched global build, and `iso3/{iso3}/` holds the same layers cut
+by location. Remote copies are under `https://data.source.coop/hdx/cod-site/`.
+
+## portolan layout
 
 STAC-like: `{original,extended,matched}/{iso3}/{latest,vNN}/{iso3}_admin{n}/{iso3}_admin{n}.parquet`,
 with lines and points as `{iso3}_adminlines`/`{iso3}_adminpoints` in the
