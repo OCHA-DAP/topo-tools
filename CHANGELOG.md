@@ -16,12 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Planar GEOS read such a part as a band round the globe, and `topo-detect`
   ran out of memory on it, e.g. SPC's Fiji tikina. A band along a pole,
   such as Antarctica, stays unchanged. A ring circling a pole without an
-  edge along it raises, naming the feature.
+  edge along it raises, naming the file and the feature's source row.
 
 ### Changed
 
-- Every read wraps longitudes past ±180° into range. Clipping dropped the
-  part of a 0..360 source past 180°, and a part wholly past it raised.
+- Every read wraps polygon longitudes past ±180° into range. Clipping
+  dropped the part of a 0..360 source past 180°, and a part wholly past it
+  raised.
 
 ## [0.26.2] - 2026-11-26
 

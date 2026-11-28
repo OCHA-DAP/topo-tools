@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
+import duckdb
 from duckdb import DuckDBPyConnection
 
 from topo_tools.core.coverage import check_no_overlaps, check_valid_topology
 from topo_tools.core.io import (
+    raise_world_bounds_error,
     read_and_reproject,
     reproject_select_sql,
     warn_world_clipped,
@@ -25,12 +27,17 @@ def load_input(
         f"FROM ({reproject_select_sql(conn, path, flag_world_clip=True)}))"
         for path in input_paths
     )
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE "{name}_input_01" AS
-        SELECT * EXCLUDE (fid), row_number() OVER () AS fid
-        FROM ({union_sql})
-    """)
-    warn_world_clipped(conn, f"{name}_input_01", ", ".join(map(str, input_paths)))
+    label = ", ".join(map(str, input_paths))
+    try:
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE "{name}_input_01" AS
+            SELECT * EXCLUDE (fid), row_number() OVER () AS fid
+            FROM ({union_sql})
+        """)
+    except duckdb.Error as e:
+        raise_world_bounds_error(e, label)
+        raise
+    warn_world_clipped(conn, f"{name}_input_01", label)
 
 
 def check_input(conn: DuckDBPyConnection, name: str, path: Path | str) -> None:

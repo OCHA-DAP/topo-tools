@@ -4,6 +4,7 @@ import shutil
 from logging import getLogger
 from pathlib import Path
 
+import duckdb
 from duckdb import DuckDBPyConnection
 
 from topo_tools.api._schema_fill_compose import apply_optional_fill, validate_fill_flags
@@ -44,6 +45,7 @@ from topo_tools.core.io import (
     default_output_path,
     input_basename,
     log_world_clipped,
+    raise_world_bounds_error,
     reproject_select_sql,
     resolve_input_path,
     sort_paths_by_column_count_desc,
@@ -335,11 +337,16 @@ def _original_bboxes(
         select = reproject_select_sql(
             conn, path, make_valid=False, flag_world_clip=True
         )
-        row = conn.execute(f"""--sql
-            SELECT MIN(xmin), MIN(ymin), MAX(xmax), MAX(ymax),
-                   count(*) FILTER (WHERE _world_clipped)
-            FROM (SELECT {bbox_columns_sql("geom")}, _world_clipped FROM ({select}))
-        """).fetchone()
+        try:
+            row = conn.execute(f"""--sql
+                SELECT MIN(xmin), MIN(ymin), MAX(xmax), MAX(ymax),
+                       count(*) FILTER (WHERE _world_clipped)
+                FROM (SELECT {bbox_columns_sql("geom")}, _world_clipped
+                      FROM ({select}))
+            """).fetchone()
+        except duckdb.Error as e:
+            raise_world_bounds_error(e, str(path))
+            raise
         log_world_clipped(str(path), row[4])
         result.append((path, None if row[0] is None else tuple(row[:4])))
     return result

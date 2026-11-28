@@ -122,8 +122,10 @@ in sync.
   into one continuous shape, cut at ±180° and shifted back into range. A
   part with longitudes past ±180° is cut and shifted the same way. An edge
   with both ends at ±90° latitude runs along a pole and never counts as a
-  crossing, so a band such as Antarctica stays unchanged. A read MUST raise,
-  naming the feature, on a ring that circles a pole without such an edge.
+  crossing. Neither does an edge with both ends on ±180° longitude. Bands
+  such as Antarctica therefore stay unchanged. A read MUST raise, naming
+  the file and the feature's source row, on a ring that circles a pole
+  without such an edge.
 - Every read MUST then clip a feature past ±90° latitude to that bound and
   MUST raise on a feature entirely outside it. A single warning gives the
   count of features changed by either rule.
